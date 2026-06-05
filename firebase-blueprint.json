@@ -1,0 +1,250 @@
+{
+  "entities": {
+    "Settings": {
+      "title": "Settings",
+      "description": "Application governance configuration and targets",
+      "type": "object",
+      "properties": {
+        "رسوم_مدى": { "type": "number", "description": "Mada terminal transaction fee percentage" },
+        "رسوم_فيزا": { "type": "number", "description": "Visa card fee percentage" },
+        "صرف_افتراضي": { "type": "number", "description": "Default branch start drawer cache amount" },
+        "سقف_بيبسي": { "type": "number", "description": "Standard daily pepsi limit" },
+        "سقف_بلاستيك": { "type": "number", "description": "Standard daily plastics limit" },
+        "سقف_صلصات": { "type": "number", "description": "Standard daily sauces limit" },
+        "سقف_ديزل_قادسية": { "type": "number", "description": "Standard daily diesel limit for Al-Qadsiah branch" },
+        "سقف_ديزل_مروج": { "type": "number", "description": "Standard daily diesel limit for Al-Murooj branch" },
+        "زيادة_عالي": { "type": "number", "description": "Percentage increase in cap trigger limit trigger ratio for high sales days" },
+        "نسبة_قادسية_ديزل": { "type": "number", "description": "Shared diesel cost percentage for Al-Qadsiah branch" },
+        "نسبة_مروج_ديزل": { "type": "number", "description": "Shared diesel cost percentage for Al-Murooj branch" },
+        "ايام_مقارنة": { "type": "number", "description": "Period window in days to contrast performance against averages" }
+      },
+      "required": ["رسوم_مدى", "رسوم_فيزا", "صرف_افتراضي"]
+    },
+    "DailyEntry": {
+      "title": "DailyEntry",
+      "description": "Financial and ledger entry recorded daily per branch",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique key matching branch-date" },
+        "date": { "type": "string", "description": "Entry date formatted as YYYY-MM-DD" },
+        "branch": { "type": "string", "description": "Branch name ('القادسية' or 'المروج')" },
+        "sarf": { "type": "number", "description": "Actual start day float" },
+        "cash_box": { "type": "number", "description": "EOD box physical cash balance" },
+        "cash_purchases": { "type": "number", "description": "Sum of total raw materials paid via drawer cash outlays" },
+        "pur_gas": { "type": "number" },
+        "pur_bread": { "type": "number" },
+        "pur_veg": { "type": "number" },
+        "pur_groc": { "type": "number" },
+        "mada1": { "type": "number" },
+        "mada2": { "type": "number" },
+        "mada3": { "type": "number" },
+        "visa1": { "type": "number" },
+        "visa2": { "type": "number" },
+        "visa3": { "type": "number" },
+        "pos_net": { "type": "number" },
+        "cash_net": { "type": "number" },
+        "total_sales": { "type": "number" },
+        "makhzan": { "type": "number" },
+        "pepsi_paid": { "type": "number" },
+        "pepsi_type": { "type": "string" },
+        "pepsi_carry_prev": { "type": "number" },
+        "pepsi_deduct": { "type": "number" },
+        "pepsi_carry_next": { "type": "number" },
+        "plastic_paid": { "type": "number" },
+        "plastic_type": { "type": "string" },
+        "plastic_carry_prev": { "type": "number" },
+        "plastic_deduct": { "type": "number" },
+        "plastic_carry_next": { "type": "number" },
+        "sauces_paid": { "type": "number" },
+        "sauces_type": { "type": "string" },
+        "sauces_carry_prev": { "type": "number" },
+        "sauces_deduct": { "type": "number" },
+        "sauces_carry_next": { "type": "number" },
+        "gas": { "type": "number" },
+        "vegetables": { "type": "number" },
+        "bread": { "type": "number" },
+        "grocery": { "type": "number" },
+        "diesel_paid": { "type": "number" },
+        "diesel_type": { "type": "string" },
+        "diesel_carry_prev": { "type": "number" },
+        "diesel_deduct": { "type": "number" },
+        "diesel_carry_next": { "type": "number" },
+        "fixed_deduct": { "type": "number" },
+        "fixed_note": { "type": "string" },
+        "notes": { "type": "string" },
+        "pepsi_cap": { "type": "number" },
+        "plastic_cap": { "type": "number" },
+        "sauces_cap": { "type": "number" },
+        "diesel_cap": { "type": "number" },
+        "net_day": { "type": "number" }
+      },
+      "required": ["id", "date", "branch", "cash_box"]
+    },
+    "SharedDiesel": {
+      "title": "SharedDiesel",
+      "description": "Consolidated diesel procurement cost bills that are shared across branches",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "total": { "type": "number" },
+        "notes": { "type": "string" },
+        "q_share": { "type": "number" },
+        "m_share": { "type": "number" }
+      },
+      "required": ["id", "date", "total"]
+    },
+    "TaxInvoice": {
+      "title": "TaxInvoice",
+      "description": "Official supplier tax invoice registered in the books",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "branch": { "type": "string" },
+        "company": { "type": "string" },
+        "invoice_no": { "type": "string" },
+        "invoice_date": { "type": "string" },
+        "amount": { "type": "number" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "qty": { "type": "string" },
+              "price_with_tax": { "type": "number" }
+            },
+            "required": ["name", "price_with_tax"]
+          },
+          "description": "Itemized list of purchases parsed from invoice with names and prices after tax"
+        }
+      },
+      "required": ["id", "date", "branch", "amount"]
+    },
+    "UnifiedUser": {
+      "title": "UnifiedUser",
+      "description": "System user account with specific role-based permissions and status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Equal to username" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string", "enum": ["مدير", "محاسب", "مدخل فواتير"] },
+        "status": { "type": "string", "enum": ["نشط", "موقوف"] },
+        "branch": { "type": "string", "enum": ["الكل", "القادسية", "المروج"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "displayName", "password", "role", "status"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Registered restaurant staff profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "job": { "type": "string" },
+        "salary": { "type": "number" },
+        "advanceLimitPercent": { "type": "number" },
+        "requiredArrivalTime": { "type": "string" },
+        "requiredDepartureTime": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "job", "salary", "advanceLimitPercent", "requiredArrivalTime", "requiredDepartureTime"]
+    },
+    "EmployeeAdvance": {
+      "title": "EmployeeAdvance",
+      "description": "Salary advance and loan ledger",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "employeeId", "employeeName", "date", "amount"]
+    },
+    "EmployeeAttendance": {
+      "title": "EmployeeAttendance",
+      "description": "Employee official day shift arrival/lateness tracking sheet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "date": { "type": "string" },
+        "arrivalTime": { "type": "string" },
+        "departureTime": { "type": "string" },
+        "latenessMinutes": { "type": "number" },
+        "deductionAmount": { "type": "number" },
+        "oralWarning": { "type": "boolean" },
+        "latenessCategory": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "employeeId", "employeeName", "date", "arrivalTime", "departureTime", "latenessMinutes", "deductionAmount"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Smart tracked supply purchase record and stock level locator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "description": "Arabic item name, e.g. خبز or ديزل" },
+        "date": { "type": "string", "description": "Purchase transaction date format (YYYY-MM-DD)" },
+        "qty": { "type": "string", "description": "Quantified quantity details or financial entry text" },
+        "type": { "type": "string", "enum": ["direct", "split"] },
+        "price": { "type": "number", "description": "Direct cost value" },
+        "branch": { "type": "string", "description": "Affiliated branch ('القادسية' or 'المروج')" },
+        "status": { "type": "string", "enum": ["active", "depleted"] },
+        "source": { "type": "string", "enum": ["manual", "invoice"] },
+        "depletedDate": { "type": "string" },
+        "invoiceId": { "type": "string" }
+      },
+      "required": ["id", "name", "date", "price", "branch", "status"]
+    }
+  },
+  "firestore": {
+    "settings": {
+      "schema": "Settings",
+      "description": "App settings configuration and targets catalog"
+    },
+    "days": {
+      "schema": "DailyEntry",
+      "description": "Daily branch ledger calculations database"
+    },
+    "diesel": {
+      "schema": "SharedDiesel",
+      "description": "Cross-branch shared diesel cost logs"
+    },
+    "tax_invoices": {
+      "schema": "TaxInvoice",
+      "description": "Vendor tax invoices log history"
+    },
+    "purchases": {
+      "schema": "Purchase",
+      "description": "Smart system supplier and material purchase tracking database logs"
+    },
+    "users": {
+      "schema": "UnifiedUser",
+      "description": "System accounts for managers, accountants, and entry clerks"
+    },
+    "employees": {
+      "schema": "Employee",
+      "description": "Registered restaurant staff profiles"
+    },
+    "employee_advances": {
+      "schema": "EmployeeAdvance",
+      "description": "Ledger of salary advances"
+    },
+    "employee_attendance": {
+      "schema": "EmployeeAttendance",
+      "description": "Daily attendance punch items"
+    }
+  }
+}

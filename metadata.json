@@ -1,0 +1,6 @@
+{
+  "name": "نظام أصل الاسكندر",
+  "description": "نظام مالي متكامل لإدارة مطعم أصل الاسكندر: مبيعات، مصروفات، ديزل، فواتير ضريبية، وتقارير تفصيلية لفرعي القادسية والمروج.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
