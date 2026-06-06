@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { DailyEntry, TaxInvoice } from "../types";
 import { BarChart3, Calendar, FileText, Download, Building2, TrendingDown, HelpCircle, CheckCircle, ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { AslIskanderLogoSymbol } from "./AslIskanderLogo";
 
 interface ReportsTabProps {
   onShowToast: (msg: string) => void;
@@ -1005,8 +1006,8 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
 
               {/* Comparative Branches overview table */}
               <div className="bg-white rounded-xl border border-slate-100 p-6 space-y-4">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5 pb-2 border-b border-slate-100">
-                  <Building2 className="w-4 h-4 text-indigo-700" /> جدولة ومقارنات فروع مطعم أصل الاسكندر
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 pb-2 border-b border-slate-100">
+                  <AslIskanderLogoSymbol size={22} /> جدولة ومقارنات فروع مطعم أصل الاسكندر
                 </h3>
                 
                 <div className="overflow-x-auto">

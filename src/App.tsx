@@ -11,6 +11,7 @@ import TaxTab from "./components/TaxTab";
 import ReportsTab from "./components/ReportsTab";
 import EmployeesTab from "./components/EmployeesTab";
 import SettingsTab from "./components/SettingsTab";
+import { AslIskanderLogoSymbol, AslIskanderText } from "./components/AslIskanderLogo";
 
 type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings";
 type RoleType = "مدير" | "محاسب" | "مدخل فواتير";
@@ -200,14 +201,25 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4 antialiased select-none" dir="rtl">
         <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200/50 overflow-hidden flex flex-col">
-          {/* Header layout */}
-          <div className="bg-slate-900 p-8 text-center border-b border-indigo-950 flex flex-col items-center gap-3">
-            <div className="bg-indigo-600 rounded-2xl p-3.5 shadow-md">
-              <Building2 className="w-7 h-7 text-white" />
+          {/* Header layout with brand identity */}
+          <div className="bg-slate-950 p-8 text-center border-b border-slate-800/60 flex flex-col items-center gap-4 relative overflow-hidden">
+            {/* Subtle background warm brand gradients */}
+            <div className="absolute top-0 left-1/4 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none"></div>
+            <div className="absolute bottom-0 right-1/4 w-32 h-32 bg-orange-600/10 rounded-full blur-2xl pointer-events-none"></div>
+
+            <div className="relative group transition-transform duration-300">
+              {/* Pulsing glow under the circle logo */}
+              <div className="absolute inset-0 bg-gradient-to-tr from-amber-500 via-orange-500 to-red-600 rounded-full scale-105 blur-lg opacity-25 group-hover:opacity-40 transition-opacity duration-500 animate-pulse"></div>
+              <AslIskanderLogoSymbol size={100} className="relative z-10" />
             </div>
-            <div>
-              <h1 className="text-base font-extrabold text-white">🍽️ مطعم أصل الاسكندر</h1>
-              <p className="text-[10px] text-slate-400 font-bold mt-1 tracking-wide">المنظومة المالية وحوكمة مبيعات الفروع الموحدة</p>
+
+            <div className="z-10 space-y-2 mt-1">
+              <AslIskanderText className="text-[13px] tracking-[0.25em]" />
+              <div className="flex items-center justify-center gap-1.5">
+                <h1 className="text-base font-black text-slate-100 tracking-tight">مطعم أصل الاسكندر</h1>
+                <span className="text-xs">🍽️</span>
+              </div>
+              <p className="text-[9px] text-orange-400/80 font-black tracking-widest uppercase">المنظومة المالية وحوكمة مبيعات الفروع الموحدة</p>
             </div>
           </div>
 
@@ -301,14 +313,18 @@ export default function App() {
       </AnimatePresence>
 
       {/* Top Navbar Header */}
-      <header className="bg-slate-900 text-slate-100 border-b border-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 shadow-xs">
-        <div className="flex items-center gap-2">
-          <div className="bg-indigo-600 rounded-lg p-2.5">
-            <Building2 className="w-5 h-5 text-white" />
+      <header className="bg-slate-900 text-slate-100 border-b border-slate-800 px-6 py-3 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="relative group transition-all duration-300">
+            <div className="absolute inset-0 bg-orange-500/10 rounded-full scale-110 blur-xs transition-opacity"></div>
+            <AslIskanderLogoSymbol size={42} className="relative z-10" />
           </div>
           <div>
-            <h1 className="text-base font-extrabold tracking-tight">🍽️ مطعم أصل الاسكندر</h1>
-            <p className="text-[10px] text-slate-400 font-bold tracking-wide mt-0.5">نظام الحوكمة المالية للفروع الموحدة</p>
+            <div className="flex items-center gap-1.5 flex-row-reverse justify-end">
+              <h1 className="text-sm font-black tracking-tight text-white leading-tight">مطعم أصل الاسكندر</h1>
+              <span className="text-xs">🍽️</span>
+            </div>
+            <p className="text-[9px] text-orange-400 font-bold tracking-wide mt-0.5">نظام الحوكمة المالية وإدارة الفروع الموحدة والمخزون الذكي</p>
           </div>
         </div>
 

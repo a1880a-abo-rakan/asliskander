@@ -454,7 +454,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
     : "غير متوفر";
 
   // Group items by name (consolidated) and calculate average lifespans of previous batches
-  const lifespanByItemName: Record<string, { totalDays: number; count: number; displayName: string }> = {};
+  const lifespanByItemName: Record<string, { totalDays: number; count: number; displayName: string; branch: 'القادسية' | 'المروج' | 'الكل' }> = {};
   
   // To do this accurately, let's group all purchases by their consolidated name and branch
   const groupedPurchases: Record<string, Purchase[]> = {};
@@ -468,9 +468,16 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
 
   // For each group, sort by date ascending and calculate lifespan of each item (except the last one in group, which is currently active)
   Object.entries(groupedPurchases).forEach(([groupKey, list]) => {
+    if (list.length === 0) return;
     const sorted = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     const normName = normalizeArabicString(getConsolidatedProductName(sorted[0].name));
     const displayName = getConsolidatedProductName(sorted[0].name);
+    const branch = sorted[0].branch as 'القادسية' | 'المروج' | 'الكل';
+
+    // Filter by branch choice in the UI
+    if (selectedBranch !== "الكل" && branch !== selectedBranch) return;
+
+    const mapKey = `${normName}_${branch}`;
 
     for (let i = 0; i < sorted.length - 1; i++) {
       const curr = sorted[i];
@@ -479,18 +486,19 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
       const end = new Date(next.date).getTime();
       if (start && end && end >= start) {
         const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-        if (!lifespanByItemName[normName]) {
-          lifespanByItemName[normName] = { totalDays: 0, count: 0, displayName };
+        if (!lifespanByItemName[mapKey]) {
+          lifespanByItemName[mapKey] = { totalDays: 0, count: 0, displayName, branch };
         }
-        lifespanByItemName[normName].totalDays += diffDays;
-        lifespanByItemName[normName].count += 1;
+        lifespanByItemName[mapKey].totalDays += diffDays;
+        lifespanByItemName[mapKey].count += 1;
       }
     }
   });
 
   const itemAverages = Object.entries(lifespanByItemName)
-    .map(([normName, stats]) => ({
+    .map(([key, stats]) => ({
       name: stats.displayName,
+      branch: stats.branch,
       avg: (stats.totalDays / stats.count).toFixed(1),
       count: stats.count,
     }))
@@ -878,11 +886,20 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
             <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
             <h3 className="text-xs font-black text-slate-800">📊 تفاصيل متوسط فترات الاستهلاك (العمر الفعلي لبقاء المواد في المستودع)</h3>
           </div>
-          <p className="text-[11px] text-slate-400 font-medium">يُظهر هذا التقرير متوسط عدد الأيام المستغرقة لكل سلعة منذ دخولها المستودع كخيار نشط حتى إعلان نفاذها واستبدالها بالطلب التالي:</p>
+          <p className="text-[11px] text-slate-400 font-medium">يُظهر هذا التقرير متوسط عدد الأيام المستغرقة لكل سلعة منذ دخولها المستودع كخيار نشط حتى إعلان نفاذها واستبدالها بالطلب التالي لكل فرع بشكل مستقل:</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {itemAverages.map((item, idx) => (
               <div key={idx} className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-[0_2px_8px_-3px_rgba(0,0,0,0.05)] flex flex-col justify-between gap-1 hover:border-indigo-200 transition-all">
-                <div className="text-xs font-extrabold text-slate-800 truncate">{item.name}</div>
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <div className="text-xs font-extrabold text-slate-800 truncate" title={item.name}>{item.name}</div>
+                  <span className={`px-1.5 py-0.5 rounded-md text-[8px] font-black shrink-0 ${
+                    item.branch === "القادسية" 
+                      ? "bg-amber-50 text-amber-600 border border-amber-100/50" 
+                      : "bg-teal-50 text-teal-600 border border-teal-100/50"
+                  }`}>
+                    {item.branch === "القادسية" ? "القادسية" : "المروج"}
+                  </span>
+                </div>
                 <div className="flex items-end justify-between mt-1">
                   <span className="text-[10px] text-slate-400 font-medium font-mono">طُلبت {item.count} مرّات</span>
                   <span className="text-xs font-black text-indigo-600 font-sans bg-indigo-50 px-2 py-0.5 rounded-md">
@@ -1050,9 +1067,15 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
               return {
                 date: p.date,
                 price: unitPrice,
+                price_qadsia: p.branch === "القادسية" ? unitPrice : undefined,
+                price_murooj: p.branch === "المروج" ? unitPrice : undefined,
                 qty: qtyNum,
-                qtyRaw: p.qty,
+                qty_qadsia: p.branch === "القادسية" ? qtyNum : undefined,
+                qty_murooj: p.branch === "المروج" ? qtyNum : undefined,
                 lifespan: analysis.currentDuration,
+                lifespan_qadsia: p.branch === "القادسية" ? analysis.currentDuration : undefined,
+                lifespan_murooj: p.branch === "المروج" ? analysis.currentDuration : undefined,
+                qtyRaw: p.qty,
                 depletionDate: analysis.depletionDate,
                 name: p.name,
                 branch: p.branch,
@@ -1096,7 +1119,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                       dx={8}
                       unit=" ريال"
                     />
-                    <Tooltip 
+                     <Tooltip 
                       contentStyle={{ 
                         direction: 'rtl', 
                         textAlign: 'right', 
@@ -1107,20 +1130,54 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                         boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
                       }} 
                       labelFormatter={(lbl) => `تاريخ الشراء: ${lbl}`}
-                      formatter={(val) => [
-                        `${Number(val).toFixed(2)} ريال سعودي`,
-                        `سعر الوحدة الفعلي: `
-                      ]}
+                      formatter={(val, name, props) => {
+                        const bName = props.payload?.branch ? ` (${props.payload.branch})` : "";
+                        return [
+                          `${Number(val).toFixed(2)} ريال سعودي`,
+                          `${name}${bName}: `
+                        ];
+                      }}
                     />
-                    <Line 
-                      type="monotone" 
-                      dataKey="price" 
-                      name="سعر الوحدة"
-                      stroke="#4f46e5" 
-                      strokeWidth={3} 
-                      activeDot={{ r: 6, strokeWidth: 0 }} 
-                      dot={{ r: 3, strokeWidth: 0, stroke: "#4f46e5", fill: "#4f46e5" }}
+                    <Legend 
+                      verticalAlign="top" 
+                      height={36} 
+                      iconType="circle" 
+                      wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} 
                     />
+                    {selectedBranch !== "الكل" ? (
+                      <Line 
+                        type="monotone" 
+                        dataKey="price" 
+                        name="سعر الوحدة"
+                        stroke="#4f46e5" 
+                        strokeWidth={3} 
+                        activeDot={{ r: 6, strokeWidth: 0 }} 
+                        dot={{ r: 3, strokeWidth: 0, stroke: "#4f46e5", fill: "#4f46e5" }}
+                      />
+                    ) : (
+                      <>
+                        <Line 
+                          type="monotone" 
+                          dataKey="price_qadsia" 
+                          name="سعر فرع القادسية"
+                          stroke="#d97706" 
+                          strokeWidth={3} 
+                          connectNulls
+                          activeDot={{ r: 6, strokeWidth: 0 }} 
+                          dot={{ r: 3, strokeWidth: 0, stroke: "#d97706", fill: "#d97706" }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="price_murooj" 
+                          name="سعر فرع المروج"
+                          stroke="#0d9488" 
+                          strokeWidth={3} 
+                          connectNulls
+                          activeDot={{ r: 6, strokeWidth: 0 }} 
+                          dot={{ r: 3, strokeWidth: 0, stroke: "#0d9488", fill: "#0d9488" }}
+                        />
+                      </>
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -1175,13 +1232,14 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                       }} 
                       labelFormatter={(lbl) => `تاريخ الشراء: ${lbl}`}
                       formatter={(value, name, props) => {
-                        if (name === "lifespan" || name === "فترة بقاء الدفعة بالمستودع (بالأيام)") {
-                          const depletionMsg = props.payload.depletionDate 
+                        const bName = props.payload?.branch ? ` (${props.payload.branch})` : "";
+                        if (String(name).toLowerCase().includes("lifespan") || String(name).includes("بقاء")) {
+                          const depletionMsg = props.payload?.depletionDate 
                             ? ` (حتى الشراء التالي في ${props.payload.depletionDate})`
                             : " (الدفعة الأحدث حالياً بمستودع الفرع)";
-                          return [`${value} يوم${depletionMsg}`, "مدة البقاء بالمستودع"];
+                          return [`${value} يوم${depletionMsg}`, `${name}${bName}`];
                         }
-                        return [`${value} (${props.payload.qtyRaw || props.payload.qty})`, "الكمية المشتراة للدفعة"];
+                        return [`${value} (${props.payload?.qtyRaw || props.payload?.qty || ""})`, `${name}${bName}`];
                       }}
                     />
                     <Legend 
@@ -1190,27 +1248,80 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                       iconType="circle" 
                       wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} 
                     />
-                    <Line 
-                      yAxisId="left"
-                      type="monotone" 
-                      dataKey="lifespan" 
-                      name="فترة بقاء الدفعة بالمستودع (بالأيام)"
-                      stroke="#3b82f6" 
-                      strokeWidth={3} 
-                      activeDot={{ r: 6, strokeWidth: 0 }} 
-                      dot={{ r: 3.5, strokeWidth: 0, stroke: "#3b82f6", fill: "#3b82f6" }}
-                    />
-                    <Line 
-                      yAxisId="right"
-                      type="monotone" 
-                      dataKey="qty" 
-                      name="الكمية المشتراة بالدفعة"
-                      stroke="#10b981" 
-                      strokeWidth={2} 
-                      strokeDasharray="4 4"
-                      activeDot={{ r: 5, strokeWidth: 0 }} 
-                      dot={{ r: 3, strokeWidth: 0, stroke: "#10b981", fill: "#10b981" }}
-                    />
+                    {selectedBranch !== "الكل" ? (
+                      <>
+                        <Line 
+                          yAxisId="left"
+                          type="monotone" 
+                          dataKey="lifespan" 
+                          name="فترة بقاء الدفعة بالمستودع (بالأيام)"
+                          stroke="#3b82f6" 
+                          strokeWidth={3} 
+                          activeDot={{ r: 6, strokeWidth: 0 }} 
+                          dot={{ r: 3.5, strokeWidth: 0, stroke: "#3b82f6", fill: "#3b82f6" }}
+                        />
+                        <Line 
+                          yAxisId="right"
+                          type="monotone" 
+                          dataKey="qty" 
+                          name="الكمية المشتراة بالدفعة"
+                          stroke="#10b981" 
+                          strokeWidth={2} 
+                          strokeDasharray="4 4"
+                          activeDot={{ r: 5, strokeWidth: 0 }} 
+                          dot={{ r: 3, strokeWidth: 0, stroke: "#10b981", fill: "#10b981" }}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Line 
+                          yAxisId="left"
+                          type="monotone" 
+                          dataKey="lifespan_qadsia" 
+                          name="بقاء القادسية (يوم)"
+                          stroke="#d97706" 
+                          strokeWidth={3} 
+                          connectNulls
+                          activeDot={{ r: 6, strokeWidth: 0 }} 
+                          dot={{ r: 3, strokeWidth: 0, stroke: "#d97706", fill: "#d97706" }}
+                        />
+                        <Line 
+                          yAxisId="right"
+                          type="monotone" 
+                          dataKey="qty_qadsia" 
+                          name="كمية القادسية"
+                          stroke="#b45309" 
+                          strokeWidth={1.5} 
+                          strokeDasharray="2 2"
+                          connectNulls
+                          activeDot={{ r: 4, strokeWidth: 0 }} 
+                          dot={{ r: 2, strokeWidth: 0, stroke: "#b45309", fill: "#b45309" }}
+                        />
+                        <Line 
+                          yAxisId="left"
+                          type="monotone" 
+                          dataKey="lifespan_murooj" 
+                          name="بقاء المروج (يوم)"
+                          stroke="#0d9488" 
+                          strokeWidth={3} 
+                          connectNulls
+                          activeDot={{ r: 6, strokeWidth: 0 }} 
+                          dot={{ r: 3, strokeWidth: 0, stroke: "#0d9488", fill: "#0d9488" }}
+                        />
+                        <Line 
+                          yAxisId="right"
+                          type="monotone" 
+                          dataKey="qty_murooj" 
+                          name="كمية المروج"
+                          stroke="#0f766e" 
+                          strokeWidth={1.5} 
+                          strokeDasharray="2 2"
+                          connectNulls
+                          activeDot={{ r: 4, strokeWidth: 0 }} 
+                          dot={{ r: 2, strokeWidth: 0, stroke: "#0f766e", fill: "#0f766e" }}
+                        />
+                      </>
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
