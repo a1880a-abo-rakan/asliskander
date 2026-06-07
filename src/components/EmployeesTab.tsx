@@ -38,6 +38,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
   // Forms States - Employee
   const [empName, setEmpName] = useState("");
   const [empJob, setEmpJob] = useState("");
+  const [empPhone, setEmpPhone] = useState("");
   const [empSalary, setEmpSalary] = useState<number>(3000);
   const [empLimit, setEmpLimit] = useState<number>(25);
   const [empArrival, setEmpArrival] = useState("08:00");
@@ -120,7 +121,8 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
       salary: Number(empSalary),
       advanceLimitPercent: Number(empLimit),
       requiredArrivalTime: empArrival,
-      requiredDepartureTime: empDeparture
+      requiredDepartureTime: empDeparture,
+      phone: empPhone.trim()
     };
 
     try {
@@ -133,6 +135,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
         onShowToast(`✅ تم إضافة الموظف "${empName}" بنجاح وتعيين خطة الدوام`);
         setEmpName("");
         setEmpJob("");
+        setEmpPhone("");
         setEmpSalary(3000);
         setEmpLimit(25);
         setEmpArrival("08:00");
@@ -548,6 +551,16 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900"
                   />
                 </div>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-700">رقم الهاتف (الواتساب)</label>
+                  <input
+                    type="text"
+                    placeholder="مثل 05xxxxxxxx أو 9665xxxxxxxx"
+                    value={empPhone}
+                    onChange={(e) => setEmpPhone(e.target.value)}
+                    className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="block text-xs font-bold text-slate-700">الراتب الشهري (ر.س)</label>
@@ -639,7 +652,12 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     <tbody className="divide-y divide-slate-50 text-xs">
                       {employees.map((emp) => (
                         <tr key={emp.id} className="hover:bg-slate-50 font-medium">
-                          <td className="py-3.5 px-2 text-slate-900 font-bold">{emp.name}</td>
+                          <td className="py-3.5 px-2 text-slate-900 font-bold">
+                            <div>{emp.name}</div>
+                            {emp.phone && (
+                              <div className="text-[10px] text-slate-400 font-mono mt-0.5" dir="ltr">📞 {emp.phone}</div>
+                            )}
+                          </td>
                           <td className="py-3.5 px-2 text-slate-600">{emp.job}</td>
                           <td className="py-3.5 px-2 text-center font-mono text-slate-800 text-xs font-bold">
                             {emp.salary.toLocaleString("ar-SA")} ر.س

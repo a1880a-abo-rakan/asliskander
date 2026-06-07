@@ -306,8 +306,40 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [dailyCashKeyTrigger, setDailyCashKeyTrigger] = useState<number>(0);
 
   const getDailyCash = (dateStr: string) => {
+    if (!isTaxCalculated) return 0;
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
-    return saved !== null ? (parseFloat(saved) || 0) : 0;
+    if (saved !== null) return parseFloat(saved) || 0;
+
+    // Fallback to period cashInput distributed to days with invoices
+    const invoiceDates = filteredInvoices.map((inv) => inv.invoice_date || inv.date);
+    const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
+
+    if (uniqueInvoiceDates.includes(dateStr)) {
+      if (uniqueInvoiceDates.length === 1) {
+        return cashInput;
+      } else {
+        return cashInput / uniqueInvoiceDates.length;
+      }
+    }
+    return 0;
+  };
+
+  const getDailyCashDisplayValue = (dateStr: string) => {
+    if (!isTaxCalculated) return "";
+    const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
+    if (saved !== null) return saved;
+
+    const invoiceDates = filteredInvoices.map((inv) => inv.invoice_date || inv.date);
+    const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
+
+    if (uniqueInvoiceDates.includes(dateStr)) {
+      if (uniqueInvoiceDates.length === 1) {
+        return String(cashInput);
+      } else {
+        return (cashInput / uniqueInvoiceDates.length).toFixed(2);
+      }
+    }
+    return "";
   };
 
   const getArabicDayName = (dateStr: string) => {
@@ -1751,7 +1783,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 {/* Empty/Editable manual Cash field */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-indigo-950 flex items-center gap-1">
-                    مبلغ دخل الكاش اليدوي للفترة <span className="text-indigo-600 font-normal opacity-80">(خانة إدخال يدوياً)</span>
+                    مبلغ دخل الكاش للفترة <span className="text-indigo-600 font-normal opacity-80">(خانة إدخال)</span>
                   </label>
                   <div className="relative">
                     <input
@@ -1805,7 +1837,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       <tr className="bg-slate-100/80 border-b border-slate-300 text-slate-800 font-extrabold print:bg-slate-50 print:border-b-2">
                         <th className="p-3 border-l border-slate-300 text-center w-32">التاريخ واليوم</th>
                         <th className="p-3 border-l border-slate-300 text-left w-24">دخل الشبكة (نقاط البيع)</th>
-                        <th className="p-3 border-l border-slate-300 text-center w-28 print:p-1">دخل الكاش اليدوي</th>
+                        <th className="p-3 border-l border-slate-300 text-center w-28 print:p-1">دخل الكاش</th>
                         <th className="p-3 border-l border-slate-300 text-left w-28 bg-slate-50/40">مجموع الدخل الكلي (1)</th>
                         <th className="p-3 border-l border-slate-300 text-right">اسم المؤسسة / المورد</th>
                         <th className="p-3 border-l border-slate-300 text-center w-24">رقم الفاتورة</th>
@@ -1819,14 +1851,27 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       {(() => {
                         const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
                         
-                        // Extract unique dates from branchDays and filteredInvoices
-                        const dailyDatesSet = new Set<string>(branchDays.map((b: any) => b.date));
+                        // Generate all sequential dates from the start range (from) to the end range (to)
+                        const getDatesInRange = (startStr: string, endStr: string): string[] => {
+                          if (!startStr || !endStr) return [];
+                          const dates: string[] = [];
+                          const start = new Date(startStr);
+                          const end = new Date(endStr);
+                          const curr = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+                          const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+                          
+                          while (curr <= last) {
+                            const yr = curr.getUTCFullYear();
+                            const mo = String(curr.getUTCMonth() + 1).padStart(2, '0');
+                            const dy = String(curr.getUTCDate()).padStart(2, '0');
+                            dates.push(`${yr}-${mo}-${dy}`);
+                            curr.setUTCDate(curr.getUTCDate() + 1);
+                          }
+                          return dates;
+                        };
+
                         const invoiceDatesSet = new Set<string>(filteredInvoices.map((inv) => inv.invoice_date || inv.date));
-                        
-                        // Union of both, filtered to the selected range from/to
-                        const allUniqueDates = Array.from(new Set([...dailyDatesSet, ...invoiceDatesSet]))
-                          .filter(dateStr => dateStr >= from && dateStr <= to)
-                          .sort((a, b) => a.localeCompare(b));
+                        const allUniqueDates = getDatesInRange(from, to).filter(dateStr => invoiceDatesSet.has(dateStr));
 
                         if (allUniqueDates.length === 0) {
                           return (
@@ -1883,7 +1928,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                         <input
                                           type="number"
                                           step="0.01"
-                                          value={localStorage.getItem(`tax_cash_${branch}_${d.date}_${d.date}`) || ""}
+                                          value={getDailyCashDisplayValue(d.date)}
                                           placeholder="0.00"
                                           onChange={(e) => {
                                             const val = e.target.value;
@@ -1978,7 +2023,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                             <input
                                               type="number"
                                               step="0.01"
-                                              value={localStorage.getItem(`tax_cash_${branch}_${d.date}_${d.date}`) || ""}
+                                              value={getDailyCashDisplayValue(d.date)}
                                               placeholder="0.00"
                                               onChange={(e) => {
                                                 const val = e.target.value;

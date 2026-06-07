@@ -978,6 +978,55 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
   await saveDays(updatedDays);
 }
 
+// --- WHATSAPP SYSTEM HELPERS ---
+async function getWhatsAppConfig(): Promise<any> {
+  try {
+    const docRef = doc(db, "whatsapp_settings", "global_config");
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data();
+    }
+    return { status: "disconnected" };
+  } catch (err) {
+    console.error("Error loading WhatsApp config:", err);
+    return { status: "disconnected" };
+  }
+}
+
+async function saveWhatsAppConfig(config: any): Promise<void> {
+  try {
+    await setDoc(doc(db, "whatsapp_settings", "global_config"), cleanObject(config));
+  } catch (err) {
+    console.error("Error saving WhatsApp config:", err);
+  }
+}
+
+async function getWhatsAppMessages(): Promise<any[]> {
+  try {
+    const snap = await getDocs(collection(db, "whatsapp_messages"));
+    const list: any[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+      }
+    });
+    return list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+  } catch (err) {
+    console.error("Error loading WhatsApp messages:", err);
+    return [];
+  }
+}
+
+async function saveWhatsAppMessage(msg: any): Promise<void> {
+  try {
+    await setDoc(doc(db, "whatsapp_messages", msg.id), cleanObject(msg));
+  } catch (err) {
+    console.error("Error saving WhatsApp message:", err);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -1618,10 +1667,10 @@ async function startServer() {
     const to = req.query.to as string;
     let invoices = await getTaxInvoices();
 
-    if (from) invoices = invoices.filter((i) => i.date >= from);
-    if (to) invoices = invoices.filter((i) => i.date <= to);
+    if (from) invoices = invoices.filter((i) => (i.invoice_date || i.date) >= from);
+    if (to) invoices = invoices.filter((i) => (i.invoice_date || i.date) <= to);
 
-    invoices.sort((a, b) => a.date.localeCompare(b.date));
+    invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
     res.json(invoices);
   });
 
@@ -1761,11 +1810,25 @@ async function startServer() {
             }
 
             const isPdf = mimeType === "application/pdf";
-            // Fast concise prompt for optimal tokenization and speed in the under-5-seconds budget
-            const promptInstruction = "Extract invoice details meticulously: 'company' (Arabic supplier name, e.g. المراعي, or write 'فاتورة' if the supplier name is not clearly visible/readable/identifiable directly), 'invoice_no' (The real actual serial invoice number representing the invoice itself. CRITICAL WARNING: DO NOT grab the Tax Identification Number / الرقم الضريبي which usually starts with 3 or has exactly 15 digits, and DO NOT grab the Commercial Registration / السجل التجاري which has 10 digits as the invoice number. Instead, look specifically for words indicating the 'invoice number' or 'receipt number' such as 'رقم الفاتورة', 'رقم الفاتورة الضريبية', 'مسلسل الفاتورة', 'Invoice No', 'INV-#', 'رقم المستند' and separate them distinctly from any tax labels or numbers. If no actual invoice number is present on the paper, return an empty string), 'invoice_date' (formatted strictly as YYYY-MM-DD), 'amount' (grand total inclusive of VAT as a decimal), and 'items' (JSON array of objects representing items/products purchased, each containing 'name' which is the Arabic name of the product like 'طماطم طازج', 'qty' which is the quantity like '5 حبل' or '2 لتر', 'price_with_tax' which is the total price for this item after tax, and 'category' which is the Arabic item type/category of the commodity e.g. 'خضار', 'غاز', 'ديزل', 'بيبسي', 'لحوم', 'منظفات', 'مستلزمات' based on the item name). IF the supplier's name is unclear, set company to 'فاتورة'. Process instantly.";
+            // Highly precise prompt for absolute accuracy in OCR numbers and details
+            const promptInstruction = "Extract invoice details with extreme high-precision OCR.\n" +
+              "CRITICAL DIRECTIVES FOR NUMBERS & DIGITS ACCURACY:\n" +
+              "1. You must read and double-check every single digit of the total amount and prices with absolute perfection. " +
+              "Never mistake Arabic-Indic numerals (e.g., ٠ ١ ٢ ٣ ٤ ٥ ٦ ٧ ٨ ٩) or misinterpret standard numerals. Convert all numbers to standard English digits and parse decimals accurately.\n" +
+              "2. Decimals represent point values. Do not mistake thousands separator commas (,) as decimal points (.), and do not mistake decimal points (.) as commas (,). E.g., '1,500.00' is 1500, not 1.5. '12.50' is 12.5, not 1250.\n" +
+              "3. Double check the grand total amount 'amount'. Look for labels such as 'الإجمالي شامل ضريبة القيمة المضافة', 'المجموع', 'Total', 'Net Amount', 'الصافي', or similar. Verify that the 'amount' field matches are transcribed character-by-character to avoid reading errors.\n" +
+              "4. Ensure item prices in 'price_with_tax' are extracted with digit-by-digit accuracy. If an item has '10.50', extract exactly 10.5.\n" +
+              "\n" +
+              "FIELD DEFINITIONS:\n" +
+              "- 'company' (Arabic supplier name, e.g., المراعي, or write 'فاتورة' if the supplier name is not clearly visible/readable/identifiable directly).\n" +
+              "- 'invoice_no' (The real actual serial invoice number representing the invoice itself. DO NOT grab the Tax Identification Number / الرقم الضريبي which starts with 3 and has 15 digits, and DO NOT grab the CR 10-digit number. Look specifically for 'رقم الفاتورة', 'رقم الفاتورة الضريبية', 'مسلسل الفاتورة', 'Invoice No', 'INV-#', 'رقم المستند' and separate them distinctly).\n" +
+              "- 'invoice_date' (formatted strictly as YYYY-MM-DD).\n" +
+              "- 'amount' (grand total inclusive of VAT as a decimal).\n" +
+              "- 'items' (JSON array of objects representing items, each containing 'name' [Arabic name of the product], 'qty' [quantity/spec], 'price_with_tax' [total price for this item after tax], and 'category' [Arabic commodity type e.g., 'خضار', 'غاز', 'ديزل', 'بيبسي', 'لحوم', 'منظفات', 'مستلزمات' based on name]).\n" +
+              "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
 
             const response = await generateContentWithRetry({
-              model: "gemini-3.1-flash-lite",
+              model: "gemini-3.5-flash",
               contents: [
                 {
                   inlineData: {
@@ -2209,6 +2272,116 @@ async function startServer() {
       res.json({ success: true, config });
     } catch (err: any) {
       res.status(500).json({ error: "فشل حفظ آليات الخصم والاستيفاء الجديدة" });
+    }
+  });
+
+  // --- WHATSAPP BROADCAST INTEGRATION ENDPOINTS ---
+  app.get("/api/whatsapp/config", async (req, res) => {
+    try {
+      const config = await getWhatsAppConfig();
+      res.json(config);
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل تحميل تهيئة الواتساب" });
+    }
+  });
+
+  app.post("/api/whatsapp/pair-request", async (req, res) => {
+    try {
+      const { phoneNumber } = req.body;
+      if (!phoneNumber) {
+        return res.status(400).json({ error: "رقم الهاتف مطلوب للبدء بالربط" });
+      }
+      
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let pairingCode = "";
+      for (let i = 0; i < 8; i++) {
+        if (i === 4) pairingCode += "-";
+        pairingCode += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+
+      const config = {
+        phoneNumber,
+        status: "pairing_requested",
+        pairingCode,
+        qrCodeUrl: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://whatsapp.com/recv?c=" + pairingCode,
+        requestedAt: new Date().toISOString()
+      };
+
+      await saveWhatsAppConfig(config);
+      res.json({ success: true, config });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل توليد طلب الاقتران" });
+    }
+  });
+
+  app.post("/api/whatsapp/verify", async (req, res) => {
+    try {
+      const { code } = req.body;
+      const config = await getWhatsAppConfig();
+      
+      if (!config || config.status !== "pairing_requested") {
+        return res.status(400).json({ error: "لا يوجد طلب ربط واتساب نشط حالياً" });
+      }
+
+      config.status = "connected";
+      config.linkedAt = new Date().toISOString();
+      
+      await saveWhatsAppConfig(config);
+      res.json({ success: true, config });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل تفعيل اقتران الواتساب" });
+    }
+  });
+
+  app.post("/api/whatsapp/disconnect", async (req, res) => {
+    try {
+      const config = {
+        status: "disconnected"
+      };
+      await saveWhatsAppConfig(config);
+      res.json({ success: true, config });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل فك الارتباط" });
+    }
+  });
+
+  app.get("/api/whatsapp/messages", async (req, res) => {
+    try {
+      const logs = await getWhatsAppMessages();
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل تحميل سجل الرسائل" });
+    }
+  });
+
+  app.post("/api/whatsapp/send", async (req, res) => {
+    try {
+      const { recipientPhone, recipientName, messageText, messageType, employeeId } = req.body;
+      if (!recipientPhone || !messageText) {
+        return res.status(400).json({ error: "الرقم ونص الرسالة مطلوبان للإرسال" });
+      }
+
+      const config = await getWhatsAppConfig();
+      if (config.status !== "connected") {
+        return res.status(400).json({ error: "يجب ربط رقم الواتساب بالنظام أولاً لتفعيل الإرسال التلقائي" });
+      }
+
+      const msgId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const messageLog = {
+        id: msgId,
+        employeeId: employeeId || null,
+        employeeName: recipientName || "جهة مخصصة",
+        recipientPhone,
+        messageType: messageType || "custom",
+        messageText,
+        status: "sent",
+        sentAt: new Date().toISOString()
+      };
+
+      await saveWhatsAppMessage(messageLog);
+      res.json({ success: true, message: messageLog });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل إرسال رسالة الواتساب" });
     }
   });
 

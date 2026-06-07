@@ -156,6 +156,7 @@ export interface Employee {
   advanceLimitPercent: number; // default 25, manager can increase
   requiredArrivalTime: string; // e.g. "04:00 PM"
   requiredDepartureTime: string; // e.g. "01:00 AM"
+  phone?: string;
   createdAt: string;
 }
 
