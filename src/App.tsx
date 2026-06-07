@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, Settings as SettingsIcon, BarChart3, Receipt,
   User, Shield, Calendar, LogOut, Check, Building2, Terminal, ShoppingBag, Users,
-  Timer, AlertTriangle, MessageSquare
+  Timer, AlertTriangle
 } from "lucide-react";
 import DailyInputTab from "./components/DailyInputTab";
 import PurchasesTab from "./components/PurchasesTab";
@@ -11,16 +11,15 @@ import TaxTab from "./components/TaxTab";
 import ReportsTab from "./components/ReportsTab";
 import EmployeesTab from "./components/EmployeesTab";
 import SettingsTab from "./components/SettingsTab";
-import MessagesTab from "./components/MessagesTab";
 import { AslIskanderLogoSymbol, AslIskanderText } from "./components/AslIskanderLogo";
 
-type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings" | "messages";
+type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings";
 type RoleType = "مدير" | "محاسب" | "مدخل فواتير";
 
 const PERMISSIONS: Record<RoleType, Record<TabType, boolean>> = {
-  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true, messages: true },
-  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, messages: true },
-  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false, messages: false }
+  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true },
+  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false },
+  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false }
 };
 
 interface UserSession {
@@ -432,19 +431,6 @@ export default function App() {
             </button>
           )}
 
-          {isTabAllowed("messages") && (
-            <button
-              onClick={() => setActiveTab("messages")}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === "messages"
-                  ? "bg-slate-900 text-white shadow-xs"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 text-emerald-500" /> التعاميم والرسائل
-            </button>
-          )}
-
           {isTabAllowed("settings") && (
             <button
               onClick={() => setActiveTab("settings")}
@@ -483,9 +469,6 @@ export default function App() {
               )}
               {activeTab === "employees" && isTabAllowed("employees") && (
                 <EmployeesTab onShowToast={showToast} userRole={userRole} />
-              )}
-              {activeTab === "messages" && isTabAllowed("messages") && (
-                <MessagesTab onShowToast={showToast} userRole={userRole} />
               )}
               {activeTab === "settings" && isTabAllowed("settings") && (
                 <SettingsTab onShowToast={showToast} userRole={userRole} />

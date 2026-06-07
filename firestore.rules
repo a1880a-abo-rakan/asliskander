@@ -42,6 +42,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // 8. WhatsApp Gateway settings rules
+    match /whatsapp_settings/{docId} {
+      allow read, write: if true;
+    }
+
+    // 9. WhatsApp Gateway logs rules
+    match /whatsapp_messages/{docId} {
+      allow read, write: if true;
+    }
+
     // Global Safety Net (Default Deny Catch All)
     match /{document=**} {
       allow read, write: if false;

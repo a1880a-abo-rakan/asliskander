@@ -207,6 +207,36 @@
         "invoiceId": { "type": "string" }
       },
       "required": ["id", "name", "date", "price", "branch", "status"]
+    },
+    "WhatsAppSettings": {
+      "title": "WhatsAppSettings",
+      "description": "System WhatsApp gateway gateway and pairing configuration state",
+      "type": "object",
+      "properties": {
+        "phoneNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["disconnected", "pairing_requested", "connected"] },
+        "pairingCode": { "type": "string" },
+        "qrCodeUrl": { "type": "string" },
+        "requestedAt": { "type": "string" },
+        "linkedAt": { "type": "string" }
+      },
+      "required": ["status"]
+    },
+    "WhatsAppMessage": {
+      "title": "WhatsAppMessage",
+      "description": "Sent broadcast alert logs registry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "recipientPhone": { "type": "string" },
+        "messageType": { "type": "string", "enum": ["custom", "warning", "advance", "salary"] },
+        "messageText": { "type": "string" },
+        "status": { "type": "string" },
+        "sentAt": { "type": "string" }
+      },
+      "required": ["id", "employeeName", "recipientPhone", "messageText", "status", "sentAt"]
     }
   },
   "firestore": {
@@ -245,6 +275,14 @@
     "employee_attendance": {
       "schema": "EmployeeAttendance",
       "description": "Daily attendance punch items"
+    },
+    "whatsapp_settings": {
+      "schema": "WhatsAppSettings",
+      "description": "Configuration matching physical device state"
+    },
+    "whatsapp_messages": {
+      "schema": "WhatsAppMessage",
+      "description": "Audit trails of alerts dispatched to employees"
     }
   }
 }

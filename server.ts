@@ -979,25 +979,30 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
 }
 
 // --- WHATSAPP SYSTEM HELPERS ---
+let memoryWhatsAppConfig: any = { status: "disconnected" };
+let memoryWhatsAppMessages: any[] = [];
+
 async function getWhatsAppConfig(): Promise<any> {
   try {
     const docRef = doc(db, "whatsapp_settings", "global_config");
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return snap.data();
+      const data = snap.data();
+      memoryWhatsAppConfig = data;
+      return data;
     }
-    return { status: "disconnected" };
   } catch (err) {
-    console.error("Error loading WhatsApp config:", err);
-    return { status: "disconnected" };
+    console.error("Error loading WhatsApp config from Firestore, fallback to memory:", err);
   }
+  return memoryWhatsAppConfig || { status: "disconnected" };
 }
 
 async function saveWhatsAppConfig(config: any): Promise<void> {
+  memoryWhatsAppConfig = config;
   try {
     await setDoc(doc(db, "whatsapp_settings", "global_config"), cleanObject(config));
   } catch (err) {
-    console.error("Error saving WhatsApp config:", err);
+    console.error("Error saving WhatsApp config to Firestore, using memory content anyway:", err);
   }
 }
 
@@ -1012,18 +1017,21 @@ async function getWhatsAppMessages(): Promise<any[]> {
         list.push(data);
       }
     });
-    return list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+    const sorted = list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+    memoryWhatsAppMessages = sorted;
+    return sorted;
   } catch (err) {
-    console.error("Error loading WhatsApp messages:", err);
-    return [];
+    console.error("Error loading WhatsApp messages from Firestore, fallback to memory:", err);
+    return memoryWhatsAppMessages;
   }
 }
 
 async function saveWhatsAppMessage(msg: any): Promise<void> {
+  memoryWhatsAppMessages.unshift(msg);
   try {
     await setDoc(doc(db, "whatsapp_messages", msg.id), cleanObject(msg));
   } catch (err) {
-    console.error("Error saving WhatsApp message:", err);
+    console.error("Error saving WhatsApp message to Firestore, kept in memory anyway:", err);
   }
 }
 
@@ -2354,6 +2362,27 @@ async function startServer() {
     }
   });
 
+  app.post("/api/whatsapp/save-gateway", async (req, res) => {
+    try {
+      const { instanceId, token, gatewayEnabled, provider } = req.body;
+      const config = await getWhatsAppConfig();
+      
+      const updatedConfig = {
+        ...config,
+        instanceId: instanceId || "",
+        token: token || "",
+        gatewayEnabled: !!gatewayEnabled,
+        provider: provider || "ultramsg",
+        status: gatewayEnabled ? "connected" : (config.status || "disconnected")
+      };
+
+      await saveWhatsAppConfig(updatedConfig);
+      res.json({ success: true, config: updatedConfig });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل حفظ إعدادات بوابة الإرسال الفوري" });
+    }
+  });
+
   app.post("/api/whatsapp/send", async (req, res) => {
     try {
       const { recipientPhone, recipientName, messageText, messageType, employeeId } = req.body;
@@ -2363,7 +2392,49 @@ async function startServer() {
 
       const config = await getWhatsAppConfig();
       if (config.status !== "connected") {
-        return res.status(400).json({ error: "يجب ربط رقم الواتساب بالنظام أولاً لتفعيل الإرسال التلقائي" });
+        return res.status(400).json({ error: "يجب ربط رقم الواتساب بالنظام أولاً لتفعيل الإرسال" });
+      }
+
+      // Check for custom gateway integration
+      const isGatewayEnabled = config.gatewayEnabled;
+      const instanceId = (config.instanceId || process.env.WHATSAPP_INSTANCE_ID || "").trim();
+      const token = (config.token || process.env.WHATSAPP_API_TOKEN || "").trim();
+
+      const isRealSending = isGatewayEnabled && instanceId && token && !token.includes("xxxx") && !instanceId.includes("instanceXXX");
+      let statusLog = "sent";
+      let errorDetail = "";
+
+      if (isRealSending) {
+        // Prepare phone number (e.g. 9665xxxxxxxx)
+        let cleanPhone = recipientPhone.replace(/[^0-9]/g, "");
+        if (cleanPhone.startsWith("05") && cleanPhone.length === 10) {
+          cleanPhone = "966" + cleanPhone.substring(1);
+        } else if (cleanPhone.startsWith("5") && cleanPhone.length === 9) {
+          cleanPhone = "966" + cleanPhone;
+        }
+
+        try {
+          const url = `https://api.ultramsg.com/${instanceId}/messages/chat`;
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              token: token,
+              to: cleanPhone,
+              body: messageText
+            })
+          });
+
+          const data = await response.json().catch(() => ({}));
+          
+          if (!response.ok || (data.sent !== "true" && !data.success && !data.id)) {
+            statusLog = "failed";
+            errorDetail = data.error || `استجابة خاطئة من بوابة الإرسال (رمز ${response.status})`;
+          }
+        } catch (fetchErr: any) {
+          statusLog = "failed";
+          errorDetail = fetchErr.message || "فشل الاتصال بخادم بوابة الواتساب الخارجية";
+        }
       }
 
       const msgId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -2374,12 +2445,17 @@ async function startServer() {
         recipientPhone,
         messageType: messageType || "custom",
         messageText,
-        status: "sent",
+        status: statusLog,
         sentAt: new Date().toISOString()
       };
 
       await saveWhatsAppMessage(messageLog);
-      res.json({ success: true, message: messageLog });
+
+      if (statusLog === "failed") {
+        return res.status(400).json({ error: `فشل الإرسال عبر البوابة: ${errorDetail}` });
+      }
+
+      res.json({ success: true, message: messageLog, isRealGatewayUsed: isRealSending });
     } catch (err: any) {
       res.status(500).json({ error: "فشل إرسال رسالة الواتساب" });
     }
