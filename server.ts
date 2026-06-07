@@ -948,7 +948,8 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
     const visa_total = (entry.visa1 || 0) + (entry.visa2 || 0) + (entry.visa3 || 0);
     
     entry.pos_net = Number((mada_total * (1 - madaFee) + visa_total * (1 - visaFee)).toFixed(2));
-    entry.cash_net = Number(((entry.cash_box || 0) - (entry.sarf || 350) + (entry.cash_purchases || 0)).toFixed(2));
+    const currentSarf = (entry.sarf !== undefined && entry.sarf !== null) ? entry.sarf : 350;
+    entry.cash_net = Number(((entry.cash_box || 0) - currentSarf + (entry.cash_purchases || 0)).toFixed(2));
     entry.total_sales = Number((entry.cash_net + entry.pos_net).toFixed(2));
 
     const othersSum = (entry.others || []).reduce((s: number, o: any) => s + (o.amt || 0), 0);
@@ -1410,11 +1411,67 @@ async function startServer() {
     const visa_total = (data.visa1 || 0) + (data.visa2 || 0) + (data.visa3 || 0);
     
     const pos_net = Number((mada_total * (1 - madaFee) + visa_total * (1 - visaFee)).toFixed(2));
-    const cash_net = Number(((data.cash_box || 0) - (data.sarf || 350) + (data.cash_purchases || 0)).toFixed(2));
+    const currentSarf = (data.sarf !== undefined && data.sarf !== null) ? data.sarf : 350;
+    const cash_net = Number(((data.cash_box || 0) - currentSarf + (data.cash_purchases || 0)).toFixed(2));
     const total_sales = Number((cash_net + pos_net).toFixed(2));
 
     const id = `${data.branch}-${data.date}`;
     const allDays = await getDays();
+
+    // Automatic diesel purchase split helper for "القادسية" or "المروج"
+    const otherBranchName = data.branch === "القادسية" ? "المروج" : "القادسية";
+    if (data.diesel_type === 'invoice') {
+      const incomingDieselVal = data.diesel_paid || 0;
+      const existing = allDays.find((d) => d.id === id);
+      const existingDieselVal = existing ? (existing.diesel_paid || 0) : 0;
+      const existingType = existing ? existing.diesel_type : undefined;
+
+      // Only perform split if the diesel_paid value has changed or if it was not an invoice previously
+      if (incomingDieselVal !== existingDieselVal || existingType !== 'invoice') {
+        const qRatio = (settings.نسبة_قادسية_ديزل || 70) / 100;
+        const mRatio = (settings.نسبة_مروج_ديزل || 30) / 100;
+
+        const saveBranchRatio = data.branch === "القادسية" ? qRatio : mRatio;
+        const otherBranchRatio = data.branch === "القادسية" ? mRatio : qRatio;
+
+        const saveShare = Number((incomingDieselVal * saveBranchRatio).toFixed(2));
+        const otherShare = Number((incomingDieselVal * otherBranchRatio).toFixed(2));
+
+        // Override the diesel_paid for the branch currently being saved
+        data.diesel_paid = saveShare;
+
+        // Apply corresponding share to the other branch's daily entry for that same date
+        const otherId = `${otherBranchName}-${data.date}`;
+        const otherIndex = allDays.findIndex((d) => d.id === otherId);
+
+        if (otherIndex >= 0) {
+          allDays[otherIndex].diesel_paid = otherShare;
+          allDays[otherIndex].diesel_type = 'invoice';
+        } else if (otherShare > 0) {
+          const raw_entry: DailyEntry = {
+            id: otherId,
+            date: data.date,
+            branch: otherBranchName,
+            sarf: 0,
+            cash_box: 0,
+            cash_purchases: 0,
+            mada1: 0, mada2: 0, mada3: 0,
+            visa1: 0, visa2: 0, visa3: 0,
+            pos_net: 0, cash_net: 0, total_sales: 0,
+            makhzan: 0,
+            pepsi_paid: 0, pepsi_carry_prev: 0, pepsi_deduct: 0, pepsi_carry_next: 0,
+            plastic_paid: 0, plastic_carry_prev: 0, plastic_deduct: 0, plastic_carry_next: 0,
+            sauces_paid: 0, sauces_carry_prev: 0, sauces_deduct: 0, sauces_carry_next: 0,
+            gas: 0, vegetables: 0, bread: 0, grocery: 0,
+            diesel_paid: otherShare, diesel_carry_prev: 0, diesel_deduct: 0, diesel_carry_next: 0,
+            diesel_type: 'invoice',
+            others: [], fixed_deduct: 0, fixed_note: "حصة الطرف الآخر من فاتورة ديزل مشتركة في اليومية",
+            notes: "", net_day: 0
+          };
+          allDays.push(raw_entry);
+        }
+      }
+    }
 
     // Create entry
     const entry: DailyEntry = {
@@ -1483,14 +1540,21 @@ async function startServer() {
     }
     await saveDays(allDays);
 
-    // Call dynamic carry-over recalculation loop!
-    await recalculateCarryOvers(data.branch);
+    // Call dynamic carry-over recalculation loop for both branches sequentially
+    await recalculateCarryOvers("القادسية");
+    await recalculateCarryOvers("المروج");
 
     // Fetch refreshed result back
     const refreshed = (await getDays()).find((d) => d.id === id);
-
     if (refreshed) {
       await autoRegisterDayInputsAsPurchases(refreshed);
+    }
+
+    // Also auto-register purchase items for the other branch on that date if updated
+    const otherId = `${otherBranchName}-${data.date}`;
+    const refreshedOther = (await getDays()).find((d) => d.id === otherId);
+    if (refreshedOther) {
+      await autoRegisterDayInputsAsPurchases(refreshedOther);
     }
 
     res.json({
@@ -1638,18 +1702,19 @@ async function startServer() {
           id: dayId,
           date: data.date,
           branch,
-          sarf: settings.صرف_افتراضي || 350,
+          sarf: 0,
           cash_box: 0,
           cash_purchases: 0,
           mada1: 0, mada2: 0, mada3: 0,
           visa1: 0, visa2: 0, visa3: 0,
-          pos_net: 0, cash_net: - (settings.صرف_افتراضي || 350), total_sales: - (settings.صرف_افتراضي || 350),
+          pos_net: 0, cash_net: 0, total_sales: 0,
           makhzan: 0,
           pepsi_paid: 0, pepsi_carry_prev: 0, pepsi_deduct: 0, pepsi_carry_next: 0,
           plastic_paid: 0, plastic_carry_prev: 0, plastic_deduct: 0, plastic_carry_next: 0,
           sauces_paid: 0, sauces_carry_prev: 0, sauces_deduct: 0, sauces_carry_next: 0,
           gas: 0, vegetables: 0, bread: 0, grocery: 0,
           diesel_paid: share, diesel_carry_prev: 0, diesel_deduct: 0, diesel_carry_next: 0,
+          diesel_type: 'invoice',
           others: [], fixed_deduct: 0, fixed_note: "فاتورة ديزل مشتركة ببرمجة النظام",
           notes: "", net_day: 0
         };
