@@ -516,47 +516,46 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
         <meta charset="UTF-8">
         <title>طباعة تقرير مطعم أصل الاسكندر التفصيلي</title>
         <style>
-          * { box-sizing: border-box; }
+          * { 
+            box-sizing: border-box; 
+            -webkit-print-color-adjust: exact !important; 
+            print-color-adjust: exact !important; 
+          }
           html, body {
             margin: 0;
             padding: 0;
             width: 100%;
             background-color: #ffffff;
-            font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
-            color: #1e293b;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
+            color: #000000;
             font-size: 11px;
             line-height: 1.4;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
           }
           .print-wrapper {
             width: 100%;
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
-            padding: 10px 15px;
+            padding: 5px 0px;
             direction: rtl;
             text-align: right;
             box-sizing: border-box;
           }
           .header {
             text-align: center;
-            border-bottom: 1.5px solid #e2e8f0;
-            padding-bottom: 8px;
+            border-bottom: 2px solid #000000;
+            padding-bottom: 6px;
             margin-bottom: 12px;
           }
           .title {
             font-size: 16px;
-            font-weight: bold;
-            color: #0f172a;
+            font-weight: 800;
+            color: #000000;
             margin-bottom: 4px;
           }
           .period {
             font-size: 10.5px;
-            color: #475569;
-            font-weight: 500;
+            color: #111111;
+            font-weight: bold;
           }
           .stats {
             display: grid;
@@ -565,91 +564,116 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
             margin-bottom: 12px;
           }
           .stat-box {
-            border: 1px solid #e2e8f0;
-            padding: 6px 10px;
+            border: 1.5px solid #000000;
+            padding: 5px 8px;
             text-align: center;
             border-radius: 6px;
-            background: #f8fafc;
+            background: #fafafa !important;
           }
           .stat-box div:first-child {
             font-size: 9.5px;
-            color: #64748b;
-            font-weight: 600;
+            color: #111111;
+            font-weight: bold;
           }
           .stat-val {
             font-size: 13px;
-            font-weight: bold;
-            color: #1e293b;
-            margin-top: 3px;
+            font-weight: 800;
+            color: #000000;
+            margin-top: 2px;
           }
-          .text-green { color: #16a34a !important; }
-          .text-red { color: #dc2626 !important; }
-          .text-blue { color: #0284c7 !important; }
+          .text-green { color: #0b6623 !important; font-weight: bold; }
+          .text-red { color: #990000 !important; font-weight: bold; }
+          .text-blue { color: #000000 !important; font-weight: bold; }
           
           h3 {
             font-size: 11.5px;
-            color: #1e293b;
-            border-bottom: 1px solid #cbd5e1;
+            color: #000000;
+            border-bottom: 1.5px solid #000000;
             padding-bottom: 4px;
             margin-top: 14px;
             margin-bottom: 6px;
-            font-weight: bold;
+            font-weight: 800;
             page-break-after: avoid;
           }
           table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 10px;
-            page-break-inside: avoid;
+            margin-bottom: 12px;
+            border: 1.5px solid #000000 !important;
+            page-break-inside: auto;
           }
           th {
-            background: #f1f5f9;
-            color: #334155;
+            background: #f1f5f9 !important;
+            color: #000000 !important;
             padding: 5px 6px;
-            border: 1px solid #cbd5e1;
+            border: 1.5px solid #000000 !important;
             font-size: 10px;
-            font-weight: bold;
+            font-weight: 800;
             text-align: right;
           }
           td {
-            padding: 4px 6px;
-            border: 1px solid #e2e8f0;
-            font-size: 10px;
-            color: #334155;
+            padding: 5px 6px;
+            border: 1px solid #000000 !important;
+            font-size: 9.5px;
+            color: #000000 !important;
+            font-weight: bold;
+            page-break-inside: avoid;
+          }
+          tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
           }
           tr:nth-child(even) td {
-            background: #fafafa;
+            background-color: #fafafa !important;
           }
           .bold {
             font-weight: bold;
           }
           .footer {
-            margin-top: 20px;
+            margin-top: 16px;
             text-align: center;
-            color: #94a3b8;
+            color: #111111;
             font-size: 9px;
-            border-top: 1px dashed #cbd5e1;
-            padding-top: 8px;
+            border-top: 1.5px dashed #000000;
+            padding-top: 6px;
+            font-weight: bold;
             page-break-inside: avoid;
           }
           
           @page {
             size: A4 portrait;
-            margin: 6mm 8mm 6mm 8mm;
+            margin: 8mm 10mm;
           }
           @media print {
             html, body {
-              background-color: #ffffff;
-              width: 100%;
+              background-color: #ffffff !important;
+              width: 100% !important;
               margin: 0 !important;
               padding: 0 !important;
-              display: block;
+              color: #000000 !important;
             }
             .print-wrapper {
               width: 100% !important;
               max-width: 100% !important;
-              margin: 0 auto !important;
+              margin: 0 !important;
               padding: 0 !important;
+            }
+            table {
+              border-collapse: collapse !important;
+              width: 100% !important;
+              border: 1.5px solid #000000 !important;
+            }
+            th {
+              background-color: #f1f5f9 !important;
+              border: 1.5px solid #000000 !important;
+              color: #000000 !important;
+            }
+            td {
+              border: 1px solid #000000 !important;
+              color: #000000 !important;
+            }
+            tr:nth-child(even) td {
+              background-color: #fafafa !important;
             }
           }
         </style>
@@ -678,7 +702,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
             <tbody>
               ${showQ ? `<tr><td>فرع القادسية</td><td>${q.total.toFixed(2)} ر</td><td>${q.cash.toFixed(2)} ر</td><td>${q.pos.toFixed(2)} ر</td></tr>` : ""}
               ${showM ? `<tr><td>فرع المروج</td><td>${m.total.toFixed(2)} ر</td><td>${m.cash.toFixed(2)} ر</td><td>${m.pos.toFixed(2)} ر</td></tr>` : ""}
-              <tr class="bold" style="background: #f8fafc !important;">
+              <tr class="bold" style="background: #f1f5f9 !important;">
                 <td>الخط الإجمالي للفروع</td><td>${totalRev.toFixed(2)} ر</td><td>${((showQ ? q.cash : 0) + (showM ? m.cash : 0)).toFixed(2)} ر</td><td>${((showQ ? q.pos : 0) + (showM ? m.pos : 0)).toFixed(2)} ر</td>
               </tr>
             </tbody>
@@ -701,7 +725,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                   <td>${item.ratioOfRev.toFixed(1)}%</td>
                 </tr>
               `).join("")}
-              <tr class="bold" style="background: #f8fafc !important;">
+              <tr class="bold" style="background: #f1f5f9 !important;">
                 <td>المجموع العام المصروف</td>
                 <td>${allExpList.reduce((s, x) => s + x.q, 0).toFixed(2)} ر</td>
                 <td>${allExpList.reduce((s, x) => s + x.m, 0).toFixed(2)} ر</td>
@@ -722,7 +746,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
           </div>
         </div>
         
-        <script>window.onload = function() { window.print(); }</scrip` + `t>
+        <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
     `;
@@ -1080,71 +1104,71 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
               )}
 
               {/* Comparative Branches overview table */}
-              <div className="bg-white rounded-xl border border-slate-100 p-6 space-y-4">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 pb-2 border-b border-slate-100">
-                  <AslIskanderLogoSymbol size={22} /> جدولة ومقارنات فروع مطعم أصل الاسكندر
+              <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-2 pb-2 border-b border-slate-200">
+                  <AslIskanderLogoSymbol size={24} /> جدولة ومقارنات فروع مطعم أصل الاسكندر (المبيعات والتحصيل)
                 </h3>
                 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-right">
+                <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-xs">
+                  <table className="w-full text-sm text-right border-collapse">
                     <thead>
-                      <tr className="bg-slate-900 text-slate-100 font-bold">
-                        <th className="p-3">اسم الفرع</th>
-                        <th className="p-3 text-left">إجمالي الإيرادات</th>
-                        <th className="p-3 text-left">مبيعات الكاش</th>
-                        <th className="p-3 text-left">تحصيلات الشبكات</th>
-                        <th className="p-3 text-center">أيام الإدخال</th>
+                      <tr className="bg-slate-900 text-slate-100 font-extrabold whitespace-nowrap">
+                        <th className="p-3 border border-slate-800">اسم الفرع</th>
+                        <th className="p-3 border border-slate-800 text-left">إجمالي الإيرادات</th>
+                        <th className="p-3 border border-slate-800 text-left">مبيعات الكاش</th>
+                        <th className="p-3 border border-slate-800 text-left">تحصيلات الشبكات</th>
+                        <th className="p-3 border border-slate-800 text-center">أيام الإدخال</th>
                         {reportMode === "range" && (
                           <>
-                            <th className="p-3 text-left">أعلى مبيعات يوم</th>
-                            <th className="p-3 text-left">أقل مبيعات يوم</th>
-                            <th className="p-3 text-left">المتوسط اليومي</th>
+                            <th className="p-3 border border-slate-800 text-left">أعلى مبيعات يوم</th>
+                            <th className="p-3 border border-slate-800 text-left">أقل مبيعات يوم</th>
+                            <th className="p-3 border border-slate-800 text-left">المتوسط اليومي</th>
                           </>
                         )}
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-slate-250">
                       {showQ && (
-                        <tr className="hover:bg-slate-50 font-medium">
-                          <td className="p-3 font-bold text-indigo-900">فرع القادسية</td>
-                          <td className="p-3 text-left text-emerald-700 font-bold">{q.total.toFixed(2)} ر</td>
-                          <td className="p-3 text-left text-slate-600">{q.cash.toFixed(2)} ر</td>
-                          <td className="p-3 text-left text-slate-600">{q.pos.toFixed(2)} ر</td>
-                          <td className="p-3 text-center text-indigo-700 font-bold">{q.count} يوم</td>
+                        <tr className="hover:bg-slate-50 font-semibold transition-colors duration-100">
+                          <td className="p-3 border border-slate-200 font-extrabold text-indigo-900 bg-indigo-50/10">فرع القادسية</td>
+                          <td className="p-3 border border-slate-200 text-left text-emerald-700 font-extrabold">{q.total.toFixed(2)} ر</td>
+                          <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{q.cash.toFixed(2)} ر</td>
+                          <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{q.pos.toFixed(2)} ر</td>
+                          <td className="p-3 border border-slate-200 text-center text-indigo-700 font-bold">{q.count} يوم</td>
                           {reportMode === "range" && (
                             <>
-                              <td className="p-3 text-left text-emerald-600 font-bold">{q.max.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({q.maxDate})</span></td>
-                              <td className="p-3 text-left text-rose-600 font-bold">{q.min.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({q.minDate})</span></td>
-                              <td className="p-3 text-left text-indigo-700 font-bold">{q.avg.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-emerald-600 font-bold">{q.max.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({q.maxDate})</span></td>
+                              <td className="p-3 border border-slate-200 text-left text-rose-600 font-bold">{q.min.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({q.minDate})</span></td>
+                              <td className="p-3 border border-slate-200 text-left text-indigo-700 font-bold">{q.avg.toFixed(2)} ر</td>
                             </>
                           )}
                         </tr>
                       )}
 
                       {showM && (
-                        <tr className="hover:bg-slate-50 font-medium border-t border-slate-100">
-                          <td className="p-3 font-bold text-amber-900">فرع المروج</td>
-                          <td className="p-3 text-left text-emerald-700 font-bold">{m.total.toFixed(2)} ر</td>
-                          <td className="p-3 text-left text-slate-600">{m.cash.toFixed(2)} ر</td>
-                          <td className="p-3 text-left text-slate-600">{m.pos.toFixed(2)} ر</td>
-                          <td className="p-3 text-center text-indigo-700 font-bold">{m.count} يوم</td>
+                        <tr className="hover:bg-slate-50 font-semibold transition-colors duration-100">
+                          <td className="p-3 border border-slate-200 font-extrabold text-amber-950 bg-amber-50/10">فرع المروج</td>
+                          <td className="p-3 border border-slate-200 text-left text-emerald-700 font-extrabold">{m.total.toFixed(2)} ر</td>
+                          <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{m.cash.toFixed(2)} ر</td>
+                          <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{m.pos.toFixed(2)} ر</td>
+                          <td className="p-3 border border-slate-200 text-center text-indigo-700 font-bold">{m.count} يوم</td>
                           {reportMode === "range" && (
                             <>
-                              <td className="p-3 text-left text-emerald-600 font-bold">{m.max.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({m.maxDate})</span></td>
-                              <td className="p-3 text-left text-rose-600 font-bold">{m.min.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({m.minDate})</span></td>
-                              <td className="p-3 text-left text-indigo-700 font-bold">{m.avg.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-emerald-600 font-bold">{m.max.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({m.maxDate})</span></td>
+                              <td className="p-3 border border-slate-200 text-left text-rose-600 font-bold">{m.min.toFixed(2)} ر <span className="text-[10px] text-slate-400 font-normal">({m.minDate})</span></td>
+                              <td className="p-3 border border-slate-200 text-left text-indigo-700 font-bold">{m.avg.toFixed(2)} ر</td>
                             </>
                           )}
                         </tr>
                       )}
 
-                      <tr className="bg-indigo-50/50 font-extrabold text-slate-800 border-t border-indigo-150">
-                        <td className="p-3 font-extrabold text-slate-800">إجمالي الفروع</td>
-                        <td className="p-3 text-left text-indigo-700 font-extrabold">{totalRev.toFixed(2)} ر</td>
-                        <td className="p-3 text-left">{((showQ ? q.cash : 0) + (showM ? m.cash : 0)).toFixed(2)} ر</td>
-                        <td className="p-3 text-left">{((showQ ? q.pos : 0) + (showM ? m.pos : 0)).toFixed(2)} ر</td>
-                        <td className="p-3 text-center">{((showQ ? q.count : 0) + (showM ? m.count : 0))} يوم</td>
-                        {reportMode === "range" && <td colSpan={3} className="p-3"></td>}
+                      <tr className="bg-indigo-50 font-extrabold text-slate-900">
+                        <td className="p-3 border border-slate-200 font-extrabold text-slate-900">إجمالي الفروع</td>
+                        <td className="p-3 border border-slate-200 text-left text-indigo-800 font-black">{totalRev.toFixed(2)} ر</td>
+                        <td className="p-3 border border-slate-200 text-left font-mono">{((showQ ? q.cash : 0) + (showM ? m.cash : 0)).toFixed(2)} ر</td>
+                        <td className="p-3 border border-slate-200 text-left font-mono">{((showQ ? q.pos : 0) + (showM ? m.pos : 0)).toFixed(2)} ر</td>
+                        <td className="p-3 border border-slate-200 text-center text-indigo-900">{((showQ ? q.count : 0) + (showM ? m.count : 0))} يوم</td>
+                        {reportMode === "range" && <td colSpan={3} className="p-3 border border-slate-200 bg-indigo-50/30"></td>}
                       </tr>
                     </tbody>
                   </table>
@@ -1243,38 +1267,38 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
               </div>
 
               {/* Detailed expenses category breakdown table */}
-              <div className="bg-white rounded-xl border border-slate-100 p-6 space-y-4">
-                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5 pb-2 border-b border-slate-100">
+              <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                <h3 className="text-base font-extrabold text-slate-800 flex items-center gap-1.5 pb-2 border-b border-slate-200">
                   <TrendingDown className="w-4 h-4 text-rose-600" /> تحليل وتقسيط تفاصيل بنود المصروفات الدورية
                 </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-right">
+                <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-xs">
+                  <table className="w-full text-sm text-right border-collapse">
                     <thead>
-                      <tr className="bg-slate-900 text-slate-100 font-bold">
-                        <th className="p-3">اسم المصروف التشغيلي</th>
-                        {showQ && <th className="p-3 text-left">فرع القادسية</th>}
-                        {showM && <th className="p-3 text-left">فرع المروج</th>}
-                        <th className="p-3 text-left">المجموع والتقسيط الكلي</th>
-                        <th className="p-3 text-center">% من الدخل</th>
-                        <th className="p-3 text-center">التقييم المحاسبي لإنفاق البند</th>
+                      <tr className="bg-slate-900 text-slate-100 font-extrabold whitespace-nowrap">
+                        <th className="p-3 border border-slate-800">اسم المصروف التشغيلي</th>
+                        {showQ && <th className="p-3 border border-slate-800 text-left">فرع القادسية</th>}
+                        {showM && <th className="p-3 border border-slate-800 text-left">فرع المروج</th>}
+                        <th className="p-3 border border-slate-800 text-left">المجموع والتقسيط الكلي</th>
+                        <th className="p-3 border border-slate-800 text-center">% من الدخل</th>
+                        <th className="p-3 border border-slate-800 text-center">التقييم المحاسبي لإنفاق البند</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-slate-200">
                       {allExpList.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
+                          <td colSpan={6} className="p-8 text-center text-slate-400 font-bold border border-slate-200">
                             لا توجد تدوينات مصروفات مسجلة في هذا النطاق المالي للفروع المحددة.
                           </td>
                         </tr>
                       ) : (
                         allExpList.map((item) => (
-                          <tr key={item.name} className="hover:bg-slate-50 border-b border-slate-100 font-medium">
-                            <td className="p-3 text-slate-800 font-bold">{item.name}</td>
-                            {showQ && <td className="p-3 text-left text-slate-600">{item.q.toFixed(2)} ر</td>}
-                            {showM && <td className="p-3 text-left text-slate-600">{item.m.toFixed(2)} ر</td>}
-                            <td className="p-3 text-left text-indigo-900 font-bold">{item.total.toFixed(2)} ر</td>
-                            <td className="p-3 text-center font-bold text-slate-700">{item.ratioOfRev.toFixed(1)}%</td>
-                            <td className="p-3 text-center">
+                           <tr key={item.name} className="hover:bg-slate-50 border-b border-slate-100 font-semibold transition-colors duration-100">
+                             <td className="p-3 border border-slate-200 text-slate-900 font-extrabold">{item.name}</td>
+                             {showQ && <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{item.q.toFixed(2)} ر</td>}
+                             {showM && <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{item.m.toFixed(2)} ر</td>}
+                             <td className="p-3 border border-slate-200 text-left text-indigo-900 font-extrabold font-mono">{item.total.toFixed(2)} ر</td>
+                             <td className="p-3 border border-slate-200 text-center font-extrabold text-slate-700 font-mono">{item.ratioOfRev.toFixed(1)}%</td>
+                             <td className="p-3 border border-slate-200 text-center">
                               {item.ratioOfRev > 15 ? (
                                 <span className="inline-block bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
                                   ⚠️ مرتفع جداً
@@ -1293,12 +1317,12 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                         ))
                       )}
                       <tr className="bg-slate-50 font-extrabold text-slate-800 border-t-2 border-slate-200">
-                        <td className="p-3">المجموع الكلي للمكامن المصروفة</td>
-                        {showQ && <td className="p-3 text-left text-rose-600">{allExpList.reduce((s, x) => s + x.q, 0).toFixed(2)} ر</td>}
-                        {showM && <td className="p-3 text-left text-rose-600">{allExpList.reduce((s, x) => s + x.m, 0).toFixed(2)} ر</td>}
-                        <td className="p-3 text-left text-rose-700">{totalExp.toFixed(2)} ر</td>
-                        <td className="p-3 text-center text-slate-800">{totalRev > 0 ? ((totalExp / totalRev) * 100).toFixed(1) : 0}%</td>
-                        <td></td>
+                        <td className="p-3 border border-slate-200">المجموع الكلي للمكامن المصروفة</td>
+                        {showQ && <td className="p-3 border border-slate-200 text-left text-rose-600 font-mono">{allExpList.reduce((s, x) => s + x.q, 0).toFixed(2)} ر</td>}
+                        {showM && <td className="p-3 border border-slate-200 text-left text-rose-600 font-mono">{allExpList.reduce((s, x) => s + x.m, 0).toFixed(2)} ر</td>}
+                        <td className="p-3 border border-slate-200 text-left text-rose-700 font-black font-mono">{totalExp.toFixed(2)} ر</td>
+                        <td className="p-3 border border-slate-200 text-center text-slate-800 font-mono">{totalRev > 0 ? ((totalExp / totalRev) * 100).toFixed(1) : 0}%</td>
+                        <td className="p-3 border border-slate-200 bg-slate-50/50"></td>
                       </tr>
                     </tbody>
                   </table>
@@ -1329,24 +1353,24 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border border-slate-100">
-                <table className="w-full text-xs text-right">
+              <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-xs">
+                <table className="w-full text-sm text-right border-collapse">
                   <thead>
-                    <tr className="bg-slate-900 text-slate-100 font-bold whitespace-nowrap">
-                      <th className="p-3">التاريخ</th>
-                      <th className="p-3">الفرع</th>
-                      <th className="p-3 text-left">مبيعات الإجمالي</th>
-                      <th className="p-3 text-left">التحصيل كاش (صافي)</th>
-                      <th className="p-3 text-left">تحصيل شبكة (صافي)</th>
-                      <th className="p-3 text-left">التدفقات الخارجة والمستودع</th>
-                      <th className="p-3 text-left">صافي الدخل المتبقي</th>
-                      <th className="p-3 text-center">إجراءات</th>
+                    <tr className="bg-slate-900 text-slate-100 font-extrabold whitespace-nowrap">
+                      <th className="p-3 border border-slate-800">التاريخ</th>
+                      <th className="p-3 border border-slate-800">الفرع</th>
+                      <th className="p-3 border border-slate-800 text-left">مبيعات الإجمالي</th>
+                      <th className="p-3 border border-slate-800 text-left">التحصيل كاش (صافي)</th>
+                      <th className="p-3 border border-slate-800 text-left">تحصيل شبكة (صافي)</th>
+                      <th className="p-3 border border-slate-800 text-left">التدفقات الخارجة والمستودع</th>
+                      <th className="p-3 border border-slate-800 text-left">صافي الدخل المتبقي</th>
+                      <th className="p-3 border border-slate-800 text-center">إجراءات</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-200">
                     {filteredDays.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="p-8 text-center text-slate-400 font-bold">
+                        <td colSpan={8} className="p-8 text-center text-slate-400 font-bold border border-slate-200">
                           لا توجد نتائج تطابق بحثك الحالي في سجلات الدفتر اليومي.
                         </td>
                       </tr>
@@ -1354,28 +1378,28 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                       filteredDays.map((d: any) => {
                         const dayExp = calcTotalDayExp(d);
                         return (
-                          <tr key={d.id} className="hover:bg-indigo-50/20 border-b border-slate-100 font-medium transition-colors">
-                            <td className="p-3 font-bold font-mono text-slate-800">{d.date}</td>
-                            <td className="p-3">
+                          <tr key={d.id} className="hover:bg-indigo-50/30 font-semibold transition-colors">
+                            <td className="p-3 border border-slate-200 font-extrabold font-mono text-slate-900">{d.date}</td>
+                            <td className="p-3 border border-slate-200">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                d.branch === 'القادسية' ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'
+                                d.branch === 'القادسية' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
                               }`}>{d.branch}</span>
                             </td>
-                            <td className="p-3 text-left text-green-700 font-bold font-mono">{(d.total_sales || 0).toFixed(2)} ر</td>
-                            <td className="p-3 text-left text-slate-600 font-mono">
+                            <td className="p-3 border border-slate-200 text-left text-green-700 font-extrabold font-mono">{(d.total_sales || 0).toFixed(2)} ر</td>
+                            <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">
                               {(d.cash_net || 0).toFixed(2)} ر
-                              <span className="block text-[8px] text-slate-400 font-normal">درج: {(d.cash_box || 0).toFixed(2)} ر</span>
+                              <span className="block text-[9px] text-slate-400 font-normal">درج: {(d.cash_box || 0).toFixed(2)} ر</span>
                             </td>
-                            <td className="p-3 text-left text-slate-600 font-mono">{(d.pos_net || 0).toFixed(2)} ر</td>
-                            <td className="p-3 text-left text-red-500 font-mono">{dayExp.toFixed(2)} ر</td>
-                            <td className={`p-3 text-left font-mono font-bold ${d.net_day >= 0 ? "text-indigo-700" : "text-amber-750"}`}>
+                            <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{(d.pos_net || 0).toFixed(2)} ر</td>
+                            <td className="p-3 border border-slate-200 text-left text-red-600 font-mono font-bold">{dayExp.toFixed(2)} ر</td>
+                            <td className={`p-3 border border-slate-200 text-left font-mono font-black ${d.net_day >= 0 ? "text-indigo-800 bg-indigo-50/10" : "text-amber-800 bg-amber-50/10"}`}>
                               {(d.net_day || 0).toFixed(2)} ر
                             </td>
-                            <td className="p-3 text-center">
+                            <td className="p-3 border border-slate-200 text-center">
                               <button
                                 type="button"
                                 onClick={() => setInspectedDay(d)}
-                                className="px-2.5 py-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg cursor-pointer transition-colors"
+                                className="px-2.5 py-1 text-[11px] font-extrabold bg-indigo-55 text-indigo-100 hover:bg-indigo-65 rounded-lg cursor-pointer transition-colors"
                               >
                                 🔎 تفاصيل السند
                               </button>
@@ -1410,27 +1434,27 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                       <span className="w-2.5 h-2.5 bg-indigo-700 rounded-full"></span>
                       <span>فرع القادسية - تصفية قيود أقساط العهد ومطابقة الأرصدة المتراكمة</span>
                     </div>
-                    <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                      <table className="w-full text-xs text-right">
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-xs">
+                      <table className="w-full text-sm text-right border-collapse">
                         <thead>
-                          <tr className="bg-slate-100 text-slate-700 font-extrabold">
-                            <th className="p-3">بند التقسيط المجدول</th>
-                            <th className="p-3 text-left">الرصيد الافتتاحي المرحل (أمس)</th>
-                            <th className="p-3 text-left">إجمالي الفواتير المضافة (الفترة)</th>
-                            <th className="p-3 text-left animate-pulse">إجمالي الأقساط المخصومة (التسديد)</th>
-                            <th className="p-3 text-left">صافي الرصيد النهائي للغد</th>
-                            <th className="p-3 text-center">حالة المطابقة الرياضية والتدقيق</th>
+                          <tr className="bg-slate-900 text-slate-100 font-extrabold whitespace-nowrap">
+                            <th className="p-3 border border-slate-800">بند التقسيط المجدول</th>
+                            <th className="p-3 border border-slate-800 text-left">الرصيد الافتتاحي المرحل (أمس)</th>
+                            <th className="p-3 border border-slate-800 text-left">إجمالي الفواتير المضافة (الفترة)</th>
+                            <th className="p-3 border border-slate-800 text-left">إجمالي الأقساط المخصومة (التسديد)</th>
+                            <th className="p-3 border border-slate-800 text-left bg-indigo-950">صافي الرصيد النهائي للغد</th>
+                            <th className="p-3 border border-slate-800 text-center">حالة المطابقة الرياضية والتدقيق</th>
                           </tr>
                         </thead>
-                        <tbody>
+                        <tbody className="divide-y divide-slate-200">
                           {qInstallments.map((item) => (
-                            <tr key={item.key} className="hover:bg-slate-50/50 border-t border-slate-100 font-medium">
-                              <td className="p-3 text-slate-800 font-bold">{item.name}</td>
-                              <td className="p-3 text-left text-slate-650 font-mono">{item.startBalance.toFixed(2)} ر</td>
-                              <td className="p-3 text-left text-blue-700 font-bold font-mono">+{item.totalNewSupples.toFixed(2)} ر</td>
-                              <td className="p-3 text-left text-slate-600 font-bold font-mono text-rose-600">-{item.totalDeductedExp.toFixed(2)} ر</td>
-                              <td className="p-3 text-left text-indigo-900 font-extrabold font-mono bg-indigo-50/20">{item.endBalance.toFixed(2)} ر</td>
-                              <td className="p-3 text-center">
+                            <tr key={item.key} className="hover:bg-indigo-50/20 font-semibold transition-colors">
+                              <td className="p-3 border border-slate-200 text-slate-900 font-extrabold">{item.name}</td>
+                              <td className="p-3 border border-slate-200 text-left text-slate-650 font-mono">{item.startBalance.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-blue-700 font-extrabold font-mono">+{item.totalNewSupples.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-rose-600 font-extrabold font-mono">-{item.totalDeductedExp.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-indigo-900 font-black font-mono bg-indigo-100/30">{item.endBalance.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-center">
                                 {item.isMatched ? (
                                   <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-850 border border-emerald-150 text-[10px] font-bold px-2.5 py-0.5 rounded-lg">
                                     <span>🟢 مطابق 100%</span>
@@ -1459,29 +1483,29 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                   <div className="space-y-3 pt-2">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
                       <span className="w-2.5 h-2.5 bg-amber-600 rounded-full"></span>
-                      <span>فرع المروج - تصفية قيود أقساط العهد ومطابقة الأرصدة المتراكمة</span>
+                      <span>فرع المروج - تصفية قيق ومطابقة الأرصدة المتراكمة</span>
                     </div>
-                    <div className="overflow-x-auto border border-slate-100 rounded-xl">
-                      <table className="w-full text-xs text-right">
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-xs">
+                      <table className="w-full text-sm text-right border-collapse">
                         <thead>
-                          <tr className="bg-slate-100 text-slate-700 font-extrabold">
-                            <th className="p-3">بند التقسيط المجدول</th>
-                            <th className="p-3 text-left">الرصيد الافتتاحي المرحل (أمس)</th>
-                            <th className="p-3 text-left">إجمالي الفواتير المضافة (الفترة)</th>
-                            <th className="p-3 text-left animate-pulse">إجمالي الأقساط المخصومة (التسديد)</th>
-                            <th className="p-3 text-left">صافي الرصيد النهائي للغد</th>
-                            <th className="p-3 text-center">حالة المطابقة الرياضية والتدقيق</th>
+                          <tr className="bg-slate-900 text-slate-100 font-extrabold whitespace-nowrap">
+                            <th className="p-3 border border-slate-800">بند التقسيط المجدول</th>
+                            <th className="p-3 border border-slate-800 text-left">الرصيد الافتتاحي المرحل (أمس)</th>
+                            <th className="p-3 border border-slate-800 text-left">إجمالي الفواتير المضافة (الفترة)</th>
+                            <th className="p-3 border border-slate-800 text-left">إجمالي الأقساط المخصومة (التسديد)</th>
+                            <th className="p-3 border border-slate-800 text-left bg-indigo-950">صافي الرصيد النهائي للغد</th>
+                            <th className="p-3 border border-slate-800 text-center">حالة المطابقة الرياضية والتدقيق</th>
                           </tr>
                         </thead>
-                        <tbody>
+                        <tbody className="divide-y divide-slate-200">
                           {mInstallments.map((item) => (
-                            <tr key={item.key} className="hover:bg-slate-50/50 border-t border-slate-100 font-medium">
-                              <td className="p-3 text-slate-800 font-bold">{item.name}</td>
-                              <td className="p-3 text-left text-slate-650 font-mono">{item.startBalance.toFixed(2)} ر</td>
-                              <td className="p-3 text-left text-blue-700 font-bold font-mono">+{item.totalNewSupples.toFixed(2)} ر</td>
-                              <td className="p-3 text-left text-slate-600 font-bold font-mono text-rose-600">-{item.totalDeductedExp.toFixed(2)} ر</td>
-                              <td className="p-3 text-left text-indigo-900 font-extrabold font-mono bg-indigo-50/20">{item.endBalance.toFixed(2)} ر</td>
-                              <td className="p-3 text-center">
+                            <tr key={item.key} className="hover:bg-indigo-50/20 font-semibold transition-colors">
+                              <td className="p-3 border border-slate-200 text-slate-900 font-extrabold">{item.name}</td>
+                              <td className="p-3 border border-slate-200 text-left text-slate-650 font-mono">{item.startBalance.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-blue-700 font-extrabold font-mono">+{item.totalNewSupples.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-rose-600 font-extrabold font-mono">-{item.totalDeductedExp.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-left text-indigo-900 font-black font-mono bg-indigo-100/30">{item.endBalance.toFixed(2)} ر</td>
+                              <td className="p-3 border border-slate-200 text-center">
                                 {item.isMatched ? (
                                   <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-850 border border-emerald-150 text-[10px] font-bold px-2.5 py-0.5 rounded-lg">
                                     <span>🟢 مطابق 100%</span>
