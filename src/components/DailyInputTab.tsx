@@ -13,6 +13,14 @@ interface DailyInputTabProps {
 }
 
 export default function DailyInputTab({ onShowToast, userRole, userBranch }: DailyInputTabProps) {
+  const getTodayDateStr = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const calcTotalDayExp = (row: DailyEntry) => {
     const othersSum = (row.others || []).reduce((s, o) => s + (o.amt || 0), 0);
     const purExtrasSum = (row.pur_extras || []).reduce((s, e) => s + (e.amt || 0), 0);
@@ -33,9 +41,6 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   };
 
   const [branch, setBranch] = useState<"القادسية" | "المروج">(() => {
-    if (userRole === "محاسب") {
-      return "القادسية";
-    }
     if (userBranch && userBranch !== "الكل") {
       return userBranch as "القادسية" | "المروج";
     }
@@ -43,12 +48,10 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   });
 
   useEffect(() => {
-    if (userRole === "محاسب") {
-      setBranch("القادسية");
-    } else if (userBranch && userBranch !== "الكل") {
+    if (userBranch && userBranch !== "الكل") {
       setBranch(userBranch as "القادسية" | "المروج");
     }
-  }, [userBranch, userRole]);
+  }, [userBranch]);
   const [date, setDate] = useState(() => {
     const saved = sessionStorage.getItem("app_daily_input_date");
     return saved ? saved : new Date().toISOString().split("T")[0];
@@ -578,6 +581,15 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
       return;
     }
 
+    const todayDateStr = getTodayDateStr();
+    const isSameDay = date === todayDateStr;
+    const existing = history.find(d => d.date === date && d.branch === branch);
+
+    if (existing && !isSameDay && userRole !== "مدير") {
+      onShowToast("⚠️ عذراً! يُمنع تعديل أو حفظ القيود للتواريخ السابقة لحماية سلامة السير المالي وجدولة الأقساط.");
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -671,10 +683,15 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   };
 
   const handleDeleteHistoryRow = (id: string) => {
-    if (userRole !== "مدير") {
-      onShowToast("⚠️ عذراً! صلاحيات المدير مطلوبة لحذف البيانات القديمة");
+    const row = history.find(r => r.id === id);
+    if (!row) return;
+
+    const todayDateStr = getTodayDateStr();
+    if (row.date !== todayDateStr && userRole !== "مدير") {
+      onShowToast("⚠️ عذراً! لا يمكن حذف القيود المسجلة في الأيام السابقة لحماية سلامة الأقساط والمرحلات.");
       return;
     }
+
     setConfirmModal({
       show: true,
       title: "تأكيد حذف الموازنة اليومية",
@@ -698,13 +715,16 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     });
   };
 
-  const isAllSelected = history.length > 0 && selectedIds.length === history.length;
+  const isManager = userRole === "مدير";
+  const todayRowsCount = history.filter(row => row.date === getTodayDateStr()).length;
+  const selectableRows = isManager ? history : history.filter(row => row.date === getTodayDateStr());
+  const isAllSelected = selectableRows.length > 0 && selectedIds.length === selectableRows.length;
 
   const handleToggleSelectAll = () => {
     if (isAllSelected) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(history.map(row => row.id));
+      setSelectedIds(selectableRows.map(row => row.id));
     }
   };
 
@@ -717,10 +737,13 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   };
 
   const handleDeleteSelected = () => {
-    if (userRole !== "مدير") {
-      onShowToast("⚠️ عذراً! صلاحيات المدير مطلوبة لحذف البيانات القديمة");
+    const todayDateStr = getTodayDateStr();
+    const hasPastDay = history.some(row => selectedIds.includes(row.id) && row.date !== todayDateStr);
+    if (hasPastDay && userRole !== "مدير") {
+      onShowToast("⚠️ عذراً! يُمنع حذف أو تعديل موازنات الأيام السابقة.");
       return;
     }
+
     setConfirmModal({
       show: true,
       title: "تأكيد حذف الموازنات المحددة جماعياً",
@@ -754,7 +777,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
   const handleDeleteAll = () => {
     if (userRole !== "مدير") {
-      onShowToast("⚠️ عذراً! صلاحيات المدير مطلوبة لحذف البيانات القديمة");
+      onShowToast("⚠️ عذراً! تصفير وحذف كافة السجلات التاريخية السابقة غير مسموح به لحماية سلامة السياسة المالية.");
       return;
     }
     setConfirmModal({
@@ -806,7 +829,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
             🏪 فرع القادسية {userBranch && userBranch === "القادسية" && "🔒 (حسابك مرتبط بهذا الفرع فقط)"}
           </button>
         )}
-        {userRole !== "محاسب" && (!userBranch || userBranch === "الكل" || userBranch === "المروج") && (
+        {(!userBranch || userBranch === "الكل" || userBranch === "المروج") && (
           <button
             type="button"
             onClick={() => setBranch("المروج")}
@@ -966,24 +989,31 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
         {(() => {
           const existing = history.find(d => d.date === date && d.branch === branch);
           if (existing) {
+            const todayDateStr = getTodayDateStr();
+            const isSameDay = date === todayDateStr;
+            const canModify = isSameDay || userRole === "مدير";
             return (
-              <div className={`p-4 rounded-xl border ${isLoadedForEdit ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300`}>
+              <div className={`p-4 rounded-xl border ${canModify ? (isLoadedForEdit ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200') : 'bg-slate-50 border-slate-200'} flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300`}>
                 <div className="flex items-start gap-3">
-                  <span className="text-xl mt-0.5">{isLoadedForEdit ? "✅" : "📌"}</span>
+                  <span className="text-xl mt-0.5">{canModify ? (isLoadedForEdit ? "✅" : "📌") : "🔒"}</span>
                   <div className="space-y-1">
-                    <h4 className={`text-xs font-bold ${isLoadedForEdit ? 'text-emerald-950' : 'text-amber-950'}`}>
-                      {isLoadedForEdit 
-                        ? `وضع التعديل تفاعلي لنظام فرع ${branch} بتاريخ ${date}` 
-                        : `تم تسجيل اليوم مسبقاً بنجاح لفرع ${branch} بتاريخ ${date}`}
+                    <h4 className={`text-xs font-bold ${canModify ? (isLoadedForEdit ? 'text-emerald-950' : 'text-amber-950') : 'text-slate-800'}`}>
+                      {canModify 
+                        ? (isLoadedForEdit 
+                            ? `وضع التعديل تفاعلي لنظام فرع ${branch} بتاريخ ${date}` 
+                            : `تم تسجيل اليوم مسبقاً لفرع ${branch} بتاريخ ${date} (متاح لك التعديل بصفتك مديراً عاماً)`)
+                        : `السجل مغلق ومؤمن لفرع ${branch} بتاريخ ${date}`}
                     </h4>
-                    <p className={`text-[11px] leading-relaxed ${isLoadedForEdit ? 'text-emerald-800' : 'text-amber-850'}`}>
-                      {isLoadedForEdit 
-                        ? "تم تحميل الموازنة المحفوظة لليوم بالكامل في الحقول أدناه. يمكنك الآن تغيير أي قيم ثم الضغط على حفظ في الأسفل لتعديل موازنة اليوم." 
-                        : "حفاظاً على سلامة السجلات وتلبية لرغبتكم، تم إفراغ خانات الإدخال تماماً مع المحافظة التامة على تفاصيل وجدولة نظام الأقساط والالتزامات للغد بدقة بالغة. لتعديل أو عرض بيانات وقيم هذا اليوم:"}
+                    <p className={`text-[11px] leading-relaxed ${canModify ? (isLoadedForEdit ? 'text-emerald-850' : 'text-amber-850') : 'text-slate-550'}`}>
+                      {canModify 
+                        ? (isLoadedForEdit 
+                            ? "تم تحميل الموازنة المحفوظة لليوم بالكامل في الحقول أدناه. يمكنك الآن تغيير أي قيم ثم الضغط على حفظ في الأسفل لتعديل موازنة اليوم." 
+                            : "تم تحميل وعرض قيود هذا اليوم كمرجع، وبإمكانك تعديله وحفظ التغييرات مباشرة باستخدام زر الحفظ بالأسفل.")
+                        : "حفاظاً على سلامة وموثوقية السجلات المالية وتطبيقاً للسياسة المحاسبية للمطعم، يُمنع تعديل أو حذف القيود التي تم إدخالها في الأيام السابقة. يمكنك مراجعة البيانات التاريخية في كشوف التقارير."}
                     </p>
                   </div>
                 </div>
-                {!isLoadedForEdit && (
+                {canModify && !isLoadedForEdit && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2175,12 +2205,16 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                       }`}
                     >
                       <td className="p-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => handleToggleSelectRow(row.id)}
-                          className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
-                        />
+                        {row.date === getTodayDateStr() || userRole === "مدير" ? (
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleSelectRow(row.id)}
+                            className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer"
+                          />
+                        ) : (
+                          <span className="text-slate-400 select-none cursor-not-allowed" title="تاريخ الأمس - محمي ومؤمن من التعديل للمحاسبين">🔒</span>
+                        )}
                       </td>
                       <td className="p-3 font-bold text-slate-800">{row.date}</td>
                       <td className="p-3 text-left font-bold text-emerald-700">{row.total_sales.toFixed(2)} ر</td>
@@ -2191,29 +2225,38 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                         {row.net_day.toFixed(2)} ر
                       </td>
                       <td className="p-3 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDate(row.date);
-                              setIsLoadedForEdit(true);
-                              onShowToast(`📥 تم تحميل بيانات يوم ${row.date} لفرع ${row.branch} للتعديل.`);
-                              window.scrollTo({ top: 0, behavior: 'smooth' });
-                            }}
-                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
-                            title="تعديل هذه الموازنة"
+                        {row.date === getTodayDateStr() || userRole === "مدير" ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDate(row.date);
+                                setIsLoadedForEdit(true);
+                                onShowToast(`📥 تم تحميل بيانات يوم ${row.date} لفرع ${row.branch} للتعديل.`);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                              title="تعديل هذه الموازنة"
+                            >
+                              ✏️ تعديل
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteHistoryRow(row.id)}
+                              className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer transition-colors"
+                              title="مسح موازنة اليوم"
+                            >
+                              <Trash className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <span 
+                            className="inline-flex items-center gap-1 text-slate-400 font-bold text-[10px] sm:text-xs px-2 py-1 bg-slate-50 border border-slate-200 rounded select-none cursor-not-allowed"
+                            title="التعديل والحذف مقفل للأيام السابقة لضمان سلامة سير القيود المالية"
                           >
-                            ✏️ تعديل
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteHistoryRow(row.id)}
-                            className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer transition-colors"
-                            title="مسح موازنة اليوم"
-                          >
-                            <Trash className="w-4 h-4" />
-                          </button>
-                        </div>
+                            🔒 مغلق
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
