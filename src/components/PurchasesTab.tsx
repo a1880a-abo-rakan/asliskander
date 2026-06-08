@@ -120,11 +120,24 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
   const [sourceFilter, setSourceFilter] = useState<"الكل" | "manual" | "invoice">("الكل");
   const [searchQuery, setSearchQuery] = useState("");
   const [fromDate, setFromDate] = useState(() => {
+    const saved = sessionStorage.getItem("app_purchases_from_date");
+    if (saved) return saved;
     const d = new Date();
     d.setDate(d.getDate() - 30);
     return d.toISOString().split("T")[0];
   });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [toDate, setToDate] = useState(() => {
+    const saved = sessionStorage.getItem("app_purchases_to_date");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("app_purchases_from_date", fromDate);
+  }, [fromDate]);
+
+  useEffect(() => {
+    sessionStorage.setItem("app_purchases_to_date", toDate);
+  }, [toDate]);
 
   // Form states
   const [showAddForm, setShowAddForm] = useState(false);

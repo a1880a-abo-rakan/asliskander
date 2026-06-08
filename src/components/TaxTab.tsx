@@ -35,7 +35,15 @@ interface InvoiceInput {
 }
 
 export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProps) {
-  const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(() => {
+    const saved = sessionStorage.getItem("app_tax_invoice_date");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("app_tax_invoice_date", date);
+  }, [date]);
+
   const [branch, setBranch] = useState<"القادسية" | "المروج">(() => {
     if (userBranch && userBranch !== "الكل") {
       return userBranch as "القادسية" | "المروج";
@@ -299,9 +307,31 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   // Report filters
-  const [from, setFrom] = useState(() => new Date().toISOString().split("T")[0]);
-  const [to, setTo] = useState(() => new Date().toISOString().split("T")[0]);
-  const [reportMode, setReportMode] = useState<"day" | "period" | "period_detailed">("day");
+  const [from, setFrom] = useState(() => {
+    const saved = sessionStorage.getItem("app_tax_report_from");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+  const [to, setTo] = useState(() => {
+    const saved = sessionStorage.getItem("app_tax_report_to");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+  const [reportMode, setReportMode] = useState<"day" | "period" | "period_detailed">(() => {
+    const saved = sessionStorage.getItem("app_tax_report_mode");
+    return (saved as any) ? (saved as any) : "day";
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("app_tax_report_from", from);
+  }, [from]);
+
+  useEffect(() => {
+    sessionStorage.setItem("app_tax_report_to", to);
+  }, [to]);
+
+  useEffect(() => {
+    sessionStorage.setItem("app_tax_report_mode", reportMode);
+  }, [reportMode]);
+
   const [reportRawData, setReportRawData] = useState<any>(null);
   const [dailyCashKeyTrigger, setDailyCashKeyTrigger] = useState<number>(0);
 

@@ -9,10 +9,39 @@ interface ReportsTabProps {
 }
 
 export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
-  const [reportMode, setReportMode] = useState<"day" | "range">("day");
-  const [singleDate, setSingleDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [from, setFrom] = useState(() => new Date().toISOString().split("T")[0]);
-  const [to, setTo] = useState(() => new Date().toISOString().split("T")[0]);
+  const [reportMode, setReportMode] = useState<"day" | "range">(() => {
+    const saved = sessionStorage.getItem("app_reports_mode");
+    return (saved as any) ? (saved as any) : "day";
+  });
+  const [singleDate, setSingleDate] = useState(() => {
+    const saved = sessionStorage.getItem("app_reports_single_date");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+  const [from, setFrom] = useState(() => {
+    const saved = sessionStorage.getItem("app_reports_from");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+  const [to, setTo] = useState(() => {
+    const saved = sessionStorage.getItem("app_reports_to");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("app_reports_mode", reportMode);
+  }, [reportMode]);
+
+  useEffect(() => {
+    sessionStorage.setItem("app_reports_single_date", singleDate);
+  }, [singleDate]);
+
+  useEffect(() => {
+    sessionStorage.setItem("app_reports_from", from);
+  }, [from]);
+
+  useEffect(() => {
+    sessionStorage.setItem("app_reports_to", to);
+  }, [to]);
+
   const [branch, setBranch] = useState<"الكل" | "القادسية" | "المروج">("الكل");
 
   const [loading, setLoading] = useState(false);
@@ -93,9 +122,55 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
     .filter((inv) => branch === "الكل" || inv.branch === branch)
     .reduce((sum, inv) => sum + (inv.amount || 0), 0);
 
+  // Get active range dates for the report
+  const activeFrom = reportMode === "day" ? singleDate : from;
+  const activeTo = reportMode === "day" ? singleDate : to;
+
+  // Synchronously compute total manual cash saved in local storage (including daily overrides and period distribution)
+  const getBranchTotalCash = (br: "القادسية" | "المروج") => {
+    const branchInvoices = taxData.filter((inv) => inv.branch === br);
+    const invoiceDates = branchInvoices.map((inv) => inv.invoice_date || inv.date);
+    const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= activeFrom && d <= activeTo);
+
+    const periodSaved = localStorage.getItem(`tax_cash_${br}_${activeFrom}_${activeTo}`);
+    const rxPeriodCash = periodSaved ? (parseFloat(periodSaved) || 0) : 0;
+
+    const dateList: string[] = [];
+    try {
+      let cur = new Date(activeFrom);
+      const endDate = new Date(activeTo);
+      let limit = 0;
+      while (cur <= endDate && limit < 400) {
+        dateList.push(cur.toISOString().split("T")[0]);
+        cur.setDate(cur.getDate() + 1);
+        limit++;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    let calculatedTotalCash = 0;
+    dateList.forEach((dateStr) => {
+      const savedDaily = localStorage.getItem(`tax_cash_${br}_${dateStr}_${dateStr}`);
+      if (savedDaily !== null) {
+        calculatedTotalCash += parseFloat(savedDaily) || 0;
+      } else {
+        if (uniqueInvoiceDates.includes(dateStr)) {
+          if (uniqueInvoiceDates.length === 1) {
+            calculatedTotalCash += rxPeriodCash;
+          } else if (uniqueInvoiceDates.length > 1) {
+            calculatedTotalCash += rxPeriodCash / uniqueInvoiceDates.length;
+          }
+        }
+      }
+    });
+
+    return calculatedTotalCash;
+  };
+
   // حساب ضريبة القيمة المضافة المستحقة المقررة على الفرق بناءً على الفرق الفعلي المدون في تبويب الضريبة
-  const qCash = parseFloat(localStorage.getItem(`tax_cash_القادسية_${from}_${to}`) || "0") || 0;
-  const mCash = parseFloat(localStorage.getItem(`tax_cash_المروج_${from}_${to}`) || "0") || 0;
+  const qCash = getBranchTotalCash("القادسية");
+  const mCash = getBranchTotalCash("المروج");
 
   const qInvoices = taxData
     .filter((inv) => inv.branch === "القادسية")

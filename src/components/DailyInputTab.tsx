@@ -49,7 +49,15 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
       setBranch(userBranch as "القادسية" | "المروج");
     }
   }, [userBranch, userRole]);
-  const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(() => {
+    const saved = sessionStorage.getItem("app_daily_input_date");
+    return saved ? saved : new Date().toISOString().split("T")[0];
+  });
+  
+  useEffect(() => {
+    sessionStorage.setItem("app_daily_input_date", date);
+  }, [date]);
+
   const [isLoadedForEdit, setIsLoadedForEdit] = useState<boolean>(false);
   
   // Settings to carry calculations

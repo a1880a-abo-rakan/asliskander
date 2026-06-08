@@ -35,7 +35,7 @@ export default function App() {
   
   // Clean, persistent User Session state
   const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
-    const saved = sessionStorage.getItem("alex_user_session") || localStorage.getItem("alex_user_session");
+    const saved = sessionStorage.getItem("alex_user_session");
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -50,69 +50,94 @@ export default function App() {
   const [showIdleWarning, setShowIdleWarning] = useState(false);
   const [idleCountdown, setIdleCountdown] = useState(30);
 
-  // Inactivity detection effect
+  // Inactivity detection effect using absolute timestamp comparison (survives background suspend/minimizing/device sleep)
   useEffect(() => {
     if (!currentUser) {
       setShowIdleWarning(false);
       return;
     }
 
-    let idleTimer: NodeJS.Timeout;
-    const INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 minutes inactivity limit
-
-    const resetIdleTimer = () => {
-      if (showIdleWarning) return;
-      clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        setIdleCountdown(30);
-        setShowIdleWarning(true);
-      }, INACTIVITY_LIMIT);
+    const updateActivity = () => {
+      sessionStorage.setItem("alex_last_activity_time", Date.now().toString());
     };
 
-    // Listen to user inputs
+    // Initialize/reset timestamp if warning is not active
+    if (!showIdleWarning) {
+      updateActivity();
+    }
+
     const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    const handleReset = () => {
+      if (!showIdleWarning) {
+        updateActivity();
+      }
+    };
+
     events.forEach((event) => {
-      window.addEventListener(event, resetIdleTimer);
+      window.addEventListener(event, handleReset);
     });
 
-    resetIdleTimer();
+    // Inactivity evaluation running every second - absolutely robust
+    const checkInterval = setInterval(() => {
+      const savedTimeStr = sessionStorage.getItem("alex_last_activity_time");
+      if (!savedTimeStr) return;
+      const lastActive = parseInt(savedTimeStr, 10);
+      const diff = Date.now() - lastActive;
+
+      const WARNING_THRESHOLD = 4.5 * 60 * 1000; // 4 minutes 30 seconds
+      const TOTAL_TIMEOUT = 5 * 60 * 1000;      // 5 minutes
+
+      if (diff >= TOTAL_TIMEOUT) {
+        // Auto logout
+        sessionStorage.removeItem("alex_user_session");
+        sessionStorage.removeItem("alex_last_activity_time");
+        localStorage.removeItem("alex_user_session");
+        setCurrentUser(null);
+        setShowIdleWarning(false);
+        showToast("⚠️ تم تسجيل الخروج تلقائياً لعدم النشاط");
+      } else if (diff >= WARNING_THRESHOLD) {
+        // Show count down in modal
+        const secondsLeft = Math.max(0, Math.ceil((TOTAL_TIMEOUT - diff) / 1000));
+        setIdleCountdown(secondsLeft);
+        setShowIdleWarning(true);
+      } else {
+        if (showIdleWarning) {
+          setShowIdleWarning(false);
+        }
+      }
+    }, 1000);
+
+    // Visibility-change or focus triggers immediate validation (e.g., when waking up, focusing, or returning to tab)
+    const runImmediateCheck = () => {
+      const savedTimeStr = sessionStorage.getItem("alex_last_activity_time");
+      if (!savedTimeStr) return;
+      const lastActive = parseInt(savedTimeStr, 10);
+      const diff = Date.now() - lastActive;
+      if (diff >= 5 * 60 * 1000) {
+        sessionStorage.removeItem("alex_user_session");
+        sessionStorage.removeItem("alex_last_activity_time");
+        localStorage.removeItem("alex_user_session");
+        setCurrentUser(null);
+        setShowIdleWarning(false);
+        showToast("⚠️ تم تسجيل الخروج تلقائياً لعدم النشاط");
+      }
+    };
+
+    document.addEventListener("visibilitychange", runImmediateCheck);
+    window.addEventListener("focus", runImmediateCheck);
 
     return () => {
-      clearTimeout(idleTimer);
+      clearInterval(checkInterval);
       events.forEach((event) => {
-        window.removeEventListener(event, resetIdleTimer);
+        window.removeEventListener(event, handleReset);
       });
+      document.removeEventListener("visibilitychange", runImmediateCheck);
+      window.removeEventListener("focus", runImmediateCheck);
     };
   }, [currentUser, showIdleWarning]);
 
-  // Countdown timer for idle warning popup
-  useEffect(() => {
-    let countdownInterval: NodeJS.Timeout;
-
-    if (showIdleWarning) {
-      countdownInterval = setInterval(() => {
-        setIdleCountdown((prev) => {
-          if (prev <= 1) {
-            clearInterval(countdownInterval);
-            // Auto logout
-            sessionStorage.removeItem("alex_user_session");
-            localStorage.removeItem("alex_user_session");
-            setCurrentUser(null);
-            setShowIdleWarning(false);
-            showToast("⚠️ تم تسجيل الخروج تلقائياً لعدم النشاط");
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-
-    return () => {
-      clearInterval(countdownInterval);
-    };
-  }, [showIdleWarning]);
-
   const handleExtendSession = () => {
+    sessionStorage.setItem("alex_last_activity_time", Date.now().toString());
     setShowIdleWarning(false);
     setIdleCountdown(30);
     showToast("🔄 تم تمديد جلسة العمل بنجاح");
