@@ -1,10 +1,9 @@
 {
-  "projectId": "rising-haven-0v8b6",
-  "appId": "1:409272108099:web:275f0ae6fec25ce83fc0f6",
-  "apiKey": "AIzaSyC0C_UO7bcYn-TPkjXQRgk9xlPgAk1GwxE",
-  "authDomain": "rising-haven-0v8b6.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-cb271443-c698-46d3-8892-29b8dd346a32",
-  "storageBucket": "rising-haven-0v8b6.firebasestorage.app",
-  "messagingSenderId": "409272108099",
-  "measurementId": ""
+  "DB_TYPE": "postgresql",
+  "DB_HOST": "dpg-d8jqnjek1jcs73e2h2vg-a",
+  "DB_PORT": 5432,
+  "DB_NAME": "asl_db_qgs1",
+  "DB_USER": "admin_asl",
+  "DB_ENVIRONMENT": "Render Production",
+  "NETWORKING_RULE": "0.0.0.0/0 (Everywhere)"
 }
