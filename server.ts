@@ -2026,12 +2026,16 @@ async function startServer() {
 
     const settings = await getSettings();
     const allDays = await getDays();
+    const allTaxInvoices = await getTaxInvoices();
 
     // Filter by date
     const rangeDays = allDays.filter((d) => d.date >= from && d.date <= to);
+    const rangeTaxInvoices = allTaxInvoices.filter((i) => i.date >= from && i.date <= to);
 
     const qData = rangeDays.filter((d) => d.branch === "القادسية");
     const mData = rangeDays.filter((d) => d.branch === "المروج");
+    const qTaxInvoices = rangeTaxInvoices.filter((i) => i.branch === "القادسية");
+    const mTaxInvoices = rangeTaxInvoices.filter((i) => i.branch === "المروج");
 
     const getStats = (branchDays: DailyEntry[]) => {
       const count = branchDays.length;
@@ -2063,7 +2067,7 @@ async function startServer() {
       return { total, cash, pos, count, max, maxDate, min, minDate, avg };
     };
 
-    const getExpensesBreakdown = (branchDays: DailyEntry[]) => {
+    const getExpensesBreakdown = (branchDays: DailyEntry[], taxInvoices: TaxInvoice[]) => {
       const exp: Record<string, number> = {
         "المستودع": 0,
         "بيبسي": 0,
@@ -2075,6 +2079,7 @@ async function startServer() {
         "البقالة": 0,
         "الديزل": 0,
         "الخصوم الدائمة": 0,
+        "فواتير ضريبية": 0,
         "مصروفات أخرى": 0
       };
 
@@ -2094,6 +2099,11 @@ async function startServer() {
         exp["مصروفات أخرى"] += (d.others || []).reduce((sum, o) => sum + (o.amt || 0), 0) + purExtrasSum;
       }
 
+      // إضافة مبالغ الفواتير الضريبية للتقرير
+      for (const inv of taxInvoices) {
+        exp["فواتير ضريبية"] += inv.amount || 0;
+      }
+
       // Convert all values to fixed 2 decimals
       for (const k of Object.keys(exp)) {
         exp[k] = Number(exp[k].toFixed(2));
@@ -2102,13 +2112,20 @@ async function startServer() {
       return exp;
     };
 
+    const taxInvoicesTotalQ = Number(qTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
+    const taxInvoicesTotalM = Number(mTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
+
     res.json({
       qStats: getStats(qData),
       mStats: getStats(mData),
-      qExp: getExpensesBreakdown(qData),
-      mExp: getExpensesBreakdown(mData),
+      qExp: getExpensesBreakdown(qData, qTaxInvoices),
+      mExp: getExpensesBreakdown(mData, mTaxInvoices),
       qData,
-      mData
+      mData,
+      qTaxInvoices,
+      mTaxInvoices,
+      taxInvoicesTotalQ,
+      taxInvoicesTotalM
     });
   });
 
