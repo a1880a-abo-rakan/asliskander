@@ -1796,8 +1796,8 @@ async function startServer() {
       
       if (all) {
         let allInvoices = await getTaxInvoices();
-        if (from) allInvoices = allInvoices.filter((i) => i.date >= from);
-        if (to) allInvoices = allInvoices.filter((i) => i.date <= to);
+        if (from) allInvoices = allInvoices.filter((i) => (i.invoice_date || i.date) >= from);
+        if (to) allInvoices = allInvoices.filter((i) => (i.invoice_date || i.date) <= to);
         if (branch && branch !== "الكل") allInvoices = allInvoices.filter((i) => i.branch === branch);
         
         for (const i of allInvoices) {
@@ -2030,7 +2030,7 @@ async function startServer() {
 
     // Filter by date
     const rangeDays = allDays.filter((d) => d.date >= from && d.date <= to);
-    const rangeTaxInvoices = allTaxInvoices.filter((i) => i.date >= from && i.date <= to);
+    const rangeTaxInvoices = allTaxInvoices.filter((i) => (i.invoice_date || i.date) >= from && (i.invoice_date || i.date) <= to);
 
     const qData = rangeDays.filter((d) => d.branch === "القادسية");
     const mData = rangeDays.filter((d) => d.branch === "المروج");
