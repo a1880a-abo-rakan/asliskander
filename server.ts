@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig } from "./src/types";
+import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation } from "./src/types";
 import { GoogleGenAI, Type } from "@google/genai";
 import "dotenv/config";
 
@@ -112,14 +112,21 @@ const DEFAULT_SETTINGS: Settings = {
   "رسوم_فيزا": 1.5,
   "صرف_افتراضي": 350,
   "سقف_بيبسي": 400,
+  "سقف_بيبسي_قادسية": 400,
+  "سقف_بيبسي_مروج": 400,
   "سقف_بلاستيك": 100,
+  "سقف_بلاستيك_قادسية": 100,
+  "سقف_بلاستيك_مروج": 100,
   "سقف_صلصات": 150,
+  "سقف_صلصات_قادسية": 150,
+  "سقف_صلصات_مروج": 150,
   "سقف_ديزل_قادسية": 50,
   "سقف_ديزل_مروج": 30,
   "زيادة_عالي": 25,
   "نسبة_قادسية_ديزل": 70,
   "نسبة_مروج_ديزل": 30,
-  "ايام_مقارنة": 7
+  "ايام_مقارنة": 7,
+  "سقف_نسبة_السلفة_القصوى": 50
 };
 
 // Firestore helper functions
@@ -144,7 +151,18 @@ async function getSettings(): Promise<Settings> {
   try {
     const snap = await getDoc(doc(db, "settings", "app_settings"));
     if (snap.exists()) {
-      return snap.data() as Settings;
+      const data = snap.data() as Settings;
+      return {
+        ...DEFAULT_SETTINGS,
+        ...data,
+        "سقف_بيبسي_قادسية": data.سقف_بيبسي_قادسية ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_قادسية,
+        "سقف_بيبسي_مروج": data.سقف_بيبسي_مروج ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_مروج,
+        "سقف_بلاستيك_قادسية": data.سقف_بلاستيك_قادسية ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_قادسية,
+        "سقف_بلاستيك_مروج": data.سقف_بلاستيك_مروج ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_مروج,
+        "سقف_صلصات_قادسية": data.سقف_صلصات_قادسية ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_قادسية,
+        "سقف_صلصات_mروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج, // keep backward fallback if any
+        "سقف_صلصات_مروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج,
+      } as Settings;
     } else {
       // Seed default settings on first load
       await setDoc(doc(db, "settings", "app_settings"), cleanObject(DEFAULT_SETTINGS));
@@ -328,6 +346,40 @@ async function deleteEmployeeAdvance(id: string): Promise<void> {
     await deleteDoc(doc(db, "employee_advances", id));
   } catch (err) {
     console.error("Error deleting advance from Firestore:", err);
+  }
+}
+
+async function getEmployeeViolations(): Promise<EmployeeViolation[]> {
+  try {
+    const snap = await getDocs(collection(db, "employee_violations"));
+    const list: EmployeeViolation[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as EmployeeViolation;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+      }
+    });
+    return list;
+  } catch (err) {
+    console.error("Error loading violations from Firestore:", err);
+    return [];
+  }
+}
+
+async function saveEmployeeViolation(v: EmployeeViolation): Promise<void> {
+  try {
+    await setDoc(doc(db, "employee_violations", v.id), cleanObject(v));
+  } catch (err) {
+    console.error("Error saving violation to Firestore:", err);
+  }
+}
+
+async function deleteEmployeeViolation(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "employee_violations", id));
+  } catch (err) {
+    console.error("Error deleting violation from Firestore:", err);
   }
 }
 
@@ -581,8 +633,13 @@ async function deletePurchase(id: string): Promise<void> {
 
 async function deletePurchasesForDay(dayId: string) {
   try {
+    const decodedId = decodeURIComponent(dayId).trim();
     const allPurchases = await getPurchases();
-    const toDelete = allPurchases.filter(p => p.id.startsWith(`pur-${dayId}-`));
+    const toDelete = allPurchases.filter(p => {
+      const isStart = (p.id && (p.id.startsWith(`pur-${dayId}-`) || p.id.startsWith(`pur-${decodedId}-`))) || false;
+      const isHeaderMatch = p.invoiceId === dayId || p.invoiceId === decodedId || (p.invoiceId?.trim() === decodedId);
+      return isStart || isHeaderMatch;
+    });
     for (const p of toDelete) {
       await deleteDoc(doc(db, "purchases", p.id));
     }
@@ -623,8 +680,16 @@ function normalizeArabicString(str: string): string {
 
 async function deletePurchasesForInvoice(invoiceId: string) {
   try {
+    const decodedId = decodeURIComponent(invoiceId).trim();
     const allPurchases = await getPurchases();
-    const toDelete = allPurchases.filter(p => p.invoiceId === invoiceId);
+    const toDelete = allPurchases.filter(p => {
+      if (!p.invoiceId) return false;
+      const pInvId = p.invoiceId.trim();
+      return pInvId === invoiceId || 
+             pInvId === decodedId || 
+             pInvId.toLowerCase() === invoiceId.toLowerCase() || 
+             pInvId.toLowerCase() === decodedId.toLowerCase();
+    });
     for (const p of toDelete) {
       await deleteDoc(doc(db, "purchases", p.id));
     }
@@ -934,10 +999,19 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
 
     const ratio = is_busy ? (1 + (settings.زيادة_عالي || 25) / 100) : 1;
 
-    // Use general setting's ceiling for adaptivity to settings changes
-    const entry_pepsi_cap = settings.سقف_بيبسي || 400;
-    const entry_plastic_cap = settings.سقف_بلاستيك || 100;
-    const entry_sauces_cap = settings.سقف_صلصات || 150;
+    // Use branch-specific setting's ceiling for adaptivity to settings changes
+    const entry_pepsi_cap = branch === "القادسية"
+      ? (settings.سقف_بيبسي_قادسية || settings.سقف_بيبسي || 400)
+      : (settings.سقف_بيبسي_مروج || settings.سقف_بيبسي || 400);
+
+    const entry_plastic_cap = branch === "القادسية"
+      ? (settings.سقف_بلاستيك_قادسية || settings.سقف_بلاستيك || 100)
+      : (settings.سقف_بلاستيك_مروج || settings.سقف_بلاستيك || 100);
+
+    const entry_sauces_cap = branch === "القادسية"
+      ? (settings.سقف_صلصات_قادسية || settings.سقف_صلصات || 150)
+      : (settings.سقف_صلصات_مروج || settings.سقف_صلصات || 150);
+
     const entry_diesel_cap = branch === "القادسية" ? (settings.سقف_ديزل_قادسية || 50) : (settings.سقف_ديزل_مروج || 30);
 
     // Save caps inside the entry
@@ -1329,8 +1403,12 @@ async function startServer() {
         prevKey: "pepsi_carry_prev" as const,
         paidKey: "pepsi_paid" as const,
         deductKey: "pepsi_deduct" as const,
-        cap: latest.pepsi_cap !== undefined && latest.pepsi_cap !== null ? latest.pepsi_cap : settings.سقف_بيبسي,
-        settingsKey: "سقف_بيبسي"
+        cap: latest.pepsi_cap !== undefined && latest.pepsi_cap !== null 
+          ? latest.pepsi_cap 
+          : (branch === "القادسية" 
+              ? (settings.سقف_بيبسي_قادسية ?? settings.سقف_بيبسي) 
+              : (settings.سقف_بيبسي_مروج ?? settings.سقف_بيبسي)),
+        settingsKey: branch === "القادسية" ? "سقف_بيبسي_قادسية" : "سقف_بيبسي_مروج"
       },
       {
         key: "plastic",
@@ -1339,8 +1417,12 @@ async function startServer() {
         prevKey: "plastic_carry_prev" as const,
         paidKey: "plastic_paid" as const,
         deductKey: "plastic_deduct" as const,
-        cap: latest.plastic_cap !== undefined && latest.plastic_cap !== null ? latest.plastic_cap : settings.سقف_بلاستيك,
-        settingsKey: "سقف_بلاستيك"
+        cap: latest.plastic_cap !== undefined && latest.plastic_cap !== null 
+          ? latest.plastic_cap 
+          : (branch === "القادسية" 
+              ? (settings.سقف_بلاستيك_قادسية ?? settings.سقف_بلاستيك) 
+              : (settings.سقف_بلاستيك_مروج ?? settings.سقف_بلاستيك)),
+        settingsKey: branch === "القادسية" ? "سقف_بلاستيك_قادسية" : "سقف_بلاستيك_مروج"
       },
       {
         key: "sauces",
@@ -1349,8 +1431,12 @@ async function startServer() {
         prevKey: "sauces_carry_prev" as const,
         paidKey: "sauces_paid" as const,
         deductKey: "sauces_deduct" as const,
-        cap: latest.sauces_cap !== undefined && latest.sauces_cap !== null ? latest.sauces_cap : settings.سقف_صلصات,
-        settingsKey: "سقف_صلصات"
+        cap: latest.sauces_cap !== undefined && latest.sauces_cap !== null 
+          ? latest.sauces_cap 
+          : (branch === "القادسية" 
+              ? (settings.سقف_صلصات_قادسية ?? settings.سقف_صلصات) 
+              : (settings.سقف_صلصات_مروج ?? settings.سقف_صلصات)),
+        settingsKey: branch === "القادسية" ? "سقف_صلصات_قادسية" : "سقف_صلصات_مروج"
       },
       {
         key: "diesel",
@@ -1651,6 +1737,7 @@ async function startServer() {
         if (entryByDateAndBranch) {
           const branch = entryByDateAndBranch.branch;
           await deleteDay(entryByDateAndBranch.id);
+          await deletePurchasesForDay(entryByDateAndBranch.id);
           await recalculateCarryOvers(branch);
           return res.json({ success: true });
         }
@@ -1660,6 +1747,7 @@ async function startServer() {
 
     const branch = entry.branch;
     await deleteDay(entry.id);
+    await deletePurchasesForDay(entry.id);
 
     // Recalculate everything after removing this day so downstream elements are re-balanced perfectly Let's go!
     await recalculateCarryOvers(branch);
@@ -1676,11 +1764,13 @@ async function startServer() {
         const toDeleteIds = allDays.filter((d) => d.branch === branch).map(d => d.id);
         for (const id of toDeleteIds) {
           await deleteDay(id);
+          await deletePurchasesForDay(id);
         }
       } else {
         const toDeleteIds = allDays.map(d => d.id);
         for (const id of toDeleteIds) {
           await deleteDay(id);
+          await deletePurchasesForDay(id);
         }
       }
     } else if (ids && ids.length > 0) {
@@ -1695,6 +1785,7 @@ async function startServer() {
       });
       for (const d of toDelete) {
         await deleteDay(d.id);
+        await deletePurchasesForDay(d.id);
       }
     } else {
       return res.status(400).json({ error: "No ids or deleteAll specified" });
@@ -2395,6 +2486,44 @@ async function startServer() {
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: "فشل حذف السلفة" });
+    }
+  });
+
+  app.get("/api/employee-violations", async (req, res) => {
+    try {
+      const list = await getEmployeeViolations();
+      res.json(list);
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل تحميل سجل المخالفات والجزاءات" });
+    }
+  });
+
+  app.post("/api/employee-violations", async (req, res) => {
+    try {
+      const v = req.body as EmployeeViolation;
+      if (!v || !v.employeeId || !v.date || !v.description || !v.type) {
+        return res.status(400).json({ error: "بيانات المخالفة غير مكتملة" });
+      }
+      if (!v.id) {
+        v.id = `viol-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      }
+      if (!v.createdAt) {
+        v.createdAt = new Date().toISOString();
+      }
+      await saveEmployeeViolation(v);
+      res.json({ success: true, violation: v });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل تسجيل المخالفة" });
+    }
+  });
+
+  app.delete("/api/employee-violations/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      await deleteEmployeeViolation(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل حذف المخالفة" });
     }
   });
 

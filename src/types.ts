@@ -3,14 +3,21 @@ export interface Settings {
   رسوم_فيزا: number; // e.g. 1.5
   صرف_افتراضي: number; // e.g. 350
   سقف_بيبسي: number; // e.g. 400
+  سقف_بيبسي_قادسية: number;
+  سقف_بيبسي_مروج: number;
   سقف_بلاستيك: number; // e.g. 100
+  سقف_بلاستيك_قادسية: number;
+  سقف_بلاستيك_مروج: number;
   سقف_صلصات: number; // e.g. 150
+  سقف_صلصات_قادسية: number;
+  سقف_صلصات_مروج: number;
   سقف_ديزل_قادسية: number; // e.g. 50
   سقف_ديزل_مروج: number; // e.g. 30
   زيادة_عالي: number; // e.g. 25 (%)
   نسبة_قادسية_ديزل: number; // e.g. 70
   نسبة_مروج_ديزل: number; // e.g. 30
   ايام_مقارنة: number; // e.g. 7
+  سقف_نسبة_السلفة_القصوى: number; // النسبة القصوى للسلفة المسجلة بالاعدادات
 }
 
 export interface ExtraPurchase {
@@ -182,6 +189,18 @@ export interface EmployeeAttendance {
   oralWarning: boolean; // if true, it was simple lateness oral warning (first 3 times)
   latenessCategory: 'simple' | 'medium' | 'large' | 'severe' | 'none';
   notes: string;
+  hasExcuse?: boolean; // عذر لعدم احتساب الخصم
+  createdAt: string;
+}
+
+export interface EmployeeViolation {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  date: string; // YYYY-MM-DD
+  description: string; // وصف المخالفة
+  type: 'warning' | 'deduction'; // تنبيه فقط أو حسم
+  deductionAmount: number; // مبلغ الحسم المالي
   createdAt: string;
 }
 

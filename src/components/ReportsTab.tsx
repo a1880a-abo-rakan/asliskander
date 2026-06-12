@@ -699,8 +699,8 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
           <div class="stats">
             <div class="stat-box"><div>إجمالي الإيرادات</div><div class="stat-val text-green">${totalRev.toFixed(2)} ر</div></div>
             <div class="stat-box"><div>إجمالي المصروفات</div><div class="stat-val text-red">${totalExp.toFixed(2)} ر</div></div>
+            <div class="stat-box"><div>ضريبة الفرق المستحقة</div><div class="stat-val font-bold text-slate-700">${vatDueDiff.toFixed(2)} ر</div></div>
             <div class="stat-box"><div>صافي الربح للفترة</div><div class="stat-val">${totalNet.toFixed(2)} ر</div></div>
-            <div class="stat-box"><div>ضريبة الفرق المستحقة</div><div class="stat-val text-green">${vatDueDiff.toFixed(2)} ر</div></div>
           </div>
   
           <h3>1. مقارنة الفرعين والتحصيل المالي</h3>
@@ -975,6 +975,12 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
               <div className="text-[10px] text-rose-500 mt-0.5 font-medium">الخصوم المباشرة والديزل والصلصات</div>
             </div>
 
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-center">
+              <div className="text-xs text-slate-600 font-bold">🧾 ضريبة القيمة المضافة المستحقة على الفرق</div>
+              <div className="text-2xl font-extrabold text-slate-900 mt-2">{vatDueDiff.toFixed(2)} ر</div>
+              <div className="text-[10px] text-slate-500 mt-0.5 font-medium">طريقة 15/115 على وعاء الفرق المقر من الدخل</div>
+            </div>
+
             <div className={`p-5 rounded-xl text-center border ${
               totalNet >= 0 
                 ? "bg-indigo-50 border-indigo-200" 
@@ -987,12 +993,6 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                 {totalNet.toFixed(2)} ر
               </div>
               <div className="text-[10px] text-slate-500 mt-0.5 font-medium">بعد المصاريف وقيمة ضريبة الفرق المستحقة</div>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-center">
-              <div className="text-xs text-slate-600 font-bold">🧾 ضريبة القيمة المضافة المستحقة على الفرق</div>
-              <div className="text-2xl font-extrabold text-slate-900 mt-2">{vatDueDiff.toFixed(2)} ر</div>
-              <div className="text-[10px] text-slate-500 mt-0.5 font-medium">طريقة 15/115 على وعاء الفرق المقر من الدخل</div>
             </div>
           </div>
 

@@ -14,14 +14,21 @@ export default function SettingsTab({ onShowToast, userRole }: SettingsTabProps)
     رسوم_فيزا: 1.5,
     صرف_افتراضي: 350,
     سقف_بيبسي: 400,
+    سقف_بيبسي_قادسية: 400,
+    سقف_بيبسي_مروج: 400,
     سقف_بلاستيك: 100,
+    سقف_بلاستيك_قادسية: 100,
+    سقف_بلاستيك_مروج: 100,
     سقف_صلصات: 150,
+    سقف_صلصات_قادسية: 150,
+    سقف_صلصات_مروج: 150,
     سقف_ديزل_قادسية: 50,
     سقف_ديزل_مروج: 30,
     زيادة_عالي: 25,
     نسبة_قادسية_ديزل: 70,
     نسبة_مروج_ديزل: 30,
-    ايام_مقارنة: 7
+    ايام_مقارنة: 7,
+    سقف_نسبة_السلفة_القصوى: 50
   });
   const [loading, setLoading] = useState(false);
 
@@ -157,48 +164,96 @@ export default function SettingsTab({ onShowToast, userRole }: SettingsTabProps)
               </div>
             </div>
 
-            {/* pepsi daily cap */}
+            {/* pepsi daily cap - Qadisiyah */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700">سقف البيبسي اليومي</label>
+              <label className="block text-xs font-bold text-slate-700">سقف وقسط بيبسي - فرع القادسية</label>
               <div className="relative">
                 <input
                   type="number"
                   required
                   disabled={isReadOnly}
-                  value={settings.سقف_بيبسي}
-                  onChange={(e) => updateField("سقف_بيبسي", parseFloat(e.target.value) || 0)}
+                  value={settings.سقف_بيبسي_قادسية}
+                  onChange={(e) => updateField("سقف_بيبسي_قادسية", parseFloat(e.target.value) || 0)}
                   className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
                 />
                 <span className="text-[10px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded absolute left-2 top-2">ريال</span>
               </div>
             </div>
 
-            {/* plastics daily cap */}
+            {/* pepsi daily cap - Murooj */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700">سقف البلاستيكيات اليومي</label>
+              <label className="block text-xs font-bold text-slate-700">سقف وقسط بيبسي - فرع المروج</label>
               <div className="relative">
                 <input
                   type="number"
                   required
                   disabled={isReadOnly}
-                  value={settings.سقف_بلاستيك}
-                  onChange={(e) => updateField("سقف_بلاستيك", parseFloat(e.target.value) || 0)}
+                  value={settings.سقف_بيبسي_مروج}
+                  onChange={(e) => updateField("سقف_بيبسي_مروج", parseFloat(e.target.value) || 0)}
                   className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
                 />
                 <span className="text-[10px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded absolute left-2 top-2">ريال</span>
               </div>
             </div>
 
-            {/* sauces daily cap */}
+            {/* plastics daily cap - Qadisiyah */}
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700">سقف الصلصات اليومي</label>
+              <label className="block text-xs font-bold text-slate-700">سقف وقسط بلاستيك - فرع القادسية</label>
               <div className="relative">
                 <input
                   type="number"
                   required
                   disabled={isReadOnly}
-                  value={settings.سقف_صلصات}
-                  onChange={(e) => updateField("سقف_صلصات", parseFloat(e.target.value) || 0)}
+                  value={settings.سقف_بلاستيك_قادسية}
+                  onChange={(e) => updateField("سقف_بلاستيك_قادسية", parseFloat(e.target.value) || 0)}
+                  className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
+                />
+                <span className="text-[10px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded absolute left-2 top-2">ريال</span>
+              </div>
+            </div>
+
+            {/* plastics daily cap - Murooj */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">سقف وقسط بلاستيك - فرع المروج</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  required
+                  disabled={isReadOnly}
+                  value={settings.سقف_بلاستيك_مروج}
+                  onChange={(e) => updateField("سقف_بلاستيك_مروج", parseFloat(e.target.value) || 0)}
+                  className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
+                />
+                <span className="text-[10px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded absolute left-2 top-2">ريال</span>
+              </div>
+            </div>
+
+            {/* sauces daily cap - Qadisiyah */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">سقف وقسط صلصات - فرع القادسية</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  required
+                  disabled={isReadOnly}
+                  value={settings.سقف_صلصات_قادسية}
+                  onChange={(e) => updateField("سقف_صلصات_قادسية", parseFloat(e.target.value) || 0)}
+                  className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
+                />
+                <span className="text-[10px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded absolute left-2 top-2">ريال</span>
+              </div>
+            </div>
+
+            {/* sauces daily cap - Murooj */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">سقف وقسط صلصات - فرع المروج</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  required
+                  disabled={isReadOnly}
+                  value={settings.سقف_صلصات_مروج}
+                  onChange={(e) => updateField("سقف_صلصات_مروج", parseFloat(e.target.value) || 0)}
                   className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
                 />
                 <span className="text-[10px] bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded absolute left-2 top-2">ريال</span>
@@ -294,6 +349,22 @@ export default function SettingsTab({ onShowToast, userRole }: SettingsTabProps)
                   disabled={isReadOnly}
                   value={settings.نسبة_مروج_ديزل}
                   onChange={(e) => updateField("نسبة_مروج_ديزل", parseFloat(e.target.value) || 30)}
+                  className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
+                />
+                <Percent className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              </div>
+            </div>
+
+            {/* Max system-wide employee advance % limit */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">سقف النسبة القصوى لمجمل السُّلف من راتب الموظف (%)</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  required
+                  disabled={isReadOnly}
+                  value={settings.سقف_نسبة_السلفة_القصوى ?? 50}
+                  onChange={(e) => updateField("سقف_نسبة_السلفة_القصوى", parseFloat(e.target.value) || 0)}
                   className="w-full pl-12 pr-3 py-2 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 disabled:opacity-50 disabled:bg-slate-100"
                 />
                 <Percent className="w-4 h-4 text-slate-400 absolute left-3 top-3" />

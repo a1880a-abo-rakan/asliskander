@@ -403,10 +403,19 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     // Determine the active cap from settings
     let currentCap = 400;
     if (settings) {
-      if (key === "pepsi") currentCap = settings.سقف_بيبسي || 400;
-      else if (key === "plastic") currentCap = settings.سقف_بلاستيك || 100;
-      else if (key === "sauces") currentCap = settings.سقف_صلصات || 150;
-      else if (key === "diesel") {
+      if (key === "pepsi") {
+        currentCap = branch === "القادسية"
+          ? (settings.سقف_بيبسي_قادسية || settings.سقف_بيبسي || 400)
+          : (settings.سقف_بيبسي_مروج || settings.سقف_بيبسي || 400);
+      } else if (key === "plastic") {
+        currentCap = branch === "القادسية"
+          ? (settings.سقف_بلاستيك_قادسية || settings.سقف_بلاستيك || 100)
+          : (settings.سقف_بلاستيك_مروج || settings.سقف_بلاستيك || 100);
+      } else if (key === "sauces") {
+        currentCap = branch === "القادسية"
+          ? (settings.سقف_صلصات_قادسية || settings.سقف_صلصات || 150)
+          : (settings.سقف_صلصات_مروج || settings.سقف_صلصات || 150);
+      } else if (key === "diesel") {
         currentCap = branch === "القادسية" ? (settings.سقف_ديزل_قادسية || 50) : (settings.سقف_ديزل_مروج || 30);
       }
     }
@@ -482,14 +491,29 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   };
 
   // Live actual deductions computation for accurate daily expenses
+  const pepsiCapLive = settings
+    ? (branch === "القادسية"
+        ? (settings.سقف_بيبسي_قادسية || settings.سقف_بيبسي || 400)
+        : (settings.سقف_بيبسي_مروج || settings.سقف_بيبسي || 400))
+    : 400;
   const pepsiStats = getCarryoverStats("pepsi", valPepsiPaid, pepsiType);
-  const livePepsiDeduct = pepsiStats ? pepsiStats.deduct : (valPepsiPaid > 0 ? Math.min(valPepsiPaid, settings?.سقف_بيبسي || 400) : 0);
+  const livePepsiDeduct = pepsiStats ? pepsiStats.deduct : (valPepsiPaid > 0 ? Math.min(valPepsiPaid, pepsiCapLive) : 0);
 
+  const plasticCapLive = settings
+    ? (branch === "القادسية"
+        ? (settings.سقف_بلاستيك_قادسية || settings.سقف_بلاستيك || 100)
+        : (settings.سقف_بلاستيك_مروج || settings.سقف_بلاستيك || 100))
+    : 100;
   const plasticStats = getCarryoverStats("plastic", valPlasticPaid, plasticType);
-  const livePlasticDeduct = plasticStats ? plasticStats.deduct : (valPlasticPaid > 0 ? Math.min(valPlasticPaid, settings?.سقف_بلاستيك || 100) : 0);
+  const livePlasticDeduct = plasticStats ? plasticStats.deduct : (valPlasticPaid > 0 ? Math.min(valPlasticPaid, plasticCapLive) : 0);
 
+  const saucesCapLive = settings
+    ? (branch === "القادسية"
+        ? (settings.سقف_صلصات_قادسية || settings.سقف_صلصات || 150)
+        : (settings.سقف_صلصات_مروج || settings.سقف_صلصات || 150))
+    : 150;
   const saucesStats = getCarryoverStats("sauces", valSaucesPaid, saucesType);
-  const liveSaucesDeduct = saucesStats ? saucesStats.deduct : (valSaucesPaid > 0 ? Math.min(valSaucesPaid, settings?.سقف_صلصات || 150) : 0);
+  const liveSaucesDeduct = saucesStats ? saucesStats.deduct : (valSaucesPaid > 0 ? Math.min(valSaucesPaid, saucesCapLive) : 0);
 
   const dieselCap = settings ? (branch === "القادسية" ? settings.سقف_ديزل_قادسية : settings.سقف_ديزل_مروج) : 50;
   const dieselStats = getCarryoverStats("diesel", valDieselPaid, dieselType);
