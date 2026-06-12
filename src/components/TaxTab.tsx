@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { TaxInvoice, TaxInvoiceItem } from "../types";
 import { 
   Receipt, 
@@ -17,7 +17,15 @@ import {
   CheckCircle2,
   ArrowDownToLine,
   Edit,
-  Pen
+  Pen,
+  Building2,
+  Check,
+  Maximize2,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  X,
+  Eye
 } from "lucide-react";
 
 interface TaxTabProps {
@@ -32,6 +40,220 @@ interface InvoiceInput {
   invoice_date: string;
   amount: number | "";
   items?: TaxInvoiceItem[];
+}
+
+// Arabic-optimized string normalization for fuzzy comparison
+function normalizeArabicString(str: string): string {
+  if (!str) return "";
+  let s = str.trim().toLowerCase();
+  // Remove punctuation
+  s = s.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+  // Replace multiple spaces with single
+  s = s.replace(/\s+/g, " ");
+  // Normalize Alif
+  s = s.replace(/[أإآ]/g, "ا");
+  // Normalize Ta-Marbuta
+  s = s.replace(/ة/g, "ه");
+  // Normalize Ya
+  s = s.replace(/ى/g, "ي");
+  return s;
+}
+
+// Levenshtein Distance calculation
+function getLevenshteinDistance(a: string, b: string): number {
+  const matrix: number[][] = [];
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
+// Check if entered name is very close to an existing company name from database
+function checkSimilarity(entered: string, existingList: string[]): { matches: boolean; similarName: string } {
+  const normEntered = normalizeArabicString(entered);
+  if (!normEntered || normEntered.length < 3) return { matches: false, similarName: "" };
+
+  for (const ext of existingList) {
+    const normExt = normalizeArabicString(ext);
+    if (ext === entered || normExt === normEntered) continue; // Exact matches are fine
+
+    // Compute similarity ratio
+    const distance = getLevenshteinDistance(normEntered, normExt);
+    const maxLen = Math.max(normEntered.length, normExt.length);
+    const similarity = (maxLen - distance) / maxLen;
+
+    // Threshold: 75% similarity or distance <= 3
+    if (similarity >= 0.70 && distance <= 4) {
+      return { matches: true, similarName: ext };
+    }
+  }
+  return { matches: false, similarName: "" };
+}
+
+// Unified company name resolution function (Principle 2)
+function getUnifiedCompanyName(entered: string, existingList: string[]): string {
+  const trimmed = entered.trim();
+  if (!trimmed) return "";
+
+  const normEntered = normalizeArabicString(trimmed);
+
+  // 1. First, search for EXACT match (with or without normalization)
+  // If there is an exact match in the database, keep it as is
+  const exactMatch = existingList.find(ext => ext.trim() === trimmed);
+  if (exactMatch) return exactMatch;
+
+  // 2. Next, search for normalized exact match (solving typos like hamza, ta-marbuta, etc.)
+  const normalizedExactMatch = existingList.find(ext => normalizeArabicString(ext) === normEntered);
+  if (normalizedExactMatch) {
+    return normalizedExactMatch; // Automatically unify to the existing database name!
+  }
+
+  // 3. Fallback to entered name if no match found
+  return trimmed;
+}
+
+interface TaxCompany {
+  id: string;
+  name: string;
+}
+
+interface SearchableCompanyInputProps {
+  value: string;
+  onChange: (val: string) => void;
+  registeredCompanies: TaxCompany[];
+  onRegisterCompany: (name: string) => Promise<void>;
+  placeholder?: string;
+  className?: string;
+  id?: string;
+}
+
+function SearchableCompanyInput({
+  value,
+  onChange,
+  registeredCompanies,
+  onRegisterCompany,
+  placeholder = "ابحث بالاسم أو اختر...",
+  className = "w-full px-3 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold",
+  id
+}: SearchableCompanyInputProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setSearch(value || "");
+  }, [value]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        setSearch(value || "");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [value]);
+
+  const normSearch = normalizeArabicString(search);
+  const filtered = registeredCompanies.filter(comp => {
+    if (!search) return true;
+    const normComp = normalizeArabicString(comp.name);
+    return normComp.includes(normSearch) || comp.name.includes(search);
+  });
+
+  const exactMatchExists = registeredCompanies.some(comp => 
+    normalizeArabicString(comp.name) === normSearch || comp.name.trim() === search.trim()
+  );
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <input
+        id={id}
+        type="text"
+        required
+        placeholder={placeholder}
+        value={search}
+        onFocus={() => setIsOpen(true)}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setIsOpen(true);
+          onChange(e.target.value);
+        }}
+        className={className}
+        autoComplete="off"
+      />
+      
+      {isOpen && (
+        <div className="absolute z-50 left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg divide-y divide-slate-100 animate-fadeIn text-right rtl">
+          {filtered.length > 0 ? (
+            <div className="p-1">
+              {filtered.map((comp) => {
+                const isSelected = comp.name === value;
+                return (
+                  <button
+                    key={comp.id}
+                    type="button"
+                    onClick={() => {
+                      onChange(comp.name);
+                      setSearch(comp.name);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full text-right px-3 py-2 text-xs font-bold rounded-md flex items-center justify-between transition-colors ${
+                      isSelected 
+                        ? "bg-indigo-50 text-indigo-700 hover:bg-indigo-100" 
+                        : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span>{comp.name}</span>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600" />}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-3 text-center text-xs text-slate-400 font-medium animate-pulse">
+              لا توجد نتائج تطابق "{search}" 🔍
+            </div>
+          )}
+
+          {search.trim() !== "" && !exactMatchExists && (
+            <div className="p-1.5 bg-slate-50">
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsOpen(false);
+                  await onRegisterCompany(search);
+                }}
+                className="w-full text-right px-3 py-2 text-xs font-extrabold text-emerald-700 hover:bg-emerald-50 rounded-md flex items-center gap-1.5 transition-colors border border-dashed border-emerald-200 shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>➕ تسجيل المورد الجديد "{search}"</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProps) {
@@ -88,6 +310,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     { company: "", invoice_no: "", invoice_date: "", amount: "" }
   ]);
 
+  // Company filtering & similarity states
+  const [registeredCompanies, setRegisteredCompanies] = useState<TaxCompany[]>([]);
+  const [showSuppliersManager, setShowSuppliersManager] = useState(false);
+  const [newSupplierName, setNewSupplierName] = useState("");
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
+  const [editingSupplierName, setEditingSupplierName] = useState<string>("");
+  const [allCompanies, setAllCompanies] = useState<string[]>([]);
+  const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string>("الكل");
+  const [ignoredSimilarities, setIgnoredSimilarities] = useState<Record<string, boolean>>({});
+
   // AI OCR States
   const [ocrLoading, setOcrLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -100,9 +332,18 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     success: boolean;
     error?: string;
     rawImage?: string;
+    originalObjectUrl?: string;
+    fileType?: string;
     isRetrying?: boolean;
     items?: TaxInvoiceItem[];
   }>>([]);
+
+  const [auditInvoiceId, setAuditInvoiceId] = useState<string | null>(null);
+  const [imgZoom, setImgZoom] = useState(1);
+  const [imgRotation, setImgRotation] = useState(0);
+  const [imgPan, setImgPan] = useState({ x: 0, y: 0 });
+  const [isDraggingPan, setIsDraggingPan] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -131,7 +372,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   // Helper to compress images on client-side before sending to server for OCR
-  const compressImage = (file: File, maxWidth = 700, maxHeight = 700): Promise<string> => {
+  const compressImage = (file: File, maxWidth = 2000, maxHeight = 2000): Promise<string> => {
     return new Promise((resolve, reject) => {
       // If it's not an image file (e.g. PDF), fall back to standard reader
       if (!file.type.startsWith("image/")) {
@@ -173,8 +414,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as JPEG format with 0.50 quality for ultra-rapid upload and perfect OCR clarity at tiny file sizes
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.50);
+        // Compress as JPEG format with 0.85 quality for crystal-clear clarity
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
         resolve(compressedBase64);
       };
       img.onerror = (err) => {
@@ -213,6 +454,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             success: r.success !== false,
             error: r.error,
             rawImage: base64Images[rIdx],
+            originalObjectUrl: URL.createObjectURL(files[rIdx]),
+            fileType: files[rIdx].type,
             isRetrying: false,
             items: r.items || []
           }));
@@ -341,7 +584,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     if (saved !== null) return parseFloat(saved) || 0;
 
     // Fallback to period cashInput distributed to days with invoices
-    const invoiceDates = filteredInvoices.map((inv) => inv.invoice_date || inv.date);
+    const invoiceDates = filteredInvoices.map((inv) => inv.date);
     const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
 
     if (uniqueInvoiceDates.includes(dateStr)) {
@@ -359,7 +602,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
     if (saved !== null) return saved;
 
-    const invoiceDates = filteredInvoices.map((inv) => inv.invoice_date || inv.date);
+    const invoiceDates = filteredInvoices.map((inv) => inv.date);
     const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
 
     if (uniqueInvoiceDates.includes(dateStr)) {
@@ -424,7 +667,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const payloads = validInvoices.map((v) => ({
         date,
          branch,
-        company: v.company,
+        company: getUnifiedCompanyName(v.company, allCompanies),
         invoice_no: v.invoice_no,
         invoice_date: v.invoice_date || date,
         amount: parseFloat(v.amount as string) || 0,
@@ -453,6 +696,91 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   };
 
+  const loadCompanies = async () => {
+    try {
+      const res = await fetch("/api/tax-companies");
+      if (res.ok) {
+        const data = await res.json() as TaxCompany[];
+        setRegisteredCompanies(data);
+        setAllCompanies(data.map(c => c.name));
+      }
+    } catch (err) {
+      console.error("Error loading tax companies:", err);
+    }
+  };
+
+  const handleAddSupplier = async (nameToAdd?: string) => {
+    const targetName = nameToAdd !== undefined ? nameToAdd : newSupplierName;
+    const trimmed = targetName.trim();
+    if (!trimmed) {
+      onShowToast("⚠️ يرجى التكرم بكتابة اسم المورد أولاً");
+      return;
+    }
+    try {
+      const res = await fetch("/api/tax-companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (res.ok) {
+        onShowToast(`🏢 تم تسجيل المورد "${trimmed}" بنجاح!`);
+        if (nameToAdd === undefined) {
+          setNewSupplierName("");
+        }
+        await loadCompanies();
+      } else {
+        onShowToast("❌ فشل تسجيل المورد");
+      }
+    } catch (err) {
+      console.error(err);
+      onShowToast("❌ خطأ بالاتصال أثناء تسجيل المورد");
+    }
+  };
+
+  const handleDeleteSupplier = async (id: string, name: string) => {
+    if (!window.confirm(`هل أنت متأكد من حذف المورد "${name}"؟`)) return;
+    try {
+      const res = await fetch(`/api/tax-companies/${id}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        onShowToast(`🗑️ تم حذف المورد "${name}" بنجاح`);
+        await loadCompanies();
+      } else {
+        onShowToast("❌ فشل حذف المورد");
+      }
+    } catch (err) {
+      console.error(err);
+      onShowToast("❌ خطأ شبكة أثناء حذف المورد");
+    }
+  };
+
+  const handleEditSupplierSave = async (id: string) => {
+    const trimmed = editingSupplierName.trim();
+    if (!trimmed) {
+      onShowToast("⚠️ يرجى كتابة اسم المورد الجديد");
+      return;
+    }
+    try {
+      const res = await fetch("/api/tax-companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name: trimmed }),
+      });
+      if (res.ok) {
+        onShowToast(`✏️ تم تعديل المورد بنجاح إلى "${trimmed}"`);
+        setEditingSupplierId(null);
+        setEditingSupplierName("");
+        await loadCompanies();
+      } else {
+        onShowToast("❌ فشل تعديل المورد");
+      }
+    } catch (err) {
+      console.error(err);
+      onShowToast("❌ خطأ شبكة أثناء تعديل المورد");
+    }
+  };
+
   const loadTaxReport = async () => {
     if (!from || !to) {
       onShowToast("⚠️ يرجى تحديد نطاق التاريخ المطلوب");
@@ -460,6 +788,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
     setLoading(true);
     try {
+      // Load companies list asynchronously
+      loadCompanies();
+
       // 1. Get tax invoices in range
       const resInvs = await fetch(`/api/tax-invoices?from=${from}&to=${to}`);
       const invData = await resInvs.ok ? await resInvs.json() : [];
@@ -629,7 +960,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const updatedData = {
         date: editDate || editModal.invoice.date,
         branch: editBranch,
-        company: editCompany.trim(),
+        company: getUnifiedCompanyName(editCompany, allCompanies),
         invoice_no: editInvoiceNo.trim(),
         invoice_date: editInvoiceDate,
         amount: parseFloat(editAmount.toString()),
@@ -663,6 +994,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   }, [from, reportMode]);
 
+  // Load companies catalog on component mount to support autocompletion right away
+  useEffect(() => {
+    loadCompanies();
+  }, []);
+
   useEffect(() => {
     loadTaxReport();
   }, [from, to]);
@@ -682,8 +1018,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   }, [branch, from, to]);
 
-  // Filter invoices to only show/count the ones matching the selected active branch
-  const filteredInvoices = invoices.filter((i) => i.branch === branch);
+  // Filter invoices to only show/count the ones matching the selected active branch and optionally company
+  const filteredInvoices = invoices.filter((i) => {
+    const matchesBranch = i.branch === branch;
+    const matchesCompany = !selectedCompanyFilter || selectedCompanyFilter === "الكل" || i.company === selectedCompanyFilter;
+    return matchesBranch && matchesCompany;
+  });
   const totalInvoicesAmount = filteredInvoices.reduce((s, i) => s + (i.amount || 0), 0);
   
   // Get ONLY the POS income for the currently selected branch
@@ -699,6 +1039,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   return (
     <div className="space-y-8 RTL">
+      {/* Shared datalist for supplier names autocomplete (Principle 1) */}
+      <datalist id="registered-companies-list">
+        {allCompanies.map((comp) => (
+          <option key={comp} value={comp} />
+        ))}
+      </datalist>
+
       {/* Segmented control at the very top of the Tax Tab */}
       <div className="bg-white rounded-xl shadow-xs border border-slate-100 p-4 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
         <div className="text-right">
@@ -741,6 +1088,131 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </button>
           )}
         </div>
+      </div>
+
+      {/* 0. Manual Suppliers Directory */}
+      <div className="bg-white rounded-xl shadow-xs border border-slate-150 p-6 print:hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
+              <Building2 className="w-5 h-5" />
+            </div>
+            <div className="text-right">
+              <h2 className="text-sm font-extrabold text-slate-800">دليل الموردين والمؤسسات المعتمدة 🏢</h2>
+              <p className="text-[11px] text-slate-500 font-bold mt-0.5">تسجيل الدليل يدوياً لتوحيد كتابة أسمائهم تحت كافة فواتير المصروفات مباشرة.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowSuppliersManager(!showSuppliersManager)}
+            className="w-full sm:w-auto px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-2xs active:scale-[0.98]"
+          >
+            {showSuppliersManager ? "إخفاء لوحة إدارة الموردين 🔼" : "🏢 عرض وإدارة الموردين المسجلين ⚙️"}
+          </button>
+        </div>
+
+        {showSuppliersManager && (
+          <div className="mt-5 pt-5 border-t border-slate-100 space-y-4 animate-fadeIn">
+            {/* Add New Supplier input */}
+            <div className="flex flex-col sm:flex-row gap-2 max-w-lg">
+              <input
+                type="text"
+                placeholder="اكتب اسم المورد الجديد هنا... (مثال: شركة المراعي)"
+                value={newSupplierName}
+                onChange={(e) => setNewSupplierName(e.target.value)}
+                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-800"
+              />
+              <button
+                type="button"
+                onClick={() => handleAddSupplier()}
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shadow-3xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>إضافة لتسجيل المورد</span>
+              </button>
+            </div>
+
+            {/* List of current suppliers */}
+            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150/80">
+              <div className="text-[11px] font-extrabold text-slate-600 mb-3 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                <span>قائمة الموردين المسجلين حالياً والمسجلين بالكامل ({registeredCompanies.length} مورد)</span>
+              </div>
+              {registeredCompanies.length === 0 ? (
+                <div className="text-xs text-slate-400 py-4 text-center font-bold">لا يوجد موردين مسجلين حالياً.</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-1 text-right">
+                  {registeredCompanies.map((comp) => (
+                    <div
+                      key={comp.id}
+                      className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg shadow-3xs group hover:border-indigo-300 hover:shadow-2xs transition-all min-h-11"
+                    >
+                      {editingSupplierId === comp.id ? (
+                        <div className="flex items-center gap-1.5 w-full">
+                          <input
+                            type="text"
+                            value={editingSupplierName}
+                            onChange={(e) => setEditingSupplierName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                handleEditSupplierSave(comp.id);
+                              } else if (e.key === "Escape") {
+                                setEditingSupplierId(null);
+                              }
+                            }}
+                            className="flex-1 px-2 py-1 text-xs border border-indigo-400 rounded-md focus:outline-none font-bold text-slate-800 bg-white"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleEditSupplierSave(comp.id)}
+                            className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors cursor-pointer shrink-0"
+                            title="حفظ التعديل"
+                          >
+                            <Check className="w-4.5 h-4.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingSupplierId(null)}
+                            className="p-1 text-slate-400 hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0 text-sm font-bold"
+                            title="إلغاء"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-xs font-bold text-slate-800 truncate select-all">{comp.name}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingSupplierId(comp.id);
+                                setEditingSupplierName(comp.name);
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all cursor-pointer"
+                              title="تعديل اسم المورد"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSupplier(comp.id, comp.name)}
+                              className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-all cursor-pointer"
+                              title="حذف المورد"
+                            >
+                              <Trash className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 1. Invoices Form */}
@@ -866,11 +1338,29 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     onClick={() => {
                       setParsedInvoices(parsedInvoices.filter((p) => p.tempId !== pinv.tempId));
                     }}
-                    className="absolute left-3 top-3 text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-50 transition-all cursor-pointer"
+                    className="absolute left-3 top-3 text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-slate-50 transition-all cursor-pointer hover:bg-rose-50"
                     title="استبعاد الفاتورة"
                   >
                     <Trash className="w-4 h-4" />
                   </button>
+
+                  {/* High Density Match / Precise Verification Trigger */}
+                  {(pinv.originalObjectUrl || pinv.rawImage) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuditInvoiceId(pinv.tempId);
+                        setImgZoom(1);
+                        setImgRotation(0);
+                        setImgPan({ x: 0, y: 0 });
+                      }}
+                      className="absolute left-11 top-3 text-emerald-700 hover:text-emerald-950 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-[10px] font-black transition-all flex items-center gap-1.5 cursor-pointer hover:shadow-2xs"
+                      title="فتح مدقق المطابقة البصري ذو الجودة الفائقة والضبط المتقدم"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                      <span>تدقيق ومطابقة بصرية 🔬</span>
+                    </button>
+                  )}
 
                   <div className="space-y-2">
                     {/* Error Warning badge */}
@@ -885,7 +1375,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             type="button"
                             disabled={pinv.isRetrying}
                             onClick={() => retryInvoice(idx)}
-                            className="w-full py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-250 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-xs transition-all disabled:opacity-50"
+                            className="w-full py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-xs transition-all disabled:opacity-50"
                           >
                             <Sparkles className="w-3.5 h-3.5 animate-pulse" />
                             <span>إعادة محاولة اللقراءة الذكية 🔄</span>
@@ -894,19 +1384,93 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
+                    <div className="flex flex-col sm:flex-row gap-4 items-start">
+                      {/* Interactive document image crop/thumbnail */}
+                      {(pinv.originalObjectUrl || pinv.rawImage) && (
+                        <div 
+                          onClick={() => {
+                            setAuditInvoiceId(pinv.tempId);
+                            setImgZoom(1);
+                            setImgRotation(0);
+                            setImgPan({ x: 0, y: 0 });
+                          }}
+                          className="w-full sm:w-[94px] h-[120px] bg-slate-900 border border-slate-200 hover:border-emerald-500 rounded-xl overflow-hidden relative group cursor-pointer transition-all shrink-0 hover:shadow-xs mt-1"
+                          title="انقر لعرض وتكبير الفاتورة بكامل تفاصيلها الأصلية البالغة الوضوح"
+                        >
+                          {pinv.fileType === "application/pdf" ? (
+                            <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center p-2 text-rose-500">
+                              <FileText className="w-8 h-8 shrink-0 text-rose-600 mb-1" />
+                              <span className="text-[10px] font-black uppercase text-rose-400">PDF</span>
+                            </div>
+                          ) : (
+                            <img 
+                              src={pinv.originalObjectUrl || pinv.rawImage} 
+                              alt="مرفق الفاتورة الأصيل"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
+                              referrerPolicy="no-referrer"
+                            />
+                          )}
+                          <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white text-[10px] font-black gap-1">
+                            <Maximize2 className="w-4 h-4 text-emerald-400 animate-pulse" />
+                            <span>تدقيق ومطابقة</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Main fields layout */}
+                      <div className="flex-1 grid grid-cols-2 gap-3 min-w-0">
+                      <div className="space-y-1 relative">
                         <label className="text-[10px] font-bold text-slate-500 block">اسم المورد / المؤسسة</label>
-                        <input
-                           type="text"
+                        <SearchableCompanyInput
                           value={pinv.company}
-                          onChange={(e) => {
+                          onChange={(val) => {
                             const updated = [...parsedInvoices];
-                            updated[idx].company = e.target.value;
+                            updated[idx].company = val;
                             setParsedInvoices(updated);
                           }}
+                          registeredCompanies={registeredCompanies}
+                          onRegisterCompany={(name) => handleAddSupplier(name)}
                           className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded-md focus:border-indigo-500 bg-slate-50/30 focus:bg-white focus:outline-none font-bold text-slate-800"
                         />
+                        {(() => {
+                          const simResult = checkSimilarity(pinv.company, allCompanies);
+                          const showWarning = simResult.matches && !ignoredSimilarities[`parsed-${idx}-${simResult.similarName}`];
+                          if (showWarning) {
+                            return (
+                              <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 space-y-1 animate-fadeIn">
+                                <div className="font-bold flex items-center gap-1">
+                                  <span>⚠️ هل تقصد المؤسسة المسجلة؟</span>
+                                </div>
+                                <div className="text-[10px]">
+                                  الاسم قريب جداً من: <span className="font-extrabold text-amber-950 underline">{simResult.similarName}</span>
+                                </div>
+                                <div className="flex gap-1.5 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = [...parsedInvoices];
+                                      updated[idx].company = simResult.similarName;
+                                      setParsedInvoices(updated);
+                                    }}
+                                    className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm text-[9px] cursor-pointer animate-pulse"
+                                  >
+                                    ✅ مطابقة الاسم
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIgnoredSimilarities(prev => ({ ...prev, [`parsed-${idx}-${simResult.similarName}`]: true }));
+                                    }}
+                                    className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-sm text-[9px] cursor-pointer"
+                                  >
+                                    ❌ إبقاء الحالي
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
 
                       <div className="space-y-1">
@@ -951,6 +1515,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           className="w-full px-2.5 py-1 text-xs border border-indigo-200 focus:border-indigo-500 rounded-md bg-slate-50/30 focus:bg-white focus:outline-none font-bold text-indigo-700"
                         />
                       </div>
+                    </div>
                     </div>
 
                     {/* Extracted items checklist/viewer - FULLY EDITABLE FOR MANAGER AND INVOICE ENTRIES USER */}
@@ -1144,7 +1709,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       const payloads = activeValid.map((v) => ({
                         date,
                         branch,
-                        company: v.company,
+                        company: getUnifiedCompanyName(v.company, allCompanies),
                         invoice_no: v.invoice_no,
                         invoice_date: v.invoice_date || date,
                         amount: parseFloat(v.amount as string) || 0,
@@ -1209,16 +1774,51 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             <div className="space-y-3">
               {rows.map((row, index) => (
                 <div key={index} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-slate-50/50 p-4 rounded-xl border border-slate-100 relative">
-                  <div className="space-y-1">
+                  <div className="space-y-1 relative">
                     <label className="text-[11px] font-bold text-slate-600">اسم المورد / المؤسسة</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="مثال: المراعي"
+                    <SearchableCompanyInput
                       value={row.company}
-                      onChange={(e) => updateRow(index, "company", e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                      onChange={(val) => updateRow(index, "company", val)}
+                      registeredCompanies={registeredCompanies}
+                      onRegisterCompany={(name) => handleAddSupplier(name)}
+                      placeholder="مثال: المراعي"
+                      className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
                     />
+                    {(() => {
+                      const simResult = checkSimilarity(row.company, allCompanies);
+                      const showWarning = simResult.matches && !ignoredSimilarities[`row-${index}-${simResult.similarName}`];
+                      if (showWarning) {
+                        return (
+                          <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 space-y-1 animate-fadeIn">
+                            <div className="font-bold flex items-center gap-1">
+                              <span>⚠️ هل تقصد الاسم المسجل مسبقاً؟</span>
+                            </div>
+                            <div className="text-[10px]">
+                              الاسم قريب جداً من: <span className="font-extrabold text-amber-950 underline">{simResult.similarName}</span>
+                            </div>
+                            <div className="flex gap-1.5 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => updateRow(index, "company", simResult.similarName)}
+                                className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm text-[9px] cursor-pointer animate-pulse"
+                              >
+                                ✅ مطابقة الاسم
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIgnoredSimilarities(prev => ({ ...prev, [`row-${index}-${simResult.similarName}`]: true }));
+                                }}
+                                className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-sm text-[9px] cursor-pointer"
+                              >
+                                ❌ إبقاء الحالي
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-slate-600">رقم الفاتورة المكتوب</label>
@@ -1491,7 +2091,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             {reportMode === "day" ? (
               <div className="space-y-2 col-span-2">
                 <label className="block text-xs font-bold text-slate-700">تاريخ مراجعة الفواتير</label>
@@ -1503,7 +2103,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     setFrom(val);
                     setTo(val);
                   }}
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
                 />
               </div>
             ) : (
@@ -1514,7 +2114,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     type="date"
                     value={from}
                     onChange={(e) => setFrom(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
                   />
                 </div>
                 <div className="space-y-2">
@@ -1523,11 +2123,29 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     type="date"
                     value={to}
                     onChange={(e) => setTo(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
                   />
                 </div>
               </>
             )}
+
+            {/* فلتر المؤسسة كمستعلم اختياري */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 select-none">البحث باسم المؤسسة الموردة (اختياري)</label>
+              <select
+                id="company-filter-dropdown"
+                value={selectedCompanyFilter}
+                onChange={(e) => setSelectedCompanyFilter(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-850"
+              >
+                <option value="الكل">🔍 جميع المؤسسات الموردة</option>
+                {allCompanies.map((comp) => (
+                  <option key={comp} value={comp}>
+                    {comp}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {filteredInvoices.length === 0 ? (
@@ -1732,44 +2350,81 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           </div>
         </div>
 
-        {/* Date parameters inputs (Hidden in Print) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end mb-6 print:hidden">
-          {reportMode === "day" ? (
-            <div className="space-y-2 col-span-1 md:col-span-2">
-              <label className="block text-xs font-bold text-slate-700">تاريخ اليوم المراد مراجعته</label>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setFrom(val);
-                  setTo(val);
-                }}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600"
-              />
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700">تاريخ بدء الفترة</label>
-                <input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700">تاريخ نهاية الفترة</label>
-                <input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600"
-                />
-              </div>
-            </>
-          )}
+        {/* Date parameters & Company filters inputs (Hidden in Print) */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200/60 shadow-3xs mb-6 space-y-4 print:hidden">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            {reportMode === "day" ? (
+              <>
+                <div className="space-y-2 md:col-span-1">
+                  <label className="block text-xs font-bold text-slate-700">تاريخ اليوم المراد مراجعته</label>
+                  <input
+                    type="date"
+                    value={from}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFrom(val);
+                      setTo(val);
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
+                  />
+                </div>
+                
+                <div className="space-y-2 md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 select-none">البحث باسم المؤسسة الموردة (اختياري)</label>
+                  <select
+                    id="report-company-filter-dropdown"
+                    value={selectedCompanyFilter}
+                    onChange={(e) => setSelectedCompanyFilter(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-800"
+                  >
+                    <option value="الكل">🔍 جميع المؤسسات الموردة</option>
+                    {allCompanies.map((comp) => (
+                      <option key={comp} value={comp}>
+                        {comp}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">تاريخ بدء الفترة</label>
+                  <input
+                    type="date"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">تاريخ نهاية الفترة</label>
+                  <input
+                    type="date"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700 select-none">البحث باسم المؤسسة الموردة (اختياري)</label>
+                  <select
+                    id="report-company-filter-dropdown"
+                    value={selectedCompanyFilter}
+                    onChange={(e) => setSelectedCompanyFilter(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-800"
+                  >
+                    <option value="الكل">🔍 جميع المؤسسات الموردة</option>
+                    {allCompanies.map((comp) => (
+                      <option key={comp} value={comp}>
+                        {comp}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
 
           <button
             type="button"
@@ -1900,7 +2555,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           return dates;
                         };
 
-                        const invoiceDatesSet = new Set<string>(filteredInvoices.map((inv) => inv.invoice_date || inv.date));
+                        const invoiceDatesSet = new Set<string>(filteredInvoices.map((inv) => inv.date));
                         const allUniqueDates = getDatesInRange(from, to).filter(dateStr => invoiceDatesSet.has(dateStr));
 
                         if (allUniqueDates.length === 0) {
@@ -1926,7 +2581,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               };
 
                               const dayInvoices = filteredInvoices.filter(
-                                (inv) => (inv.invoice_date || inv.date) === dateStr
+                                (inv) => inv.date === dateStr
                               );
                               const dayInvoicesTotal = dayInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
                               const dayCash = getDailyCash(dateStr);
@@ -2136,7 +2791,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 totalPos += d.pos_net || 0;
                                 totalCash += getDailyCash(dateStr);
                                 const dayInvs = filteredInvoices.filter(
-                                  (inv) => (inv.invoice_date || inv.date) === dateStr
+                                  (inv) => inv.date === dateStr
                                 );
                                 totalInvs += dayInvs.reduce((sum, inv) => sum + (inv.amount || 0), 0);
                               });
@@ -2477,16 +3132,51 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             <form onSubmit={saveEditedInvoice}>
               <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
                 {/* Company Item Name */}
-                <div className="space-y-1">
+                <div className="space-y-1 relative">
                   <label className="block text-xs font-bold text-slate-700">مورد الفاتورة (اسم المؤسسة / الشركة): <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    required
+                  <SearchableCompanyInput
                     value={editCompany}
-                    onChange={(e) => setEditCompany(e.target.value)}
+                    onChange={(val) => setEditCompany(val)}
+                    registeredCompanies={registeredCompanies}
+                    onRegisterCompany={(name) => handleAddSupplier(name)}
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
                     placeholder="مثال: شركة المراعي للصناعات الغذائية"
                   />
+                  {(() => {
+                    const simResult = checkSimilarity(editCompany, allCompanies);
+                    const showWarning = simResult.matches && !ignoredSimilarities[`edit-${simResult.similarName}`];
+                    if (showWarning) {
+                      return (
+                        <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 space-y-1 animate-fadeIn">
+                          <div className="font-bold flex items-center gap-1">
+                            <span>⚠️ هل تقصد الاسم المسجل مسبقاً؟</span>
+                          </div>
+                          <div className="text-[10px]">
+                            الاسم قريب جداً من: <span className="font-extrabold text-amber-950 underline">{simResult.similarName}</span>
+                          </div>
+                          <div className="flex gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setEditCompany(simResult.similarName)}
+                              className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-sm text-[9px] cursor-pointer animate-pulse"
+                            >
+                              ✅ مطابقة الاسم
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIgnoredSimilarities(prev => ({ ...prev, [`edit-${simResult.similarName}`]: true }));
+                              }}
+                              className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-sm text-[9px] cursor-pointer"
+                            >
+                              ❌ إبقاء الحالي
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
 
                 {/* Two-Column: Invoice Number & System date */}
@@ -2583,6 +3273,450 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           </div>
         </div>
       )}
+
+      {/* Immersive Visual Invoice Audit & Verification Modal */}
+      {auditInvoiceId && (() => {
+        const pinv = parsedInvoices.find(p => p.tempId === auditInvoiceId);
+        if (!pinv) return null;
+        
+        // Find the index of this pinv in parsedInvoices
+        const pinvIdx = parsedInvoices.findIndex(p => p.tempId === auditInvoiceId);
+
+        return (
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
+            <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              
+              {/* Modal Header */}
+              <div className="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-white">نظام المراجعة والتدقيق والتحقق البصري للفاتورة 🔬</h3>
+                    <p className="text-[10px] text-slate-400">تحقق ومطابقة محتويات الفاتورة المصورة بدقة متناهية وجودة ممتازة قبل الاعتماد النهائي</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuditInvoiceId(null)}
+                  className="p-1.5 hover:bg-slate-750 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer"
+                  title="إغلاق نافذة التدقيق"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body - Split Screen split into 2 Columns */}
+              <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
+                
+                {/* Right Column: Pristine High-Resolution Document Viewer (Interactive Panning/Zooming) */}
+                <div className="md:w-1/2 bg-slate-950 flex flex-col border-l border-slate-800 min-h-[320px] md:min-h-0 relative group">
+                  
+                  {/* Floating Action Controls for Pristine Viewing Quality */}
+                  <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-slate-900/95 border border-slate-700 p-1.5 rounded-xl shadow-lg backdrop-blur-xs select-none">
+                    <button
+                      type="button"
+                      onClick={() => setImgZoom(prev => Math.min(prev + 0.25, 4.5))}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md transition-all cursor-pointer"
+                      title="تكبير الصورة (+)"
+                    >
+                      <ZoomIn className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImgZoom(prev => Math.max(prev - 0.25, 0.4))}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md transition-all cursor-pointer"
+                      title="تصغير الصورة (-)"
+                    >
+                      <ZoomOut className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImgRotation(prev => (prev + 90) % 360)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md transition-all cursor-pointer"
+                      title="تدوير الصورة 90 درجة يميناً"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImgZoom(1);
+                        setImgRotation(0);
+                        setImgPan({ x: 0, y: 0 });
+                      }}
+                      className="p-1.5 bg-indigo-905 hover:bg-indigo-800 text-indigo-200 hover:text-white rounded-md transition-all text-[10px] font-bold px-2.5 cursor-pointer"
+                      title="إعادة التوطين الافتراضي للمطابقة"
+                    >
+                      إعادة ضبط
+                    </button>
+                  </div>
+
+                  {/* Display Instruction Indicator */}
+                  <div className="absolute bottom-3 right-3 z-10 text-[9px] bg-slate-900/80 border border-slate-800 px-2.5 py-1 rounded-md text-slate-400 select-none pointer-events-none">
+                    💡 اسحب الصورة للتحريك، أو استخدم عجلات الماوس للتكبير والتصغير بدقة عالية.
+                  </div>
+
+                  {/* Document Display Canvas Stage */}
+                  <div 
+                    className="flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing flex items-center justify-center select-none"
+                    onMouseDown={(e) => {
+                      setIsDraggingPan(true);
+                      dragStart.current = { x: e.clientX - imgPan.x, y: e.clientY - imgPan.y };
+                    }}
+                    onMouseMove={(e) => {
+                      if (!isDraggingPan) return;
+                      setImgPan({
+                        x: e.clientX - dragStart.current.x,
+                        y: e.clientY - dragStart.current.y
+                      });
+                    }}
+                    onMouseUp={() => setIsDraggingPan(false)}
+                    onMouseLeave={() => setIsDraggingPan(false)}
+                    onWheel={(e) => {
+                      e.preventDefault();
+                      const delta = e.deltaY < 0 ? 0.15 : -0.15;
+                      setImgZoom(prev => Math.max(0.4, Math.min(prev + delta, 4.5)));
+                    }}
+                  >
+                    {!pinv.originalObjectUrl && !pinv.rawImage ? (
+                      <div className="text-slate-500 text-xs font-bold flex flex-col items-center gap-2">
+                        <FileText className="w-8 h-8 text-slate-600 animate-bounce" />
+                        <span>الملف الممسوح مفقود بصریاً</span>
+                      </div>
+                    ) : pinv.fileType === "application/pdf" ? (
+                      <object
+                        data={pinv.originalObjectUrl || pinv.rawImage}
+                        type="application/pdf"
+                        className="w-full h-full"
+                        style={{
+                          transform: `scale(${imgZoom}) rotate(${imgRotation}deg) translate(${imgPan.x}px, ${imgPan.y}px)`,
+                          transformOrigin: "center center",
+                          transition: isDraggingPan ? "none" : "transform 0.1s ease-out"
+                        }}
+                      >
+                        <embed src={pinv.originalObjectUrl || pinv.rawImage} type="application/pdf" />
+                      </object>
+                    ) : (
+                      <img
+                        src={pinv.originalObjectUrl || pinv.rawImage}
+                        alt="مستند الفاتورة الأصلي عالي الجودة"
+                        draggable={false}
+                        className="max-h-full max-w-full object-contain shadow-2xl transition-all"
+                        referrerPolicy="no-referrer"
+                        style={{
+                          transform: `translate(${imgPan.x}px, ${imgPan.y}px) scale(${imgZoom}) rotate(${imgRotation}deg)`,
+                          transformOrigin: "center center",
+                          transition: isDraggingPan ? "none" : "transform 0.1s ease-out"
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* Left Column: Form Editor & Purchases Details */}
+                <div className="md:w-1/2 flex flex-col bg-slate-900 min-w-0">
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+                    
+                    {/* Invoice Meta Grid */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Supplier/Company Custom Searchable Input */}
+                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                        <label className="block text-[10px] font-bold text-slate-400">اسم المورد / المؤسسة بالفاتورة:</label>
+                        <SearchableCompanyInput
+                          value={pinv.company}
+                          onChange={(val) => {
+                            const updated = [...parsedInvoices];
+                            updated[pinvIdx].company = val;
+                            setParsedInvoices(updated);
+                          }}
+                          registeredCompanies={registeredCompanies}
+                          onRegisterCompany={(name) => handleAddSupplier(name)}
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
+                        />
+                      </div>
+
+                      {/* Invoice Date */}
+                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                        <label className="block text-[10px] font-bold text-slate-400">تاريخ الفاتورة المكتوب:</label>
+                        <input
+                          type="date"
+                          value={pinv.invoice_date}
+                          onChange={(e) => {
+                            const updated = [...parsedInvoices];
+                            updated[pinvIdx].invoice_date = e.target.value;
+                            setParsedInvoices(updated);
+                          }}
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                        />
+                      </div>
+
+                      {/* Invoice Serial Number */}
+                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                        <label className="block text-[10px] font-bold text-slate-400">رقم الفاتورة الأصيل (SERIAL):</label>
+                        <input
+                          type="text"
+                          value={pinv.invoice_no}
+                          onChange={(e) => {
+                            const updated = [...parsedInvoices];
+                            updated[pinvIdx].invoice_no = e.target.value;
+                            setParsedInvoices(updated);
+                          }}
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                          placeholder="Inv-XXXXXXXX"
+                        />
+                      </div>
+
+                      {/* Total Gross Amount */}
+                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                        <label className="block text-[10px] font-bold text-indigo-400">المبلغ الإجمالي شامل الضريبة:</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={pinv.amount}
+                          onChange={(e) => {
+                            const updated = [...parsedInvoices];
+                            updated[pinvIdx].amount = e.target.value === "" ? "" : parseFloat(e.target.value);
+                            setParsedInvoices(updated);
+                          }}
+                          className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Similarity Warning inside Modal if found */}
+                    {(() => {
+                      const simResult = checkSimilarity(pinv.company, allCompanies);
+                      const showWarning = simResult.matches && !ignoredSimilarities[`parsed-mod-${pinvIdx}-${simResult.similarName}`];
+                      if (showWarning) {
+                        return (
+                          <div className="p-3 bg-amber-950/45 border border-amber-800/60 rounded-xl text-xs text-amber-200 space-y-2 animate-fadeIn select-none">
+                            <div className="font-extrabold flex items-center gap-1.5 text-amber-300">
+                              <span>⚠️ مطابقة تلقائية لقرب الاسم:</span>
+                              <span>هل تقصد المؤسسة المسجلة بالنظام؟</span>
+                            </div>
+                            <p className="text-[11px] text-amber-400">
+                              الاسم المكتوب قريب من: <span className="font-black text-white underline">{simResult.similarName}</span>
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...parsedInvoices];
+                                  updated[pinvIdx].company = simResult.similarName;
+                                  setParsedInvoices(updated);
+                                }}
+                                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-md text-[10px] cursor-pointer"
+                              >
+                                ✅ مطابقة وتوحيد كـ ({simResult.similarName})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIgnoredSimilarities(prev => ({ ...prev, [`parsed-mod-${pinvIdx}-${simResult.similarName}`]: true }));
+                                }}
+                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-md text-[10px] cursor-pointer"
+                              >
+                                ❌ إبقاء الاسم الحالي
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+
+                    {/* Tabular List of Extracted Purchase Items */}
+                    <div className="space-y-2 pt-3 border-t border-slate-800">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black text-slate-300 flex items-center gap-1">
+                          <Library className="w-4 h-4 text-indigo-400" />
+                          <span>تفاصيل مصفوفة السلع والمشتريات المستخرجة ({pinv.items?.length || 0})</span>
+                        </h4>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = [...parsedInvoices];
+                            if (!updated[pinvIdx].items) {
+                              updated[pinvIdx].items = [];
+                            }
+                            updated[pinvIdx].items.push({
+                              name: "",
+                              qty: "1 حبة",
+                              price_with_tax: 0,
+                              category: ""
+                            });
+                            setParsedInvoices(updated);
+                          }}
+                          className="px-2.5 py-1 text-[10px] font-black text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 border border-indigo-900 rounded-md flex items-center gap-1 cursor-pointer transition-all"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>إضافة مادة جديدة +</span>
+                        </button>
+                      </div>
+
+                      {/* Items Matrix */}
+                      {(!pinv.items || pinv.items.length === 0) ? (
+                        <div className="p-4 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                          لا توجد بنود وسلع مسجلة لهذه الفاتورة حتى الآن. يمكنك استخراجها أو إضافتها يدوياً.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-[35vh] overflow-y-auto pr-1">
+                          {pinv.items.map((item, itemIdx) => (
+                            <div 
+                              key={itemIdx}
+                              className="flex flex-col sm:flex-row items-stretch gap-2 bg-slate-800/30 p-2.5 rounded-xl border border-slate-800 hover:border-slate-750 transition-all text-xs"
+                            >
+                              {/* Item Description Name */}
+                              <div className="flex-1 space-y-1">
+                                <label className="text-[9px] font-bold text-slate-500 block">اسم المادة / السلعة:</label>
+                                <input
+                                  type="text"
+                                  value={item.name}
+                                  placeholder="مثل: خضار، لحوم، غاز..."
+                                  onChange={(e) => {
+                                    const updated = [...parsedInvoices];
+                                    if (updated[pinvIdx].items) {
+                                      updated[pinvIdx].items[itemIdx].name = e.target.value;
+                                      setParsedInvoices(updated);
+                                    }
+                                  }}
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                                />
+                              </div>
+
+                              {/* Item Category */}
+                              <div className="w-full sm:w-[120px] space-y-1">
+                                <label className="text-[9px] font-bold text-pink-400 block">تصنيف السلعة للفرع:</label>
+                                <input
+                                  type="text"
+                                  value={item.category || ""}
+                                  placeholder="تصنيف المادة"
+                                  onChange={(e) => {
+                                    const updated = [...parsedInvoices];
+                                    if (updated[pinvIdx].items) {
+                                      updated[pinvIdx].items[itemIdx].category = e.target.value;
+                                      setParsedInvoices(updated);
+                                    }
+                                  }}
+                                  className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
+                                />
+                              </div>
+
+                              {/* Qty */}
+                              <div className="w-full sm:w-[70px] space-y-1">
+                                <label className="text-[9px] font-bold text-slate-500 block">الكمية:</label>
+                                <input
+                                  type="text"
+                                  value={item.qty}
+                                  placeholder="الكمية"
+                                  onChange={(e) => {
+                                    const updated = [...parsedInvoices];
+                                    if (updated[pinvIdx].items) {
+                                      updated[pinvIdx].items[itemIdx].qty = e.target.value;
+                                      setParsedInvoices(updated);
+                                    }
+                                  }}
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
+                                />
+                              </div>
+
+                              {/* Price */}
+                              <div className="w-full sm:w-[90px] space-y-1">
+                                <label className="text-[9px] font-bold text-slate-500 block">السعر (بضريبة):</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.price_with_tax || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const updated = [...parsedInvoices];
+                                    if (updated[pinvIdx].items) {
+                                      updated[pinvIdx].items[itemIdx].price_with_tax = val === "" ? 0 : parseFloat(val);
+                                      setParsedInvoices(updated);
+                                    }
+                                  }}
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
+                                />
+                              </div>
+
+                              {/* Delete Item button */}
+                              <div className="flex items-end p-0.5 mt-2 sm:mt-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...parsedInvoices];
+                                    if (updated[pinvIdx].items) {
+                                      updated[pinvIdx].items.splice(itemIdx, 1);
+                                      setParsedInvoices(updated);
+                                    }
+                                  }}
+                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/20 rounded-lg transition-all cursor-pointer"
+                                  title="حذف هذا البند"
+                                >
+                                  <Trash className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Modal Column Footer Action Buttons */}
+                  <div className="p-4 bg-slate-800 border-t border-slate-700 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Dismiss/Discard this invoice from listing
+                        setParsedInvoices(parsedInvoices.filter(p => p.tempId !== pinv.tempId));
+                        setAuditInvoiceId(null);
+                        onShowToast("🗑️ تم استبعاد وتجاهل الفاتورة المحددة");
+                      }}
+                      className="px-4 py-2 bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Trash className="w-4 h-4" />
+                      <span>تجاهل واستبعاد الفاتورة</span>
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAuditInvoiceId(null)}
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-650 border border-slate-600 text-slate-200 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                      >
+                        إغلاق المعاينة الضريبية
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Validate and save the specific changes inside parsedInvoices, then close
+                          if (!pinv.company || pinv.company.trim() === "") {
+                            onShowToast("⚠️ يجب توفير اسم المورد لاعتماد المطابقة.");
+                            return;
+                          }
+                          if (!pinv.amount || parseFloat(pinv.amount as string) <= 0) {
+                            onShowToast("⚠️ يجب كتابة القيمة الإجمالية الصحيحة لتصفية الضريبة.");
+                            return;
+                          }
+                          setAuditInvoiceId(null);
+                          onShowToast("✅ تم اعتماد تفاصيل المطابقة البصرية وتعديل محتوى الفاتورة بنجاح!");
+                        }}
+                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg border border-indigo-500 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Check className="w-4 h-4" />
+                        <span>اعتماد ومطابقة الفاتورة البصرية 👍</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

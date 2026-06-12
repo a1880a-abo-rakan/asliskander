@@ -484,6 +484,65 @@ async function deleteTaxInvoice(id: string): Promise<void> {
   }
 }
 
+interface TaxCompany {
+  id: string;
+  name: string;
+}
+
+async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
+  try {
+    const snap = await getDocs(collection(db, "tax_registered_companies"));
+    const list: TaxCompany[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as TaxCompany;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+      }
+    });
+
+    if (list.length === 0) {
+      // Seed with existing companies from tax_invoices on first launch!
+      const invoices = await getTaxInvoices();
+      const uniqueNames = Array.from(new Set(invoices.map((i) => i.company).filter(Boolean)));
+      for (const name of uniqueNames) {
+        const id = `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const comp: TaxCompany = { id, name };
+        await setDoc(doc(db, "tax_registered_companies", id), comp);
+        list.push(comp);
+      }
+    }
+
+    list.sort((a, b) => a.name.localeCompare(b.name, "ar"));
+    return list;
+  } catch (err) {
+    console.error("Error reading tax registered companies from Firestore:", err);
+    return [];
+  }
+}
+
+async function saveTaxRegisteredCompany(company: TaxCompany): Promise<void> {
+  try {
+    console.log(`[FIRESTORE SAVE] Attempting to save doc 'tax_registered_companies' with ID: "${company.id}", Name: "${company.name}"`);
+    await setDoc(doc(db, "tax_registered_companies", company.id), cleanObject(company));
+    console.log(`[FIRESTORE SAVE] Completed setDoc call for ID: "${company.id}"`);
+  } catch (err) {
+    console.error("Error saving tax registered company to Firestore:", err);
+    throw err;
+  }
+}
+
+async function deleteTaxRegisteredCompany(id: string): Promise<void> {
+  try {
+    console.log(`[FIRESTORE DELETE] Attempting to delete doc 'tax_registered_companies' with ID: "${id}"`);
+    await deleteDoc(doc(db, "tax_registered_companies", id));
+    console.log(`[FIRESTORE DELETE] Completed deleteDoc call for ID: "${id}"`);
+  } catch (err) {
+    console.error("Error deleting tax registered company from Firestore:", err);
+    throw err;
+  }
+}
+
 async function getPurchases(): Promise<Purchase[]> {
   try {
     const snap = await getDocs(collection(db, "purchases"));
@@ -1735,13 +1794,50 @@ async function startServer() {
   });
 
   // 5. TAX INVOICE ENDPOINTS
+  app.get("/api/tax-companies", async (req, res) => {
+    try {
+      const list = await getTaxRegisteredCompanies();
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error in /api/tax-companies:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/tax-companies", async (req, res) => {
+    try {
+      const { id, name } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: "اسم المورد مطلوب" });
+      }
+      const companyId = id || `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const company: TaxCompany = { id: companyId, name: name.trim() };
+      await saveTaxRegisteredCompany(company);
+      res.json({ success: true, company });
+    } catch (err: any) {
+      console.error("Error in POST /api/tax-companies:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/tax-companies/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      await deleteTaxRegisteredCompany(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error in DELETE /api/tax-companies:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/tax-invoices", async (req, res) => {
     const from = req.query.from as string;
     const to = req.query.to as string;
     let invoices = await getTaxInvoices();
 
-    if (from) invoices = invoices.filter((i) => (i.invoice_date || i.date) >= from);
-    if (to) invoices = invoices.filter((i) => (i.invoice_date || i.date) <= to);
+    if (from) invoices = invoices.filter((i) => i.date >= from);
+    if (to) invoices = invoices.filter((i) => i.date <= to);
 
     invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
     res.json(invoices);
@@ -1796,8 +1892,8 @@ async function startServer() {
       
       if (all) {
         let allInvoices = await getTaxInvoices();
-        if (from) allInvoices = allInvoices.filter((i) => (i.invoice_date || i.date) >= from);
-        if (to) allInvoices = allInvoices.filter((i) => (i.invoice_date || i.date) <= to);
+        if (from) allInvoices = allInvoices.filter((i) => i.date >= from);
+        if (to) allInvoices = allInvoices.filter((i) => i.date <= to);
         if (branch && branch !== "الكل") allInvoices = allInvoices.filter((i) => i.branch === branch);
         
         for (const i of allInvoices) {
@@ -2030,7 +2126,7 @@ async function startServer() {
 
     // Filter by date
     const rangeDays = allDays.filter((d) => d.date >= from && d.date <= to);
-    const rangeTaxInvoices = allTaxInvoices.filter((i) => (i.invoice_date || i.date) >= from && (i.invoice_date || i.date) <= to);
+    const rangeTaxInvoices = allTaxInvoices.filter((i) => i.date >= from && i.date <= to);
 
     const qData = rangeDays.filter((d) => d.branch === "القادسية");
     const mData = rangeDays.filter((d) => d.branch === "المروج");

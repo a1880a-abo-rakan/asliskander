@@ -237,6 +237,16 @@
         "sentAt": { "type": "string" }
       },
       "required": ["id", "employeeName", "recipientPhone", "messageText", "status", "sentAt"]
+    },
+    "TaxCompany": {
+      "title": "TaxCompany",
+      "description": "Tax registered suppliers and companies list",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "name"]
     }
   },
   "firestore": {
@@ -283,6 +293,10 @@
     "whatsapp_messages": {
       "schema": "WhatsAppMessage",
       "description": "Audit trails of alerts dispatched to employees"
+    },
+    "tax_registered_companies": {
+      "schema": "TaxCompany",
+      "description": "Tax registered suppliers and companies directory for autocomplete"
     }
   }
 }

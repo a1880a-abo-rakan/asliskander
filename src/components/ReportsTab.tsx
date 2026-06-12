@@ -129,7 +129,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
   // Synchronously compute total manual cash saved in local storage (including daily overrides and period distribution)
   const getBranchTotalCash = (br: "القادسية" | "المروج") => {
     const branchInvoices = taxData.filter((inv) => inv.branch === br);
-    const invoiceDates = branchInvoices.map((inv) => inv.invoice_date || inv.date);
+    const invoiceDates = branchInvoices.map((inv) => inv.date);
     const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= activeFrom && d <= activeTo);
 
     const periodSaved = localStorage.getItem(`tax_cash_${br}_${activeFrom}_${activeTo}`);
