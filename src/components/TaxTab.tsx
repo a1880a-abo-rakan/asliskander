@@ -2486,14 +2486,55 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-indigo-100/55">
                 <span className="text-[10px] text-slate-500 font-medium">سيتولى النظام خصم الفواتير من إجمالي مجموع (الشبكة والمنصرف النقدي للفرع).</span>
-                <button
-                  type="button"
-                  onClick={handleCalculateTax}
-                  className="w-full sm:w-auto px-6 py-2.5 bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <span>💾</span>
-                  <span>حفظ واعتماد الحساب المالي للفترة</span>
-                </button>
+                <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm("🚨 هل أنت متأكد من رغبتك في حذف وتصفير جميع مبالغ الكاش المكتوبة يدوياً في المتصفح لهذه الفترة واليوم المحدد؟")) {
+                        // Clear period cash key
+                        const savedCashKey = `tax_cash_${branch}_${from}_${to}`;
+                        localStorage.removeItem(savedCashKey);
+                        setTempCashInput("");
+                        setCashInput(0);
+                        setIsTaxCalculated(false);
+
+                        // Clear daily cash keys for all dates in the range
+                        try {
+                          let cur = new Date(from);
+                          const endDate = new Date(to);
+                          let limit = 0;
+                          while (cur <= endDate && limit < 400) {
+                            const dateStr = cur.toISOString().split("T")[0];
+                            localStorage.removeItem(`tax_cash_القادسية_${dateStr}_${dateStr}`);
+                            localStorage.removeItem(`tax_cash_المروج_${dateStr}_${dateStr}`);
+                            cur.setDate(cur.getDate() + 1);
+                            limit++;
+                          }
+                        } catch (err) {
+                          console.error(err);
+                        }
+
+                        setDailyCashKeyTrigger(prev => prev + 1);
+                        onShowToast("🧹 تم مسح وتصفير كافة مبالغ الكاش المدخلة يدوياً للفترة والفرع بنجاح!");
+                        loadTaxReport();
+                      }
+                    }}
+                    className="w-full sm:w-auto px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    title="تصفير الكاش اليدوي للمتصفح بالكامل"
+                  >
+                    <span>🗑️</span>
+                    <span>تصفير ومسح الكاش اليدوي للفترة</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCalculateTax}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>💾</span>
+                    <span>حفظ واعتماد الحساب المالي للفترة</span>
+                  </button>
+                </div>
               </div>
             </div>
 

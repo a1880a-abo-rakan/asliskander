@@ -149,8 +149,19 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
       console.error(e);
     }
 
+    // Determine days with active records in the database (daily entries or invoices)
+    const activeDailyBranchEntries = br === "القادسية" ? (reportData?.qData || []) : (reportData?.mData || []);
+    const registeredDailyDates = new Set(activeDailyBranchEntries.map((d: any) => d.date));
+    const registeredInvoiceDates = new Set(branchInvoices.map((inv) => inv.date));
+
     let calculatedTotalCash = 0;
     dateList.forEach((dateStr) => {
+      // If there is no daily entry in the system for this branch and no tax invoice for this branch either,
+      // it means this date has absolutely no business activity/records and has been cleared or never entered.
+      // Therefore, we must ignore any residual localStorage cash values for this date.
+      const hasRecord = registeredDailyDates.has(dateStr) || registeredInvoiceDates.has(dateStr);
+      if (!hasRecord) return;
+
       const savedDaily = localStorage.getItem(`tax_cash_${br}_${dateStr}_${dateStr}`);
       if (savedDaily !== null) {
         calculatedTotalCash += parseFloat(savedDaily) || 0;
