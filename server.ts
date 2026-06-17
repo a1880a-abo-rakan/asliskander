@@ -2266,7 +2266,6 @@ async function startServer() {
         "البقالة": 0,
         "الديزل": 0,
         "الخصوم الدائمة": 0,
-        "فواتير ضريبية": 0,
         "مصروفات أخرى": 0
       };
 
@@ -2284,11 +2283,6 @@ async function startServer() {
         exp["الديزل"] += d.diesel_deduct || 0;
         exp["الخصوم الدائمة"] += d.fixed_deduct || 0;
         exp["مصروفات أخرى"] += (d.others || []).reduce((sum, o) => sum + (o.amt || 0), 0) + purExtrasSum;
-      }
-
-      // إضافة مبالغ الفواتير الضريبية للتقرير
-      for (const inv of taxInvoices) {
-        exp["فواتير ضريبية"] += inv.amount || 0;
       }
 
       // Convert all values to fixed 2 decimals
