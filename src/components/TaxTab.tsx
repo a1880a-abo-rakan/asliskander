@@ -256,6 +256,25 @@ function SearchableCompanyInput({
   );
 }
 
+// Generate all sequential dates from the start range (from) to the end range (to)
+const getDatesInRange = (startStr: string, endStr: string): string[] => {
+  if (!startStr || !endStr) return [];
+  const dates: string[] = [];
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const curr = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+  
+  while (curr <= last) {
+    const yr = curr.getUTCFullYear();
+    const mo = String(curr.getUTCMonth() + 1).padStart(2, '0');
+    const dy = String(curr.getUTCDate()).padStart(2, '0');
+    dates.push(`${yr}-${mo}-${dy}`);
+    curr.setUTCDate(curr.getUTCDate() + 1);
+  }
+  return dates;
+};
+
 export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProps) {
   const [date, setDate] = useState(() => {
     const saved = sessionStorage.getItem("app_tax_invoice_date");
@@ -579,9 +598,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [dailyCashKeyTrigger, setDailyCashKeyTrigger] = useState<number>(0);
 
   const getDailyCash = (dateStr: string) => {
-    if (!isTaxCalculated) return 0;
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
     if (saved !== null) return parseFloat(saved) || 0;
+
+    if (!isTaxCalculated) return 0;
 
     // Fallback to period cashInput distributed to days with invoices
     const invoiceDates = filteredInvoices.map((inv) => inv.date);
@@ -598,9 +618,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const getDailyCashDisplayValue = (dateStr: string) => {
-    if (!isTaxCalculated) return "";
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
     if (saved !== null) return saved;
+
+    if (!isTaxCalculated) return "";
 
     const invoiceDates = filteredInvoices.map((inv) => inv.date);
     const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
@@ -825,6 +846,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     // Save to localStorage so it stays verified on refresh
     const savedCashKey = `tax_cash_${branch}_${from}_${to}`;
     localStorage.setItem(savedCashKey, tempCashInput);
+
+    // Also distribute and save day-by-day cash values for all dates in the range
+    const dates = getDatesInRange(from, to);
+    if (dates.length > 0) {
+      const dailyShare = cashVal / dates.length;
+      dates.forEach(dateStr => {
+        localStorage.setItem(`tax_cash_${branch}_${dateStr}_${dateStr}`, dailyShare.toFixed(2));
+      });
+    }
+
     onShowToast("💾 تم اعتماد دخل الكاش، وحساب الضريبة للفترة بنجاح!");
   };
 
@@ -1012,11 +1043,29 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       setCashInput(parseFloat(saved) || 0);
       setIsTaxCalculated(true);
     } else {
-      setTempCashInput("");
-      setCashInput(0);
-      setIsTaxCalculated(false);
+      // If there is no specific period cash, sum up any saved daily cash values for the dates in this range
+      const dates = getDatesInRange(from, to);
+      let totalDailyCash = 0;
+      let hasAnyDaily = false;
+      dates.forEach(dateStr => {
+        const dSaved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
+        if (dSaved !== null) {
+          totalDailyCash += parseFloat(dSaved) || 0;
+          hasAnyDaily = true;
+        }
+      });
+
+      if (hasAnyDaily) {
+        setTempCashInput(String(totalDailyCash));
+        setCashInput(totalDailyCash);
+        setIsTaxCalculated(true);
+      } else {
+        setTempCashInput("");
+        setCashInput(0);
+        setIsTaxCalculated(false);
+      }
     }
-  }, [branch, from, to]);
+  }, [branch, from, to, dailyCashKeyTrigger]);
 
   // Filter invoices to only show/count the ones matching the selected active branch and optionally company
   const filteredInvoices = invoices.filter((i) => {
@@ -2577,25 +2626,6 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       {(() => {
                         const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
                         
-                        // Generate all sequential dates from the start range (from) to the end range (to)
-                        const getDatesInRange = (startStr: string, endStr: string): string[] => {
-                          if (!startStr || !endStr) return [];
-                          const dates: string[] = [];
-                          const start = new Date(startStr);
-                          const end = new Date(endStr);
-                          const curr = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
-                          const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
-                          
-                          while (curr <= last) {
-                            const yr = curr.getUTCFullYear();
-                            const mo = String(curr.getUTCMonth() + 1).padStart(2, '0');
-                            const dy = String(curr.getUTCDate()).padStart(2, '0');
-                            dates.push(`${yr}-${mo}-${dy}`);
-                            curr.setUTCDate(curr.getUTCDate() + 1);
-                          }
-                          return dates;
-                        };
-
                         const invoiceDatesSet = new Set<string>(filteredInvoices.map((inv) => inv.date));
                         const allUniqueDates = getDatesInRange(from, to).filter(dateStr => invoiceDatesSet.has(dateStr));
 
