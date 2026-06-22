@@ -126,22 +126,18 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
   const activeFrom = reportMode === "day" ? singleDate : from;
   const activeTo = reportMode === "day" ? singleDate : to;
 
-  // Synchronously compute total manual cash saved in local storage (including daily overrides and period distribution)
+  // Synchronously compute total manual cash saved in local storage (sums actual saved daily entries)
   const getBranchTotalCash = (br: "القادسية" | "المروج") => {
-    const branchInvoices = taxData.filter((inv) => inv.branch === br);
-    const invoiceDates = branchInvoices.map((inv) => inv.date);
-    const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= activeFrom && d <= activeTo);
-
-    const periodSaved = localStorage.getItem(`tax_cash_${br}_${activeFrom}_${activeTo}`);
-    const rxPeriodCash = periodSaved ? (parseFloat(periodSaved) || 0) : 0;
-
     const dateList: string[] = [];
     try {
       let cur = new Date(activeFrom);
       const endDate = new Date(activeTo);
       let limit = 0;
       while (cur <= endDate && limit < 400) {
-        dateList.push(cur.toISOString().split("T")[0]);
+        const yr = cur.getFullYear();
+        const mo = String(cur.getMonth() + 1).padStart(2, '0');
+        const dy = String(cur.getDate()).padStart(2, '0');
+        dateList.push(`${yr}-${mo}-${dy}`);
         cur.setDate(cur.getDate() + 1);
         limit++;
       }
@@ -149,30 +145,11 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
       console.error(e);
     }
 
-    // Determine days with active records in the database (daily entries or invoices)
-    const activeDailyBranchEntries = br === "القادسية" ? (reportData?.qData || []) : (reportData?.mData || []);
-    const registeredDailyDates = new Set(activeDailyBranchEntries.map((d: any) => d.date));
-    const registeredInvoiceDates = new Set(branchInvoices.map((inv) => inv.date));
-
     let calculatedTotalCash = 0;
     dateList.forEach((dateStr) => {
-      // If there is no daily entry in the system for this branch and no tax invoice for this branch either,
-      // it means this date has absolutely no business activity/records and has been cleared or never entered.
-      // Therefore, we must ignore any residual localStorage cash values for this date.
-      const hasRecord = registeredDailyDates.has(dateStr) || registeredInvoiceDates.has(dateStr);
-      if (!hasRecord) return;
-
       const savedDaily = localStorage.getItem(`tax_cash_${br}_${dateStr}_${dateStr}`);
       if (savedDaily !== null) {
         calculatedTotalCash += parseFloat(savedDaily) || 0;
-      } else {
-        if (uniqueInvoiceDates.includes(dateStr)) {
-          if (uniqueInvoiceDates.length === 1) {
-            calculatedTotalCash += rxPeriodCash;
-          } else if (uniqueInvoiceDates.length > 1) {
-            calculatedTotalCash += rxPeriodCash / uniqueInvoiceDates.length;
-          }
-        }
       }
     });
 

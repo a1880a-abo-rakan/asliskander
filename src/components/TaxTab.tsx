@@ -600,39 +600,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const getDailyCash = (dateStr: string) => {
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
     if (saved !== null) return parseFloat(saved) || 0;
-
-    if (!isTaxCalculated) return 0;
-
-    // Fallback to period cashInput distributed to days with invoices
-    const invoiceDates = filteredInvoices.map((inv) => inv.date);
-    const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
-
-    if (uniqueInvoiceDates.includes(dateStr)) {
-      if (uniqueInvoiceDates.length === 1) {
-        return cashInput;
-      } else {
-        return cashInput / uniqueInvoiceDates.length;
-      }
-    }
     return 0;
   };
 
   const getDailyCashDisplayValue = (dateStr: string) => {
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
     if (saved !== null) return saved;
-
-    if (!isTaxCalculated) return "";
-
-    const invoiceDates = filteredInvoices.map((inv) => inv.date);
-    const uniqueInvoiceDates = Array.from(new Set(invoiceDates)).filter((d) => d >= from && d <= to);
-
-    if (uniqueInvoiceDates.includes(dateStr)) {
-      if (uniqueInvoiceDates.length === 1) {
-        return String(cashInput);
-      } else {
-        return (cashInput / uniqueInvoiceDates.length).toFixed(2);
-      }
-    }
     return "";
   };
 
@@ -840,23 +813,36 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   const handleCalculateTax = () => {
     const cashVal = parseFloat(tempCashInput) || 0;
-    setCashInput(cashVal);
-    setIsTaxCalculated(true);
     
-    // Save to localStorage so it stays verified on refresh
-    const savedCashKey = `tax_cash_${branch}_${from}_${to}`;
-    localStorage.setItem(savedCashKey, tempCashInput);
-
-    // Also distribute and save day-by-day cash values for all dates in the range
-    const dates = getDatesInRange(from, to);
-    if (dates.length > 0) {
-      const dailyShare = cashVal / dates.length;
+    if (reportMode === "day") {
+      // Save strictly for that specific day
+      const savedDailyKey = `tax_cash_${branch}_${from}_${from}`;
+      localStorage.setItem(savedDailyKey, String(cashVal));
+      setCashInput(cashVal);
+      setIsTaxCalculated(true);
+      onShowToast("💾 تم اعتماد دخل الكاش لليوم بنجاح!");
+    } else {
+      // For period modes, the cash value is a dynamic sum of independent daily cash entries.
+      // We don't overwrite or divide/split anything over the days. We just approve the calculation.
+      const dates = getDatesInRange(from, to);
+      let totalDailyCash = 0;
       dates.forEach(dateStr => {
-        localStorage.setItem(`tax_cash_${branch}_${dateStr}_${dateStr}`, dailyShare.toFixed(2));
+        const dSaved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
+        if (dSaved !== null) {
+          totalDailyCash += parseFloat(dSaved) || 0;
+        }
       });
+      setCashInput(totalDailyCash);
+      setIsTaxCalculated(totalDailyCash > 0);
+      
+      // Save period metadata key just for consistency but without any division
+      const savedCashKey = `tax_cash_${branch}_${from}_${to}`;
+      localStorage.setItem(savedCashKey, String(totalDailyCash));
+
+      onShowToast("💾 تم اعتماد الحساب الضريبي للفترة بنجاح بناءً على مجموع الكاش اليومي!");
     }
 
-    onShowToast("💾 تم اعتماد دخل الكاش، وحساب الضريبة للفترة بنجاح!");
+    setDailyCashKeyTrigger(prev => prev + 1);
   };
 
   const deleteInvoice = (id: string) => {
@@ -1036,14 +1022,20 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   // Sync cash input memory for this branch and date range
   useEffect(() => {
-    const savedCashKey = `tax_cash_${branch}_${from}_${to}`;
-    const saved = localStorage.getItem(savedCashKey);
-    if (saved !== null) {
-      setTempCashInput(saved);
-      setCashInput(parseFloat(saved) || 0);
-      setIsTaxCalculated(true);
+    if (reportMode === "day") {
+      const savedDailyKey = `tax_cash_${branch}_${from}_${from}`;
+      const saved = localStorage.getItem(savedDailyKey);
+      if (saved !== null) {
+        setTempCashInput(saved);
+        setCashInput(parseFloat(saved) || 0);
+        setIsTaxCalculated(true);
+      } else {
+        setTempCashInput("");
+        setCashInput(0);
+        setIsTaxCalculated(false);
+      }
     } else {
-      // If there is no specific period cash, sum up any saved daily cash values for the dates in this range
+      // For period and period_detailed, we sum up the independently entered daily values
       const dates = getDatesInRange(from, to);
       let totalDailyCash = 0;
       let hasAnyDaily = false;
@@ -1055,17 +1047,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         }
       });
 
-      if (hasAnyDaily) {
-        setTempCashInput(String(totalDailyCash));
-        setCashInput(totalDailyCash);
-        setIsTaxCalculated(true);
-      } else {
-        setTempCashInput("");
-        setCashInput(0);
-        setIsTaxCalculated(false);
-      }
+      setTempCashInput(String(totalDailyCash));
+      setCashInput(totalDailyCash);
+      setIsTaxCalculated(hasAnyDaily);
     }
-  }, [branch, from, to, dailyCashKeyTrigger]);
+  }, [branch, from, to, reportMode, dailyCashKeyTrigger]);
 
   // Filter invoices to only show/count the ones matching the selected active branch and optionally company
   const filteredInvoices = invoices.filter((i) => {
@@ -2515,18 +2501,27 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 </div>
 
                 {/* Empty/Editable manual Cash field */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-indigo-950 flex items-center gap-1">
-                    مبلغ دخل الكاش للفترة <span className="text-indigo-600 font-normal opacity-80">(خانة إدخال)</span>
+                <div className="space-y-1.5 font-sans">
+                  <label className="block text-xs font-bold text-indigo-950 flex items-center gap-1 select-none">
+                    {reportMode === "day" ? (
+                      <>مبلغ دخل الكاش لليوم <span className="text-indigo-600 font-normal opacity-85">(خانة إدخال)</span></>
+                    ) : (
+                      <>مجموع كاش الفترة التراكمي المجمع <span className="text-emerald-700 font-extrabold opacity-95">(محسوب تلقائياً من الأيام)</span></>
+                    )}
                   </label>
                   <div className="relative">
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="أدخل مبلغ الكاش يدوياً هنا..."
+                      disabled={reportMode !== "day"}
+                      placeholder={reportMode === "day" ? "أدخل مبلغ الكاش يدوياً لليوم..." : "مجموع مبالغ الكاش المكتوبة يدوياً للأيام..."}
                       value={tempCashInput}
                       onChange={(e) => setTempCashInput(e.target.value)}
-                      className="w-full pl-12 pr-3 py-2.5 text-sm border-2 border-indigo-200 focus:border-indigo-600 rounded-xl bg-white focus:outline-none font-bold text-indigo-950"
+                      className={`w-full pl-12 pr-3 py-2.5 text-sm border-2 rounded-xl focus:outline-none font-bold text-indigo-950 ${
+                        reportMode === "day" 
+                          ? "border-indigo-200 focus:border-indigo-600 bg-white" 
+                          : "border-slate-200 bg-slate-50 cursor-not-allowed text-slate-500 font-extrabold"
+                      }`}
                     />
                     <span className="text-[10px] bg-indigo-50 text-indigo-700 font-extrabold px-2.5 py-1 rounded-lg absolute left-2.5 top-2.5 border border-indigo-150">ريال</span>
                   </div>
@@ -2536,7 +2531,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-indigo-100/55">
                 <span className="text-[10px] text-slate-500 font-medium">سيتولى النظام خصم الفواتير من إجمالي مجموع (الشبكة والمنصرف النقدي للفرع).</span>
                 <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
-                  <button
+                   <button
                     type="button"
                     onClick={() => {
                       if (window.confirm("🚨 هل أنت متأكد من رغبتك في حذف وتصفير جميع مبالغ الكاش المكتوبة يدوياً في المتصفح لهذه الفترة واليوم المحدد؟")) {
@@ -2547,18 +2542,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         setCashInput(0);
                         setIsTaxCalculated(false);
 
-                        // Clear daily cash keys for all dates in the range
+                        // Clear daily cash keys robustly using the getDatesInRange helper
                         try {
-                          let cur = new Date(from);
-                          const endDate = new Date(to);
-                          let limit = 0;
-                          while (cur <= endDate && limit < 400) {
-                            const dateStr = cur.toISOString().split("T")[0];
+                          const dates = getDatesInRange(from, to);
+                          dates.forEach((dateStr) => {
                             localStorage.removeItem(`tax_cash_القادسية_${dateStr}_${dateStr}`);
                             localStorage.removeItem(`tax_cash_المروج_${dateStr}_${dateStr}`);
-                            cur.setDate(cur.getDate() + 1);
-                            limit++;
-                          }
+                          });
                         } catch (err) {
                           console.error(err);
                         }
