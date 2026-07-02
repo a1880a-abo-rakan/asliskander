@@ -41,6 +41,9 @@ service cloud.firestore {
     match /employee_attendance/{docId} {
       allow read, write: if true;
     }
+    match /employee_violations/{docId} {
+      allow read, write: if true;
+    }
 
     // 8. WhatsApp Gateway settings rules
     match /whatsapp_settings/{docId} {
@@ -54,6 +57,16 @@ service cloud.firestore {
 
     // 10. Tax Companies rules
     match /tax_registered_companies/{docId} {
+      allow read, write: if true;
+    }
+
+    // 11. Bakery entries rules
+    match /bakery_entries/{docId} {
+      allow read, write: if true;
+    }
+
+    // 12. Drinks entries rules
+    match /drinks_entries/{docId} {
       allow read, write: if true;
     }
 

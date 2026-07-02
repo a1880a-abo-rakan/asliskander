@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation } from "./src/types";
+import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry } from "./src/types";
 import { GoogleGenAI, Type } from "@google/genai";
 import "dotenv/config";
 
@@ -591,6 +591,111 @@ async function deleteTaxRegisteredCompany(id: string): Promise<void> {
     console.log(`[FIRESTORE DELETE] Completed deleteDoc call for ID: "${id}"`);
   } catch (err) {
     console.error("Error deleting tax registered company from Firestore:", err);
+    throw err;
+  }
+}
+
+async function getBakeryEntries(): Promise<BakeryEntry[]> {
+  try {
+    const snap = await getDocs(collection(db, "bakery_entries"));
+    const list: BakeryEntry[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as BakeryEntry;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+      }
+    });
+    return list;
+  } catch (err) {
+    console.error("Error reading bakery entries from Firestore:", err);
+    return [];
+  }
+}
+
+async function saveBakeryEntry(entry: BakeryEntry): Promise<void> {
+  try {
+    await setDoc(doc(db, "bakery_entries", entry.id), cleanObject(entry));
+  } catch (err) {
+    console.error("Error saving bakery entry to Firestore:", err);
+    throw err;
+  }
+}
+
+async function deleteBakeryEntry(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "bakery_entries", id));
+  } catch (err) {
+    console.error("Error deleting bakery entry from Firestore:", err);
+    throw err;
+  }
+}
+
+async function getDrinksEntries(): Promise<DrinksEntry[]> {
+  try {
+    const snap = await getDocs(collection(db, "drinks_entries"));
+    const list: DrinksEntry[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as DrinksEntry;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+      }
+    });
+    return list;
+  } catch (err) {
+    console.error("Error reading drinks entries from Firestore:", err);
+    return [];
+  }
+}
+
+async function saveDrinksEntry(entry: DrinksEntry): Promise<void> {
+  try {
+    await setDoc(doc(db, "drinks_entries", entry.id), cleanObject(entry));
+  } catch (err) {
+    console.error("Error saving drinks entry to Firestore:", err);
+    throw err;
+  }
+}
+
+async function deleteDrinksEntry(id: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, "drinks_entries", id));
+  } catch (err) {
+    console.error("Error deleting drinks entry from Firestore:", err);
+    throw err;
+  }
+}
+
+const DEFAULT_DRINK_PRICES = {
+  pepsi: 2.5,
+  sevenup: 2.5,
+  dew: 2.5,
+  citrus: 2.5,
+  pepsi_diet: 2.0,
+  sevenup_diet: 2.0,
+  dew_diet: 2.0,
+  citrus_diet: 2.0
+};
+
+async function getDrinkPrices(): Promise<Record<string, number>> {
+  try {
+    const snap = await getDoc(doc(db, "settings", "drink_prices"));
+    if (snap.exists()) {
+      return { ...DEFAULT_DRINK_PRICES, ...snap.data() };
+    }
+    return DEFAULT_DRINK_PRICES;
+  } catch (err) {
+    console.error("Error reading drink prices from Firestore:", err);
+    return DEFAULT_DRINK_PRICES;
+  }
+}
+
+async function saveDrinkPrices(prices: Record<string, number>): Promise<void> {
+  try {
+    await setDoc(doc(db, "settings", "drink_prices"), cleanObject(prices));
+  } catch (err) {
+    console.error("Error saving drink prices to Firestore:", err);
     throw err;
   }
 }
@@ -2403,6 +2508,114 @@ async function startServer() {
     }
   });
 
+  // --- BAKERY RECONCILIATION API ENDPOINTS ---
+  app.get("/api/bakery", async (req, res) => {
+    try {
+      const entries = await getBakeryEntries();
+      entries.sort((a, b) => b.date.localeCompare(a.date));
+      res.json(entries);
+    } catch (err: any) {
+      console.error("Error loading bakery entries:", err);
+      res.status(500).json({ error: "فشل تحميل سجلات ضبط المخبز" });
+    }
+  });
+
+  app.post("/api/bakery", async (req, res) => {
+    try {
+      const data = req.body as BakeryEntry;
+      if (!data.date || !data.branch) {
+        return res.status(400).json({ error: "التاريخ والفرع مطلوبان لتسجيل الضبط" });
+      }
+      if (!data.id) {
+        data.id = `${data.branch}-${data.date}`;
+      }
+      if (!data.createdAt) {
+        data.createdAt = new Date().toISOString();
+      }
+      await saveBakeryEntry(data);
+      res.json({ success: true, entry: data });
+    } catch (err: any) {
+      console.error("Error saving bakery entry:", err);
+      res.status(500).json({ error: "فشل حفظ سجل ضبط المخبز" });
+    }
+  });
+
+  app.delete("/api/bakery/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      await deleteBakeryEntry(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting bakery entry:", err);
+      res.status(500).json({ error: "فشل حذف سجل ضبط المخبز" });
+    }
+  });
+
+  // --- DRINKS RECONCILIATION API ENDPOINTS ---
+  app.get("/api/drinks", async (req, res) => {
+    try {
+      const entries = await getDrinksEntries();
+      entries.sort((a, b) => b.date.localeCompare(a.date));
+      res.json(entries);
+    } catch (err: any) {
+      console.error("Error loading drinks entries:", err);
+      res.status(500).json({ error: "فشل تحميل سجلات ضبط المشروبات" });
+    }
+  });
+
+  app.post("/api/drinks", async (req, res) => {
+    try {
+      const data = req.body as DrinksEntry;
+      if (!data.date || !data.branch) {
+        return res.status(400).json({ error: "التاريخ والفرع مطلوبان لتسجيل الضبط" });
+      }
+      if (!data.id) {
+        data.id = `${data.branch}-${data.date}`;
+      }
+      if (!data.createdAt) {
+        data.createdAt = new Date().toISOString();
+      }
+      await saveDrinksEntry(data);
+      res.json({ success: true, entry: data });
+    } catch (err: any) {
+      console.error("Error saving drinks entry:", err);
+      res.status(500).json({ error: "فشل حفظ سجل ضبط المشروبات" });
+    }
+  });
+
+  app.delete("/api/drinks/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      await deleteDrinksEntry(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting drinks entry:", err);
+      res.status(500).json({ error: "فشل حذف سجل ضبط المشروبات" });
+    }
+  });
+
+  // --- DRINKS PRICES ENDPOINTS ---
+  app.get("/api/drinks/prices", async (req, res) => {
+    try {
+      const prices = await getDrinkPrices();
+      res.json(prices);
+    } catch (err: any) {
+      console.error("Error loading drink prices:", err);
+      res.status(500).json({ error: "فشل تحميل أسعار المشروبات" });
+    }
+  });
+
+  app.post("/api/drinks/prices", async (req, res) => {
+    try {
+      const prices = req.body;
+      await saveDrinkPrices(prices);
+      res.json({ success: true, prices });
+    } catch (err: any) {
+      console.error("Error saving drink prices:", err);
+      res.status(500).json({ error: "فشل حفظ أسعار المشروبات الجديدة" });
+    }
+  });
+
   // --- EMPLOYEE MANAGEMENT API ENDPOINTS ---
   app.get("/api/employees", async (req, res) => {
     try {
@@ -2762,6 +2975,12 @@ async function startServer() {
     }
   });
 
+
+  // Catch-all JSON 404 handler for any unhandled /api/* requests
+  // to prevent them from falling through to the Vite SPA fallback (which returns HTML and breaks client parsing)
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, Settings as SettingsIcon, BarChart3, Receipt,
   User, Shield, Calendar, LogOut, Check, Building2, Terminal, ShoppingBag, Users,
-  Timer, AlertTriangle
+  Timer, AlertTriangle, ChefHat, CupSoda
 } from "lucide-react";
 import DailyInputTab from "./components/DailyInputTab";
 import PurchasesTab from "./components/PurchasesTab";
@@ -11,15 +11,17 @@ import TaxTab from "./components/TaxTab";
 import ReportsTab from "./components/ReportsTab";
 import EmployeesTab from "./components/EmployeesTab";
 import SettingsTab from "./components/SettingsTab";
+import BakeryTab from "./components/BakeryTab";
+import DrinksTab from "./components/DrinksTab";
 import { AslIskanderLogoSymbol, AslIskanderText } from "./components/AslIskanderLogo";
 
-type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings";
+type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings" | "bakery" | "drinks";
 type RoleType = "مدير" | "محاسب" | "مدخل فواتير";
 
 const PERMISSIONS: Record<RoleType, Record<TabType, boolean>> = {
-  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true },
-  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false },
-  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false }
+  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true, bakery: true, drinks: true },
+  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: true, drinks: true },
+  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false, bakery: false, drinks: false }
 };
 
 interface UserSession {
@@ -208,7 +210,7 @@ export default function App() {
           showToast(`🔓 تم تفويض دخول: ${data.user.displayName}`);
         }
       } else {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({ error: "فشل تسجيل الدخول، خطأ في استجابة الخادم" }));
         setErrorMsg(errData.error || "❌ فشل تسجيل الدخول، يرجى مراجعة المدخلات");
       }
     } catch (err) {
@@ -456,6 +458,32 @@ export default function App() {
             </button>
           )}
 
+          {isTabAllowed("bakery") && (
+            <button
+              onClick={() => setActiveTab("bakery")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "bakery"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <ChefHat className="w-4 h-4" /> ضبط المخبز والمطابقة
+            </button>
+          )}
+
+          {isTabAllowed("drinks") && (
+            <button
+              onClick={() => setActiveTab("drinks")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "drinks"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <CupSoda className="w-4 h-4" /> ضبط المشروبات والمطابقة
+            </button>
+          )}
+
           {isTabAllowed("settings") && (
             <button
               onClick={() => setActiveTab("settings")}
@@ -497,6 +525,12 @@ export default function App() {
               )}
               {activeTab === "settings" && isTabAllowed("settings") && (
                 <SettingsTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "bakery" && isTabAllowed("bakery") && (
+                <BakeryTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "drinks" && isTabAllowed("drinks") && (
+                <DrinksTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
               )}
             </motion.div>
           </AnimatePresence>

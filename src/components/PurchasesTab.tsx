@@ -222,7 +222,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
         setShowAddForm(false);
         fetchPurchases();
       } else {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({ error: "خطأ غير معروف في الخادم" }));
         onShowToast(`⚠️ فشل التثبيت: ${errData.error || "خطأ غير معروف"}`);
       }
     } catch (err) {

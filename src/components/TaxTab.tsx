@@ -995,7 +995,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         setEditModal({ show: false, invoice: null });
         loadTaxReport();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ error: "فشل تعديل الفاتورة بسبب خطأ في الخادم" }));
         onShowToast(`❌ فشل تعديل الفاتورة: ${err.error || ""}`);
       }
     } catch (err) {

@@ -217,4 +217,82 @@ export interface EmployeeDeductionConfig {
   updatedAt?: string;
 }
 
+export interface BakeryEntry {
+  id: string; // branch-date
+  date: string; // YYYY-MM-DD
+  branch: 'القادسية' | 'المروج';
+  arrived_turkish_large: number;
+  arrived_turkish_small: number;
+  arrived_italian: number;
+  arrived_samouli: number;
+  arrived_samoon_small: number;
+  arrived_samoon_large: number;
+
+  sold_sarokh_turkish: number;
+  sold_sandwich_small: number;
+  sold_sarokh_double: number;
+  sold_shawarma_arabic_small: number;
+  sold_shawarma_arabic_medium: number;
+  sold_shawarma_arabic_large: number;
+  sold_iskander_small: number;
+  sold_iskander_medium: number;
+  sold_iskander_large: number;
+  sold_iskander_italian: number;
+  sold_sarokh_samouli: number;
+  sold_shawarma_iraqi_small: number;
+  sold_shawarma_iraqi_large: number;
+
+  wasted_turkish_large: number;
+  wasted_turkish_small: number;
+  wasted_italian: number;
+  wasted_samouli: number;
+  wasted_samoon_small: number;
+  wasted_samoon_large: number;
+
+  staff_turkish_large: number;
+  staff_turkish_small: number;
+  staff_italian: number;
+  staff_samouli: number;
+  staff_samoon_small: number;
+  staff_samoon_large: number;
+
+  shared_turkish_large: number;
+  shared_turkish_small: number;
+  shared_italian: number;
+  shared_samouli: number;
+  shared_samoon_small: number;
+  shared_samoon_large: number;
+
+  actual_sales?: number;
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface DrinkItemState {
+  prev_stock: number;
+  arrived_cartons: number;
+  sold_cashier: number;
+  current_stock: number;
+}
+
+export interface DrinksEntry {
+  id: string;
+  date: string;
+  branch: 'القادسية' | 'المروج';
+  
+  pepsi: DrinkItemState;
+  sevenup: DrinkItemState;
+  dew: DrinkItemState;
+  citrus: DrinkItemState;
+  
+  pepsi_diet: DrinkItemState;
+  sevenup_diet: DrinkItemState;
+  dew_diet: DrinkItemState;
+  citrus_diet: DrinkItemState;
+
+  notes?: string;
+  createdAt?: string;
+}
+
+
 

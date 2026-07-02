@@ -247,6 +247,88 @@
         "name": { "type": "string" }
       },
       "required": ["id", "name"]
+    },
+    "BakeryEntry": {
+      "title": "BakeryEntry",
+      "description": "Bakery reconciliation and adjustment tracking per date and branch",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "branch": { "type": "string", "enum": ["القادسية", "المروج"] },
+        "arrived_turkish_large": { "type": "number" },
+        "arrived_turkish_small": { "type": "number" },
+        "arrived_italian": { "type": "number" },
+        "arrived_samouli": { "type": "number" },
+        "arrived_samoon_small": { "type": "number" },
+        "arrived_samoon_large": { "type": "number" },
+        "sold_sarokh_turkish": { "type": "number" },
+        "sold_sandwich_small": { "type": "number" },
+        "sold_sarokh_double": { "type": "number" },
+        "sold_shawarma_arabic_small": { "type": "number" },
+        "sold_shawarma_arabic_medium": { "type": "number" },
+        "sold_shawarma_arabic_large": { "type": "number" },
+        "sold_iskander_small": { "type": "number" },
+        "sold_iskander_medium": { "type": "number" },
+        "sold_iskander_large": { "type": "number" },
+        "sold_iskander_italian": { "type": "number" },
+        "sold_sarokh_samouli": { "type": "number" },
+        "sold_shawarma_iraqi_small": { "type": "number" },
+        "sold_shawarma_iraqi_large": { "type": "number" },
+        "wasted_turkish_large": { "type": "number" },
+        "wasted_turkish_small": { "type": "number" },
+        "wasted_italian": { "type": "number" },
+        "wasted_samouli": { "type": "number" },
+        "wasted_samoon_small": { "type": "number" },
+        "wasted_samoon_large": { "type": "number" },
+        "staff_turkish_large": { "type": "number" },
+        "staff_turkish_small": { "type": "number" },
+        "staff_italian": { "type": "number" },
+        "staff_samouli": { "type": "number" },
+        "staff_samoon_small": { "type": "number" },
+        "staff_samoon_large": { "type": "number" },
+        "shared_turkish_large": { "type": "number" },
+        "shared_turkish_small": { "type": "number" },
+        "shared_italian": { "type": "number" },
+        "shared_samouli": { "type": "number" },
+        "shared_samoon_small": { "type": "number" },
+        "shared_samoon_large": { "type": "number" },
+        "actual_sales": { "type": "number" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "branch"]
+    },
+    "DrinkItemState": {
+      "type": "object",
+      "properties": {
+        "prev_stock": { "type": "number" },
+        "arrived_cartons": { "type": "number" },
+        "sold_cashier": { "type": "number" },
+        "current_stock": { "type": "number" }
+      },
+      "required": ["prev_stock", "arrived_cartons", "sold_cashier", "current_stock"]
+    },
+    "DrinksEntry": {
+      "title": "DrinksEntry",
+      "description": "Drinks inventory tracking and reconciliation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "branch": { "type": "string", "enum": ["القادسية", "المروج"] },
+        "pepsi": { "$ref": "#/definitions/DrinkItemState" },
+        "sevenup": { "$ref": "#/definitions/DrinkItemState" },
+        "dew": { "$ref": "#/definitions/DrinkItemState" },
+        "citrus": { "$ref": "#/definitions/DrinkItemState" },
+        "pepsi_diet": { "$ref": "#/definitions/DrinkItemState" },
+        "sevenup_diet": { "$ref": "#/definitions/DrinkItemState" },
+        "dew_diet": { "$ref": "#/definitions/DrinkItemState" },
+        "citrus_diet": { "$ref": "#/definitions/DrinkItemState" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "branch", "pepsi", "sevenup", "dew", "citrus", "pepsi_diet", "sevenup_diet", "dew_diet", "citrus_diet"]
     }
   },
   "firestore": {
@@ -297,6 +379,14 @@
     "tax_registered_companies": {
       "schema": "TaxCompany",
       "description": "Tax registered suppliers and companies directory for autocomplete"
+    },
+    "bakery_entries": {
+      "schema": "BakeryEntry",
+      "description": "Daily bakery bread reconciliation logs"
+    },
+    "drinks_entries": {
+      "schema": "DrinksEntry",
+      "description": "Drinks inventory tracking and reconciliation logs"
     }
   }
 }
