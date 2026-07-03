@@ -127,6 +127,10 @@ export interface TaxInvoice {
   invoice_date: string;
   amount: number;
   items?: TaxInvoiceItem[];
+  createdBy?: string;
+  status?: 'approved' | 'pending' | 'rejected';
+  rawImage?: string;
+  fileType?: string;
 }
 
 export interface Purchase {

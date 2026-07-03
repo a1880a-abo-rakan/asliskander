@@ -25,7 +25,9 @@ import {
   ZoomOut,
   RotateCw,
   X,
-  Eye
+  Eye,
+  Bell,
+  BellRing
 } from "lucide-react";
 
 interface TaxTabProps {
@@ -276,6 +278,18 @@ const getDatesInRange = (startStr: string, endStr: string): string[] => {
 };
 
 export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProps) {
+  const currentUser = (() => {
+    const saved = sessionStorage.getItem("alex_user_session");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  })();
+
   const [date, setDate] = useState(() => {
     const saved = sessionStorage.getItem("app_tax_invoice_date");
     return saved ? saved : new Date().toISOString().split("T")[0];
@@ -323,6 +337,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [editAmount, setEditAmount] = useState<number | "">("");
   const [editBranch, setEditBranch] = useState<"القادسية" | "المروج">("القادسية");
   const [editDate, setEditDate] = useState("");
+  const [previewInvoice, setPreviewInvoice] = useState<TaxInvoice | null>(null);
+  const [previewImgZoom, setPreviewImgZoom] = useState(1);
+  const [previewImgRotation, setPreviewImgRotation] = useState(0);
+  const [previewImgPan, setPreviewImgPan] = useState({ x: 0, y: 0 });
+  const [previewIsDraggingPan, setPreviewIsDraggingPan] = useState(false);
+  const previewDragStart = useRef({ x: 0, y: 0 });
+  const [pendingInvoices, setPendingInvoices] = useState<TaxInvoice[]>([]);
   
   // Multiple incoming invoice submissions
   const [rows, setRows] = useState<InvoiceInput[]>([
@@ -666,6 +687,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         invoice_date: v.invoice_date || date,
         amount: parseFloat(v.amount as string) || 0,
         items: v.items || [],
+        createdBy: currentUser?.username || "unknown",
+        status: userRole === "مدخل فواتير" ? "pending" : "approved"
       }));
 
       const res = await fetch("/api/tax-invoices", {
@@ -775,8 +798,80 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   };
 
+  const loadPendingInvoices = async () => {
+    try {
+      const res = await fetch("/api/tax-invoices");
+      if (res.ok) {
+        const allInvs: TaxInvoice[] = await res.json();
+        const pending = allInvs.filter(i => i.status === "pending");
+        setPendingInvoices(pending);
+      }
+    } catch (err) {
+      console.error("Error loading pending invoices:", err);
+    }
+  };
+
+  const handleApprovePendingInvoice = async (inv: TaxInvoice) => {
+    try {
+      setLoading(true);
+      const updated = {
+        ...inv,
+        status: "approved" as const
+      };
+      const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated)
+      });
+      if (res.ok) {
+        onShowToast(`✅ تم اعتماد وتثبيت فاتورة ${inv.company} بفرع ${inv.branch} بنجاح!`);
+        await loadPendingInvoices();
+        loadTaxReport();
+        if (previewInvoice?.id === inv.id) {
+          setPreviewInvoice(null);
+        }
+      } else {
+        onShowToast("❌ فشل اعتماد الفاتورة المعلقة");
+      }
+    } catch (err) {
+      console.error(err);
+      onShowToast("❌ خطأ بالشبكة أثناء اعتماد الفاتورة");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectPendingInvoice = (id: string, company: string) => {
+    setConfirmModal({
+      show: true,
+      title: "تأكيد رفض وحذف الفاتورة المعلقة",
+      message: `هل أنت متأكد من رغبتك في رفض وحذف فاتورة "${company}" المعلقة نهائياً؟ لن يتم اعتمادها أو تسجيل مشترياتها في النظام.`,
+      onConfirm: async () => {
+        try {
+          setLoading(true);
+          const res = await fetch(`/api/tax-invoices/${encodeURIComponent(id)}`, { method: "DELETE" });
+          if (res.ok) {
+            onShowToast("✅ تم رفض وحذف الفاتورة المعلقة بنجاح");
+            await loadPendingInvoices();
+            loadTaxReport();
+            if (previewInvoice?.id === id) {
+              setPreviewInvoice(null);
+            }
+          } else {
+            onShowToast("❌ فشل حذف الفاتورة المعلقة");
+          }
+        } catch (err) {
+          console.error(err);
+          onShowToast("❌ خطأ بالشبكة أثناء حذف الفاتورة");
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
   const loadTaxReport = async () => {
-    if (!from || !to) {
+    if (userRole !== "مدخل فواتير" && (!from || !to)) {
       onShowToast("⚠️ يرجى تحديد نطاق التاريخ المطلوب");
       return;
     }
@@ -785,23 +880,32 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       // Load companies list asynchronously
       loadCompanies();
 
-      // 1. Get tax invoices in range
-      const resInvs = await fetch(`/api/tax-invoices?from=${from}&to=${to}`);
+      if (userRole === "مدير") {
+        await loadPendingInvoices();
+      }
+
+      // 1. Get tax invoices (or all of them for the clerk)
+      const url = userRole === "مدخل فواتير"
+        ? "/api/tax-invoices"
+        : `/api/tax-invoices?from=${from}&to=${to}`;
+      const resInvs = await fetch(url);
       const invData = await resInvs.ok ? await resInvs.json() : [];
       setInvoices(invData);
 
       // 2. Get branch POS revenue in range from reports API
-      const resReport = await fetch(`/api/reports?from=${from}&to=${to}`);
-      if (resReport.ok) {
-        const rep = await resReport.json();
-        setReportRawData(rep);
-        const qPos = rep.qStats.pos || 0;
-        const mPos = rep.mStats.pos || 0;
-        setStats({
-          qPos,
-          mPos,
-          totalPos: qPos + mPos
-        });
+      if (userRole !== "مدخل فواتير") {
+        const resReport = await fetch(`/api/reports?from=${from}&to=${to}`);
+        if (resReport.ok) {
+          const rep = await resReport.json();
+          setReportRawData(rep);
+          const qPos = rep.qStats.pos || 0;
+          const mPos = rep.mStats.pos || 0;
+          setStats({
+            qPos,
+            mPos,
+            totalPos: qPos + mPos
+          });
+        }
       }
     } catch (err) {
       console.error(err);
@@ -845,9 +949,27 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     setDailyCashKeyTrigger(prev => prev + 1);
   };
 
+  const isInvoiceEditableByClerk = (inv: TaxInvoice) => {
+    if (userRole === "مدير") return true;
+    if (userRole !== "مدخل فواتير") return false;
+
+    // Get all invoices entered by this user
+    const myInvs = invoices.filter(i => i.createdBy === currentUser?.username);
+    if (myInvs.length === 0) return false;
+
+    // Sort chronologically by their ID (since ID has timestamp inside)
+    const sorted = [...myInvs].sort((a, b) => a.id.localeCompare(b.id));
+    const latest = sorted[sorted.length - 1];
+
+    return latest && latest.id === inv.id;
+  };
+
   const deleteInvoice = (id: string) => {
-    if (userRole !== "مدير") {
-      onShowToast("⚠️ صلاحيات المدير فقط لطلب الحذف!");
+    const targetInv = invoices.find(i => i.id === id);
+    if (!targetInv) return;
+
+    if (userRole !== "مدير" && !isInvoiceEditableByClerk(targetInv)) {
+      onShowToast("⚠️ لا تملك صلاحية حذف هذه الفاتورة الضريبية!");
       return;
     }
     setConfirmModal({
@@ -949,8 +1071,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const startEditInvoice = (inv: TaxInvoice) => {
-    if (userRole !== "مدير") {
-      onShowToast("⚠️ صلاحيات المدير فقط لتعديل الفواتير الضريبية!");
+    if (userRole !== "مدير" && !isInvoiceEditableByClerk(inv)) {
+      onShowToast("⚠️ لا تملك صلاحية تعديل هذه الفاتورة الضريبية!");
       return;
     }
     setEditCompany(inv.company || "");
@@ -981,7 +1103,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         invoice_no: editInvoiceNo.trim(),
         invoice_date: editInvoiceDate,
         amount: parseFloat(editAmount.toString()),
-        items: editModal.invoice.items || []
+        items: editModal.invoice.items || [],
+        createdBy: editModal.invoice.createdBy || currentUser?.username || ""
       };
 
       const res = await fetch(`/api/tax-invoices/${encodeURIComponent(editModal.invoice.id)}`, {
@@ -1055,9 +1178,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   // Filter invoices to only show/count the ones matching the selected active branch and optionally company
   const filteredInvoices = invoices.filter((i) => {
+    const isApproved = i.status !== "pending" && i.status !== "rejected";
     const matchesBranch = i.branch === branch;
     const matchesCompany = !selectedCompanyFilter || selectedCompanyFilter === "الكل" || i.company === selectedCompanyFilter;
-    return matchesBranch && matchesCompany;
+    return isApproved && matchesBranch && matchesCompany;
   });
   const totalInvoicesAmount = filteredInvoices.reduce((s, i) => s + (i.amount || 0), 0);
   
@@ -1080,6 +1204,58 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           <option key={comp} value={comp} />
         ))}
       </datalist>
+
+      {/* Dynamic Glowing Alert Banner for Manager if pending invoices exist */}
+      {userRole === "مدير" && pendingInvoices.length > 0 && (
+        <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl p-5 shadow-sm space-y-3.5 print:hidden animate-pulse">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-amber-500 text-white rounded-xl shadow-md shrink-0">
+                <BellRing className="w-5 h-5 animate-bounce" />
+              </div>
+              <div className="space-y-1 text-right">
+                <h3 className="text-sm font-black text-amber-950">🔔 تنبيه إداري هام: فواتير جديدة معلقة بانتظار الاعتماد والمراجعة!</h3>
+                <p className="text-xs text-amber-900 font-bold leading-relaxed">
+                  هناك فواتير معلقة تم إدخالها حديثاً بواسطة مدخلي الفواتير بفرع <span className="font-black text-indigo-950 bg-indigo-50 px-1 py-0.5 rounded border border-indigo-100">المروج</span> أو فرع <span className="font-black text-amber-950 bg-amber-100 px-1 py-0.5 rounded border border-amber-200">القادسية</span>. يرجى مراجعتها وتدقيقها يدوياً وبصرياً فوراً لاعتمادها وتثبيتها بالحسابات.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <span className="px-3 py-1 bg-amber-200 text-amber-950 text-xs font-black rounded-full shrink-0 border border-amber-300">
+                {pendingInvoices.length} فواتير معلقة ⏳
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById("pending-invoices-panel");
+                  if (el) {
+                    el.scrollIntoView({ behavior: "smooth" });
+                  }
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-black rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1 shrink-0"
+              >
+                <Eye className="w-4 h-4" />
+                <span>عرض ومراجعة الفواتير المعلقة</span>
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap gap-2 pt-2 border-t border-amber-500/10 text-[11px] font-bold text-amber-900">
+            <span>توزيع الفواتير المعلقة بالأفرع حالياً:</span>
+            {pendingInvoices.filter(i => i.branch === "المروج").length > 0 && (
+              <span className="px-2.5 py-0.5 bg-indigo-150 text-indigo-850 border border-indigo-200 rounded-md shadow-3xs font-extrabold">
+                فرع المروج: {pendingInvoices.filter(i => i.branch === "المروج").length} فواتير معلقة 📋
+              </span>
+            )}
+            {pendingInvoices.filter(i => i.branch === "القادسية").length > 0 && (
+              <span className="px-2.5 py-0.5 bg-amber-200 text-amber-950 border border-amber-300 rounded-md shadow-3xs font-extrabold">
+                فرع القادسية: {pendingInvoices.filter(i => i.branch === "القادسية").length} فواتير معلقة 📋
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Segmented control at the very top of the Tax Tab */}
       <div className="bg-white rounded-xl shadow-xs border border-slate-100 p-4 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
@@ -1125,130 +1301,248 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         </div>
       </div>
 
-      {/* 0. Manual Suppliers Directory */}
-      <div className="bg-white rounded-xl shadow-xs border border-slate-150 p-6 print:hidden">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div className="text-right">
-              <h2 className="text-sm font-extrabold text-slate-800">دليل الموردين والمؤسسات المعتمدة 🏢</h2>
-              <p className="text-[11px] text-slate-500 font-bold mt-0.5">تسجيل الدليل يدوياً لتوحيد كتابة أسمائهم تحت كافة فواتير المصروفات مباشرة.</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowSuppliersManager(!showSuppliersManager)}
-            className="w-full sm:w-auto px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-2xs active:scale-[0.98]"
-          >
-            {showSuppliersManager ? "إخفاء لوحة إدارة الموردين 🔼" : "🏢 عرض وإدارة الموردين المسجلين ⚙️"}
-          </button>
-        </div>
-
-        {showSuppliersManager && (
-          <div className="mt-5 pt-5 border-t border-slate-100 space-y-4 animate-fadeIn">
-            {/* Add New Supplier input */}
-            <div className="flex flex-col sm:flex-row gap-2 max-w-lg">
-              <input
-                type="text"
-                placeholder="اكتب اسم المورد الجديد هنا... (مثال: شركة المراعي)"
-                value={newSupplierName}
-                onChange={(e) => setNewSupplierName(e.target.value)}
-                className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-800"
-              />
-              <button
-                type="button"
-                onClick={() => handleAddSupplier()}
-                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shadow-3xs"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>إضافة لتسجيل المورد</span>
-              </button>
-            </div>
-
-            {/* List of current suppliers */}
-            <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150/80">
-              <div className="text-[11px] font-extrabold text-slate-600 mb-3 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-                <span>قائمة الموردين المسجلين حالياً والمسجلين بالكامل ({registeredCompanies.length} مورد)</span>
+      {/* Dynamic Pending Invoices Panel for Manager */}
+      {userRole === "مدير" && (
+        <div id="pending-invoices-panel" className="bg-white rounded-xl shadow-xs border border-slate-150 p-6 space-y-4 print:hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Receipt className="w-5 h-5 text-amber-500 font-extrabold" />
+                {pendingInvoices.length > 0 && (
+                  <span className="absolute -top-1 -left-1 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                  </span>
+                )}
               </div>
-              {registeredCompanies.length === 0 ? (
-                <div className="text-xs text-slate-400 py-4 text-center font-bold">لا يوجد موردين مسجلين حالياً.</div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-1 text-right">
-                  {registeredCompanies.map((comp) => (
-                    <div
-                      key={comp.id}
-                      className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg shadow-3xs group hover:border-indigo-300 hover:shadow-2xs transition-all min-h-11"
-                    >
-                      {editingSupplierId === comp.id ? (
-                        <div className="flex items-center gap-1.5 w-full">
-                          <input
-                            type="text"
-                            value={editingSupplierName}
-                            onChange={(e) => setEditingSupplierName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                handleEditSupplierSave(comp.id);
-                              } else if (e.key === "Escape") {
-                                setEditingSupplierId(null);
-                              }
-                            }}
-                            className="flex-1 px-2 py-1 text-xs border border-indigo-400 rounded-md focus:outline-none font-bold text-slate-800 bg-white"
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleEditSupplierSave(comp.id)}
-                            className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors cursor-pointer shrink-0"
-                            title="حفظ التعديل"
-                          >
-                            <Check className="w-4.5 h-4.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingSupplierId(null)}
-                            className="p-1 text-slate-400 hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0 text-sm font-bold"
-                            title="إلغاء"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="text-xs font-bold text-slate-800 truncate select-all">{comp.name}</span>
-                          <div className="flex items-center gap-1 shrink-0">
+              <div className="text-right">
+                <h2 className="text-sm font-extrabold text-slate-800">الفواتير المعلقة بانتظار المراجعة والاعتماد البصري 🔬</h2>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5">تحقق ومطابقة الفواتير المدخلة من قبل مدخلي الفواتير في الفروع لاعتمادها وتثبيتها بالنظام.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={loadPendingInvoices}
+              className="text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg p-2 transition-all flex items-center justify-center cursor-pointer font-bold text-xs gap-1"
+            >
+              <Search className="w-3.5 h-3.5" />
+              تحديث الفواتير المعلقة
+            </button>
+          </div>
+
+          {pendingInvoices.length === 0 ? (
+            <div className="p-5 text-center bg-emerald-50/20 text-emerald-700 border border-emerald-100 rounded-xl text-xs font-semibold flex items-center justify-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>رائع! لا توجد فواتير معلقة بانتظار المراجعة والاعتماد حالياً. جميع الفواتير من الفروع مستقرة ومؤكدة.</span>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-3.5 bg-amber-50 text-amber-900 border border-amber-200 rounded-xl text-xs font-bold leading-relaxed flex items-start gap-2.5 animate-pulse">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  تنبيـه هام للمدير: هناك <strong>{pendingInvoices.length} فواتير معلقة</strong> تم إدخالها حديثاً بواسطة مدخلي الفواتير بفرع المروج أو فرع القادسية. يرجى معاينتها بصرياً بدقة ثم اعتمادها لتثبيتها في الحسابات وتوليد مشترياتها تلقائياً.
+                </div>
+              </div>
+
+              <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs">
+                <table className="w-full text-right text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                      <th className="p-3 text-right">المورد / المؤسسة</th>
+                      <th className="p-3 text-center">الفرع</th>
+                      <th className="p-3 text-center">رقم الفاتورة</th>
+                      <th className="p-3 text-center">تاريخ الفاتورة</th>
+                      <th className="p-3 text-left">مبلـغ الفاتورة</th>
+                      <th className="p-3 text-center">مدخل الفاتورة</th>
+                      <th className="p-3 text-center">خيارات التحكم والمعاينة</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pendingInvoices.map((inv) => (
+                      <tr key={inv.id} className="hover:bg-slate-50/50">
+                        <td className="p-3 font-extrabold text-slate-800">{inv.company}</td>
+                        <td className="p-3 text-center font-bold text-slate-600">
+                          <span className={`px-2 py-0.5 rounded text-[10px] ${
+                            inv.branch === "المروج" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-700"
+                          }`}>
+                            {inv.branch}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center font-mono text-slate-500">{inv.invoice_no || "—"}</td>
+                        <td className="p-3 text-center font-mono text-slate-600">{inv.invoice_date || inv.date}</td>
+                        <td className="p-3 text-left font-extrabold text-amber-700 font-mono">
+                          {inv.amount.toFixed(2)} ر.س
+                        </td>
+                        <td className="p-3 text-center font-bold text-slate-700">
+                          👤 {inv.createdBy || "غير معروف"}
+                        </td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => {
-                                setEditingSupplierId(comp.id);
-                                setEditingSupplierName(comp.name);
-                              }}
-                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all cursor-pointer"
-                              title="تعديل اسم المورد"
+                              onClick={() => setPreviewInvoice(inv)}
+                              className="px-2.5 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                              title="معاينة محتويات الفاتورة بصرياً"
                             >
-                              <Edit className="w-3.5 h-3.5" />
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>معاينة بصريـة</span>
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteSupplier(comp.id, comp.name)}
-                              className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-all cursor-pointer"
-                              title="حذف المورد"
+                              onClick={() => handleApprovePendingInvoice(inv)}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                              title="اعتماد وتثبيت الفاتورة بالنظام"
                             >
-                              <Trash className="w-3.5 h-3.5" />
+                              <Check className="w-3.5 h-3.5" />
+                              <span>اعتماد</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectPendingInvoice(inv.id, inv.company)}
+                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                              title="رفض وحذف الفاتورة"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>رفض وحذف</span>
                             </button>
                           </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* 0. Manual Suppliers Directory */}
+      {userRole !== "مدخل فواتير" && (
+        <div className="bg-white rounded-xl shadow-xs border border-slate-150 p-6 print:hidden">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-50 text-indigo-700 rounded-xl border border-indigo-100">
+                <Building2 className="w-5 h-5" />
+              </div>
+              <div className="text-right">
+                <h2 className="text-sm font-extrabold text-slate-800">دليل الموردين والمؤسسات المعتمدة 🏢</h2>
+                <p className="text-[11px] text-slate-500 font-bold mt-0.5">تسجيل الدليل يدوياً لتوحيد كتابة أسمائهم تحت كافة فواتير المصروفات مباشرة.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSuppliersManager(!showSuppliersManager)}
+              className="w-full sm:w-auto px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-2xs active:scale-[0.98]"
+            >
+              {showSuppliersManager ? "إخفاء لوحة إدارة الموردين 🔼" : "🏢 عرض وإدارة الموردين المسجلين ⚙️"}
+            </button>
           </div>
-        )}
-      </div>
+
+          {showSuppliersManager && (
+            <div className="mt-5 pt-5 border-t border-slate-100 space-y-4 animate-fadeIn">
+              {/* Add New Supplier input */}
+              <div className="flex flex-col sm:flex-row gap-2 max-w-lg">
+                <input
+                  type="text"
+                  placeholder="اكتب اسم المورد الجديد هنا... (مثال: شركة المراعي)"
+                  value={newSupplierName}
+                  onChange={(e) => setNewSupplierName(e.target.value)}
+                  className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-800"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddSupplier()}
+                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs transition-all flex items-center justify-center gap-1 cursor-pointer shadow-3xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>إضافة لتسجيل المورد</span>
+                </button>
+              </div>
+
+              {/* List of current suppliers */}
+              <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150/80">
+                <div className="text-[11px] font-extrabold text-slate-600 mb-3 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                  <span>قائمة الموردين المسجلين حالياً والمسجلين بالكامل ({registeredCompanies.length} مورد)</span>
+                </div>
+                {registeredCompanies.length === 0 ? (
+                  <div className="text-xs text-slate-400 py-4 text-center font-bold">لا يوجد موردين مسجلين حالياً.</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-1 text-right">
+                    {registeredCompanies.map((comp) => (
+                      <div
+                        key={comp.id}
+                        className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg shadow-3xs group hover:border-indigo-300 hover:shadow-2xs transition-all min-h-11"
+                      >
+                        {editingSupplierId === comp.id ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <input
+                              type="text"
+                              value={editingSupplierName}
+                              onChange={(e) => setEditingSupplierName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleEditSupplierSave(comp.id);
+                                } else if (e.key === "Escape") {
+                                  setEditingSupplierId(null);
+                                }
+                              }}
+                              className="flex-1 px-2 py-1 text-xs border border-indigo-400 rounded-md focus:outline-none font-bold text-slate-800 bg-white"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleEditSupplierSave(comp.id)}
+                              className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors cursor-pointer shrink-0"
+                              title="حفظ التعديل"
+                            >
+                              <Check className="w-4.5 h-4.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingSupplierId(null)}
+                              className="p-1 text-slate-400 hover:bg-slate-100 rounded-md transition-colors cursor-pointer shrink-0 text-sm font-bold"
+                              title="إلغاء"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="text-xs font-bold text-slate-800 truncate select-all">{comp.name}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSupplierId(comp.id);
+                                  setEditingSupplierName(comp.name);
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all cursor-pointer"
+                                title="تعديل اسم المورد"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSupplier(comp.id, comp.name)}
+                                className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-all cursor-pointer"
+                                title="حذف المورد"
+                              >
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 1. Invoices Form */}
       <div className="bg-white rounded-xl shadow-xs border border-slate-100 p-6 print:hidden">
@@ -1749,6 +2043,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         invoice_date: v.invoice_date || date,
                         amount: parseFloat(v.amount as string) || 0,
                         items: v.items || [],
+                        createdBy: currentUser?.username || "unknown",
+                        status: userRole === "مدخل فواتير" ? "pending" : "approved",
+                        rawImage: v.rawImage || "",
+                        fileType: v.fileType || ""
                       }));
 
                       const res = await fetch("/api/tax-invoices", {
@@ -2063,171 +2361,112 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       </div>
 
       {/* For Invoice clerks show a neat simple list of entered branch invoices to avoid confusion and double-entries */}
-      {userRole === "مدخل فواتير" && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-150 p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-indigo-700 font-extrabold animate-pulse" />
-              <h2 className="text-sm font-bold text-slate-800">الفواتير المستلمة والمثبتة لفرع {branch} في النظام</h2>
-            </div>
-            <button
-              type="button"
-              onClick={loadTaxReport}
-              disabled={loading}
-              className="text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg p-2 transition-all flex items-center justify-center cursor-pointer disabled:opacity-50 font-bold text-xs gap-1"
-            >
-              <Search className="w-3.5 h-3.5" />
-              تحديث القائمة
-            </button>
-          </div>
+      {userRole === "مدخل فواتير" && (() => {
+        const myInvoices = invoices.filter(i => i.createdBy === currentUser?.username);
+        const myInvoicesSorted = [...myInvoices].sort((a, b) => a.id.localeCompare(b.id));
+        const latestInvoice = myInvoicesSorted[myInvoicesSorted.length - 1];
+        const displayInvoices = [...myInvoicesSorted].reverse();
+        const totalAmount = displayInvoices.reduce((acc, inv) => acc + inv.amount, 0);
 
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-right">
-              <label className="block text-xs font-extrabold text-slate-705 mb-1">تحديد نطاق مراجعة الفواتير:</label>
-              <p className="text-[10px] text-slate-500 font-medium">راجع الفواتير المسجلة لتتجنب التكرار والالتباس عند إدخال الفواتير اليدوية.</p>
-            </div>
-            <div className="flex bg-slate-200 p-1 rounded-lg flex-wrap gap-1">
+        return (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-150 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-indigo-700 font-extrabold" />
+                <h2 className="text-sm font-bold text-slate-800">الفواتير الضريبية التي قمت بإدخالها</h2>
+              </div>
               <button
                 type="button"
-                onClick={() => {
-                  setReportMode("day");
-                  setTo(from);
-                }}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                  reportMode === "day"
-                    ? "bg-white text-slate-900 shadow-3xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
+                onClick={loadTaxReport}
+                disabled={loading}
+                className="text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg p-2 transition-all flex items-center justify-center cursor-pointer disabled:opacity-50 font-bold text-xs gap-1"
               >
-                📅 يوم واحد
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportMode("period")}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                  reportMode === "period"
-                    ? "bg-white text-slate-900 shadow-3xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                🗓️ مدى زمني (المجموع الكامل)
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportMode("period_detailed")}
-                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                  reportMode === "period_detailed"
-                    ? "bg-white text-slate-900 shadow-3xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                📊 مدى زمني (تفصيلي يومي)
+                <Search className="w-3.5 h-3.5" />
+                تحديث القائمة
               </button>
             </div>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            {reportMode === "day" ? (
-              <div className="space-y-2 col-span-2">
-                <label className="block text-xs font-bold text-slate-700">تاريخ مراجعة الفواتير</label>
-                <input
-                  type="date"
-                  value={from}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setFrom(val);
-                    setTo(val);
-                  }}
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
-                />
+            <p className="text-xs text-slate-500 font-medium leading-relaxed">
+              توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها. يُسمح لك بتعديل أو حذف <strong>الفاتورة الأحدث فقط</strong>. بمجرد قيامك بإدخال فاتورة تالية، تصبح الفاتورة السابقة مغلقة وتثبت تلقائياً في النظام لحماية البيانات.
+            </p>
+
+            {displayInvoices.length === 0 ? (
+              <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-slate-500 font-medium text-xs">
+                لم تقم بإدخال أي فواتير ضريبية في النظام بعد.
               </div>
             ) : (
-              <>
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-700">من تاريخ</label>
-                  <input
-                    type="date"
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-700">إلى تاريخ</label>
-                  <input
-                    type="date"
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold"
-                  />
-                </div>
-              </>
-            )}
-
-            {/* فلتر المؤسسة كمستعلم اختياري */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700 select-none">البحث باسم المؤسسة الموردة (اختياري)</label>
-              <select
-                id="company-filter-dropdown"
-                value={selectedCompanyFilter}
-                onChange={(e) => setSelectedCompanyFilter(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-850"
-              >
-                <option value="الكل">🔍 جميع المؤسسات الموردة</option>
-                {allCompanies.map((comp) => (
-                  <option key={comp} value={comp}>
-                    {comp}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {filteredInvoices.length === 0 ? (
-            <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-slate-500 font-medium text-xs">
-              لا توجد فواتير ضريبية مدخلة أو محفوظة لفرع {branch} في الفترة المحددة ({from} {reportMode === "period" && `إلى ${to}`}).
-            </div>
-          ) : (
-            <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs">
-              <table className="w-full text-right text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 shadow-3xs">
-                    <th className="p-3 text-right">مورد الفاتورة (اسم المؤسسة)</th>
-                    <th className="p-3 text-center">رقم الفاتورة</th>
-                    <th className="p-3 text-center">تاريخ الفاتورة</th>
-                    <th className="p-3 text-left">مبلـغ الفاتورة</th>
-                    <th className="p-3 text-center">خيارات</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredInvoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-slate-50/50">
-                      <td className="p-3 font-extrabold text-slate-800">{inv.company}</td>
-                      <td className="p-3 text-center font-mono text-slate-500">{inv.invoice_no || "—"}</td>
-                      <td className="p-3 text-center font-mono text-slate-600">{inv.invoice_date || inv.date}</td>
-                      <td className="p-3 text-left font-extrabold text-indigo-950 font-mono">
-                        {inv.amount.toFixed(2)} ر.س
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2 py-0.5 rounded-md">
-                          🔒 محفوظ بالنظام
-                        </span>
-                      </td>
+              <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs">
+                <table className="w-full text-right text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 shadow-3xs">
+                      <th className="p-3 text-right">المورد / المؤسسة</th>
+                      <th className="p-3 text-center">الفرع</th>
+                      <th className="p-3 text-center">رقم الفاتورة</th>
+                      <th className="p-3 text-center">تاريخ الفاتورة</th>
+                      <th className="p-3 text-left">مبلـغ الفاتورة</th>
+                      <th className="p-3 text-center">حالة الفاتورة والتحكم</th>
                     </tr>
-                  ))}
-                  <tr className="bg-slate-50 text-slate-800 font-extrabold border-t border-slate-200">
-                    <td colSpan={3} className="p-3 text-right">إجمالي الفواتير المحفوظة للفترة المحددة:</td>
-                    <td className="p-3 text-left font-extrabold text-indigo-700 font-mono">
-                      {totalInvoicesAmount.toFixed(2)} ر.س
-                    </td>
-                    <td></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {displayInvoices.map((inv) => {
+                      const isLatest = latestInvoice && inv.id === latestInvoice.id;
+                      return (
+                        <tr key={inv.id} className={`hover:bg-slate-50/50 ${isLatest ? 'bg-indigo-50/10' : ''}`}>
+                          <td className="p-3 font-extrabold text-slate-800">{inv.company}</td>
+                          <td className="p-3 text-center font-bold text-slate-600">{inv.branch}</td>
+                          <td className="p-3 text-center font-mono text-slate-500">{inv.invoice_no || "—"}</td>
+                          <td className="p-3 text-center font-mono text-slate-600">{inv.invoice_date || inv.date}</td>
+                          <td className="p-3 text-left font-extrabold text-indigo-950 font-mono">
+                            {inv.amount.toFixed(2)} ر.س
+                          </td>
+                          <td className="p-3 text-center">
+                            {isLatest ? (
+                              <div className="flex items-center justify-center gap-1.5">
+                                <span className="text-[10px] text-indigo-700 font-bold bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1 animate-pulse">
+                                  🔓 الفاتورة الأحدث
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => startEditInvoice(inv)}
+                                  className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                  title="تعديل الفاتورة"
+                                >
+                                  <Edit className="w-3 h-3" />
+                                  <span>تعديل</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteInvoice(inv.id)}
+                                  className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                  title="حذف الفاتورة"
+                                >
+                                  <Trash className="w-3 h-3" />
+                                  <span>حذف</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2.5 py-1 rounded-md flex items-center justify-center gap-1 w-max mx-auto">
+                                🔒 مغلق بالنظام
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    <tr className="bg-slate-50 text-slate-800 font-extrabold border-t border-slate-200">
+                      <td colSpan={4} className="p-3 text-right">إجمالي الفواتير التي قمت بإدخالها:</td>
+                      <td className="p-3 text-left font-extrabold text-indigo-700 font-mono">
+                        {totalAmount.toFixed(2)} ر.س
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 2. Comprehensive Tax Report (Print Friendly & Ink Saving) */}
       {userRole !== "مدخل فواتير" && (
@@ -3778,6 +4017,426 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           </div>
         );
       })()}
+
+      {/* Immersive Visual Inspection & Preview Modal for Manager (Same system as Manager Audit Modal) */}
+      {previewInvoice && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
+          <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-indigo-950 text-indigo-400 rounded-lg border border-indigo-900">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-white">نظام المراجعة والتدقيق والتحقق البصري للفاتورة المعلقة 🔬</h3>
+                  <p className="text-[10px] text-slate-400">تحقق ومطابقة الفاتورة ومراجعة بنودها المسجلة وتعديل الأخطاء يدوياً قبل الاعتماد النهائي</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewInvoice(null)}
+                className="p-1.5 hover:bg-slate-750 rounded-lg text-slate-400 hover:text-white transition-all cursor-pointer"
+                title="إغلاق نافذة التدقيق"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body - Split Screen split into 2 Columns */}
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
+              
+              {/* Right Column: Pristine High-Resolution Document Viewer (Interactive Panning/Zooming) */}
+              <div className="md:w-1/2 bg-slate-950 flex flex-col border-l border-slate-800 min-h-[320px] md:min-h-0 relative group">
+                
+                {/* Floating Action Controls for Pristine Viewing Quality */}
+                <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-slate-900/95 border border-slate-700 p-1.5 rounded-xl shadow-lg backdrop-blur-xs select-none">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewImgZoom(prev => Math.min(prev + 0.25, 4.5))}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md transition-all cursor-pointer"
+                    title="تكبير الصورة (+)"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewImgZoom(prev => Math.max(prev - 0.25, 0.4))}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md transition-all cursor-pointer"
+                    title="تصغير الصورة (-)"
+                  >
+                    <ZoomOut className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewImgRotation(prev => (prev + 90) % 360)}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md transition-all cursor-pointer"
+                    title="تدوير الصورة 90 درجة يميناً"
+                  >
+                    <RotateCw className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewImgZoom(1);
+                      setPreviewImgRotation(0);
+                      setPreviewImgPan({ x: 0, y: 0 });
+                    }}
+                    className="p-1.5 bg-indigo-905 hover:bg-indigo-800 text-indigo-200 hover:text-white rounded-md transition-all text-[10px] font-bold px-2.5 cursor-pointer"
+                    title="إعادة التوطين الافتراضي للمطابقة"
+                  >
+                    إعادة ضبط
+                  </button>
+                </div>
+
+                {/* Display Instruction Indicator */}
+                <div className="absolute bottom-3 right-3 z-10 text-[9px] bg-slate-900/80 border border-slate-800 px-2.5 py-1 rounded-md text-slate-400 select-none pointer-events-none">
+                  💡 اسحب الصورة للتحريك، أو استخدم عجلات الماوس للتكبير والتصغير بدقة عالية.
+                </div>
+
+                {/* Document Display Canvas Stage */}
+                <div 
+                  className="flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing flex items-center justify-center select-none"
+                  onMouseDown={(e) => {
+                    setPreviewIsDraggingPan(true);
+                    previewDragStart.current = { x: e.clientX - previewImgPan.x, y: e.clientY - previewImgPan.y };
+                  }}
+                  onMouseMove={(e) => {
+                    if (!previewIsDraggingPan) return;
+                    setPreviewImgPan({
+                      x: e.clientX - previewDragStart.current.x,
+                      y: e.clientY - previewDragStart.current.y
+                    });
+                  }}
+                  onMouseUp={() => setPreviewIsDraggingPan(false)}
+                  onMouseLeave={() => setPreviewIsDraggingPan(false)}
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    const delta = e.deltaY < 0 ? 0.15 : -0.15;
+                    setPreviewImgZoom(prev => Math.max(0.4, Math.min(prev + delta, 4.5)));
+                  }}
+                >
+                  {!previewInvoice.rawImage ? (
+                    <div className="text-slate-500 text-xs font-bold flex flex-col items-center gap-2">
+                      <FileText className="w-8 h-8 text-slate-600 animate-bounce" />
+                      <span>لم يتم إرفاق ملف ممسوح بصریاً من مدخل الفاتورة</span>
+                    </div>
+                  ) : previewInvoice.fileType === "application/pdf" ? (
+                    <object
+                      data={previewInvoice.rawImage}
+                      type="application/pdf"
+                      className="w-full h-full"
+                      style={{
+                        transform: `scale(${previewImgZoom}) rotate(${previewImgRotation}deg) translate(${previewImgPan.x}px, ${previewImgPan.y}px)`,
+                        transformOrigin: "center center",
+                        transition: previewIsDraggingPan ? "none" : "transform 0.1s ease-out"
+                      }}
+                    >
+                      <embed src={previewInvoice.rawImage} type="application/pdf" />
+                    </object>
+                  ) : (
+                    <img
+                      src={previewInvoice.rawImage}
+                      alt="مستند الفاتورة الأصلي عالي الجودة"
+                      draggable={false}
+                      className="max-h-full max-w-full object-contain shadow-2xl transition-all"
+                      referrerPolicy="no-referrer"
+                      style={{
+                        transform: `translate(${previewImgPan.x}px, ${previewImgPan.y}px) scale(${previewImgZoom}) rotate(${previewImgRotation}deg)`,
+                        transformOrigin: "center center",
+                        transition: previewIsDraggingPan ? "none" : "transform 0.1s ease-out"
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Left Column: Form Editor & Purchases Details */}
+              <div className="md:w-1/2 flex flex-col bg-slate-900 min-w-0">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+                  
+                  {/* Top Clerk Banner */}
+                  <div className="bg-slate-800/60 border border-slate-700/80 rounded-xl p-3 flex items-center justify-between text-xs text-slate-300">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-indigo-400 block">مسؤول الإدخال الأول:</span>
+                      <span className="font-extrabold text-slate-100">👤 {previewInvoice.createdBy || "غير معروف"}</span>
+                    </div>
+                    <div className="text-left">
+                      <span className="text-[10px] uppercase font-bold text-indigo-400 block">فرع التسجيل:</span>
+                      <span className="font-extrabold text-slate-100">📍 {previewInvoice.branch}</span>
+                    </div>
+                  </div>
+
+                  {/* Invoice Meta Grid */}
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Supplier/Company Custom Searchable Input */}
+                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <label className="block text-[10px] font-bold text-slate-400">اسم المورد / المؤسسة بالفاتورة:</label>
+                      <SearchableCompanyInput
+                        value={previewInvoice.company}
+                        onChange={(val) => {
+                          setPreviewInvoice({ ...previewInvoice, company: val });
+                        }}
+                        registeredCompanies={registeredCompanies}
+                        onRegisterCompany={(name) => handleAddSupplier(name)}
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
+                      />
+                    </div>
+
+                    {/* Invoice Date */}
+                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <label className="block text-[10px] font-bold text-slate-400">تاريخ الفاتورة المكتوب:</label>
+                      <input
+                        type="date"
+                        value={previewInvoice.invoice_date || previewInvoice.date}
+                        onChange={(e) => {
+                          setPreviewInvoice({ ...previewInvoice, invoice_date: e.target.value });
+                        }}
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                      />
+                    </div>
+
+                    {/* Invoice Serial Number */}
+                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <label className="block text-[10px] font-bold text-slate-400">رقم الفاتورة الأصيل (SERIAL):</label>
+                      <input
+                        type="text"
+                        value={previewInvoice.invoice_no || ""}
+                        onChange={(e) => {
+                          setPreviewInvoice({ ...previewInvoice, invoice_no: e.target.value });
+                        }}
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                        placeholder="Inv-XXXXXXXX"
+                      />
+                    </div>
+
+                    {/* Total Gross Amount */}
+                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                      <label className="block text-[10px] font-bold text-indigo-400">المبلغ الإجمالي شامل الضريبة:</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={previewInvoice.amount}
+                        onChange={(e) => {
+                          const val = e.target.value === "" ? 0 : parseFloat(e.target.value);
+                          setPreviewInvoice({ ...previewInvoice, amount: val });
+                        }}
+                        className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Similarity Warning inside Modal if found */}
+                  {(() => {
+                    const simResult = checkSimilarity(previewInvoice.company, allCompanies);
+                    const showWarning = simResult.matches && !ignoredSimilarities[`preview-mod-${previewInvoice.id}-${simResult.similarName}`];
+                    if (showWarning) {
+                      return (
+                        <div className="p-3 bg-amber-950/45 border border-amber-800/60 rounded-xl text-xs text-amber-200 space-y-2 animate-fadeIn select-none">
+                          <div className="font-extrabold flex items-center gap-1.5 text-amber-300">
+                            <span>⚠️ مطابقة تلقائية لقرب الاسم:</span>
+                            <span>هل تقصد المؤسسة المسجلة بالنظام؟</span>
+                          </div>
+                          <p className="text-[11px] text-amber-400">
+                            الاسم المكتوب قريب من: <span className="font-black text-white underline">{simResult.similarName}</span>
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPreviewInvoice({ ...previewInvoice, company: simResult.similarName });
+                              }}
+                              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-md text-[10px] cursor-pointer"
+                            >
+                              ✅ مطابقة وتوحيد كـ ({simResult.similarName})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIgnoredSimilarities(prev => ({ ...prev, [`preview-mod-${previewInvoice.id}-${simResult.similarName}`]: true }));
+                              }}
+                              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-md text-[10px] cursor-pointer"
+                            >
+                              ❌ إبقاء الاسم الحالي
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  {/* Tabular List of Extracted Purchase Items */}
+                  <div className="space-y-2 pt-3 border-t border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black text-slate-300 flex items-center gap-1">
+                        <Library className="w-4 h-4 text-indigo-400" />
+                        <span>تفاصيل مصفوفة السلع والمشتريات المستخرجة ({previewInvoice.items?.length || 0})</span>
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updatedItems = [...(previewInvoice.items || [])];
+                          updatedItems.push({
+                            name: "",
+                            qty: "1 حبة",
+                            price_with_tax: 0,
+                            category: ""
+                          });
+                          setPreviewInvoice({ ...previewInvoice, items: updatedItems });
+                        }}
+                        className="px-2.5 py-1 text-[10px] font-black text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 border border-indigo-900 rounded-md flex items-center gap-1 cursor-pointer transition-all"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>إضافة مادة جديدة +</span>
+                      </button>
+                    </div>
+
+                    {/* Items Matrix */}
+                    {(!previewInvoice.items || previewInvoice.items.length === 0) ? (
+                      <div className="p-4 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                        لا توجد بنود وسلع مسجلة لهذه الفاتورة حتى الآن. يمكنك إضافتها يدوياً للتحقق والمطابقة.
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[35vh] overflow-y-auto pr-1">
+                        {previewInvoice.items.map((item, itemIdx) => (
+                          <div 
+                            key={itemIdx}
+                            className="flex flex-col sm:flex-row items-stretch gap-2 bg-slate-800/30 p-2.5 rounded-xl border border-slate-800 hover:border-slate-750 transition-all text-xs"
+                          >
+                            {/* Item Description Name */}
+                            <div className="flex-1 space-y-1">
+                              <label className="text-[9px] font-bold text-slate-500 block">اسم المادة / السلعة:</label>
+                              <input
+                                type="text"
+                                value={item.name || (item as any).product_name || ""}
+                                placeholder="مثل: خضار، لحوم، غاز..."
+                                onChange={(e) => {
+                                  const updatedItems = [...(previewInvoice.items || [])];
+                                  updatedItems[itemIdx] = { ...updatedItems[itemIdx], name: e.target.value };
+                                  setPreviewInvoice({ ...previewInvoice, items: updatedItems });
+                                }}
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                              />
+                            </div>
+
+                            {/* Item Category */}
+                            <div className="w-full sm:w-[120px] space-y-1">
+                              <label className="text-[9px] font-bold text-pink-400 block">تصنيف السلعة للفرع:</label>
+                              <input
+                                type="text"
+                                value={item.category || ""}
+                                placeholder="تصنيف المادة"
+                                onChange={(e) => {
+                                  const updatedItems = [...(previewInvoice.items || [])];
+                                  updatedItems[itemIdx] = { ...updatedItems[itemIdx], category: e.target.value };
+                                  setPreviewInvoice({ ...previewInvoice, items: updatedItems });
+                                }}
+                                className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
+                              />
+                            </div>
+
+                            {/* Qty */}
+                            <div className="w-full sm:w-[70px] space-y-1">
+                              <label className="text-[9px] font-bold text-slate-500 block">الكمية:</label>
+                              <input
+                                type="text"
+                                value={item.qty}
+                                placeholder="الكمية"
+                                onChange={(e) => {
+                                  const updatedItems = [...(previewInvoice.items || [])];
+                                  updatedItems[itemIdx] = { ...updatedItems[itemIdx], qty: e.target.value };
+                                  setPreviewInvoice({ ...previewInvoice, items: updatedItems });
+                                }}
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
+                              />
+                            </div>
+
+                            {/* Price */}
+                            <div className="w-full sm:w-[90px] space-y-1">
+                              <label className="text-[9px] font-bold text-slate-500 block">السعر (بضريبة):</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.price_with_tax || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const updatedItems = [...(previewInvoice.items || [])];
+                                  updatedItems[itemIdx] = { ...updatedItems[itemIdx], price_with_tax: val === "" ? 0 : parseFloat(val) };
+                                  setPreviewInvoice({ ...previewInvoice, items: updatedItems });
+                                }}
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
+                              />
+                            </div>
+
+                            {/* Delete Item button */}
+                            <div className="flex items-end p-0.5 mt-2 sm:mt-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updatedItems = (previewInvoice.items || []).filter((_, i) => i !== itemIdx);
+                                  setPreviewInvoice({ ...previewInvoice, items: updatedItems });
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/20 rounded-lg transition-all cursor-pointer"
+                                title="حذف هذا البند"
+                              >
+                                <Trash className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Modal Column Footer Action Buttons */}
+                <div className="p-4 bg-slate-800 border-t border-slate-700 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => handleRejectPendingInvoice(previewInvoice.id, previewInvoice.company)}
+                    className="px-4 py-2 bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Trash className="w-4 h-4" />
+                    <span>رفض وحذف الفاتورة المعلقة</span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewInvoice(null)}
+                      className="px-4 py-2 bg-slate-700 hover:bg-slate-650 border border-slate-600 text-slate-200 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                    >
+                      إغلاق المعاينة
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!previewInvoice.company || previewInvoice.company.trim() === "") {
+                          onShowToast("⚠️ يجب توفير اسم المورد لاعتماد المطابقة.");
+                          return;
+                        }
+                        if (!previewInvoice.amount || parseFloat(previewInvoice.amount.toString()) <= 0) {
+                          onShowToast("⚠️ يجب كتابة القيمة الإجمالية الصحيحة لتصفية الضريبة.");
+                          return;
+                        }
+                        handleApprovePendingInvoice(previewInvoice);
+                      }}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 hover:shadow-lg border border-emerald-500 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>اعتماد ومطابقة الفاتورة البصرية 👍</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
