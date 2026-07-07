@@ -1984,7 +1984,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
             </div>
 
             {/* Document Content Area */}
-            <div id="print-area" className="p-8 space-y-12 text-right text-slate-900 print:p-0 bg-white" dir="rtl">
+            <div id="print-area" className="p-8 space-y-12 text-right text-slate-900 print:p-[15mm] bg-white" dir="rtl">
               
               <style>{`
                 @media print {

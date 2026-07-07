@@ -1411,7 +1411,8 @@ async function startServer() {
           displayName: user.displayName,
           role: user.role,
           status: user.status,
-          branch: user.branch || "الكل"
+          branch: user.branch || "الكل",
+          canEnterInvoices: user.canEnterInvoices || false
         }
       });
     } catch (err: any) {

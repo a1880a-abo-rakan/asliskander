@@ -515,7 +515,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
             width: 100%;
             background-color: #ffffff;
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
-            color: #000000;
+            color: #0f172a;
             font-size: 11px;
             line-height: 1.4;
           }
@@ -523,88 +523,139 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
             width: 100%;
             max-width: 900px;
             margin: 0 auto;
-            padding: 5px 0px;
+            padding: 15px 25px;
             direction: rtl;
             text-align: right;
             box-sizing: border-box;
           }
           .header {
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          }
+          .header-right {
+            text-align: right;
+          }
+          .header-center {
             text-align: center;
-            border-bottom: 2px solid #000000;
-            padding-bottom: 6px;
-            margin-bottom: 12px;
+          }
+          .header-left {
+            text-align: left;
+            font-family: monospace;
+            font-size: 9.5px;
+            color: #64748b;
           }
           .title {
-            font-size: 16px;
-            font-weight: 800;
-            color: #000000;
-            margin-bottom: 4px;
+            font-size: 18px;
+            font-weight: 900;
+            color: #1e293b;
+            margin: 0 0 4px 0;
+            letter-spacing: -0.025em;
+          }
+          .subtitle {
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            margin: 0;
+          }
+          .report-badge {
+            display: inline-block;
+            background-color: #f0fdf4;
+            color: #16a34a;
+            border: 1px solid #bbf7d0;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 9.5px;
+            font-weight: bold;
+            margin-top: 4px;
           }
           .period {
-            font-size: 10.5px;
-            color: #111111;
+            font-size: 11px;
+            color: #334155;
             font-weight: bold;
+            margin-top: 2px;
           }
           .stats {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-bottom: 12px;
+            gap: 12px;
+            margin-bottom: 16px;
           }
           .stat-box {
-            border: 1.5px solid #000000;
-            padding: 5px 8px;
+            border: 1px solid #cbd5e1;
+            padding: 8px 10px;
             text-align: center;
-            border-radius: 6px;
-            background: #fafafa !important;
+            border-radius: 8px;
+            background: #f8fafc;
+          }
+          .stat-box.revenue {
+            background-color: #f0fdf4 !important;
+            border-color: #bbf7d0 !important;
+          }
+          .stat-box.expenses {
+            background-color: #fef2f2 !important;
+            border-color: #fca5a5 !important;
+          }
+          .stat-box.vat {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+          }
+          .stat-box.profit {
+            background-color: #f5f3ff !important;
+            border-color: #ddd6fe !important;
           }
           .stat-box div:first-child {
-            font-size: 9.5px;
-            color: #111111;
-            font-weight: bold;
+            font-size: 10px;
+            color: #475569;
+            font-weight: 700;
+            margin-bottom: 3px;
           }
           .stat-val {
-            font-size: 13px;
-            font-weight: 800;
-            color: #000000;
-            margin-top: 2px;
+            font-size: 14px;
+            font-weight: 900;
+            color: #0f172a;
           }
-          .text-green { color: #0b6623 !important; font-weight: bold; }
-          .text-red { color: #990000 !important; font-weight: bold; }
-          .text-blue { color: #000000 !important; font-weight: bold; }
+          .text-green { color: #16a34a !important; }
+          .text-red { color: #dc2626 !important; }
+          .text-purple { color: #7c3aed !important; }
+          .text-slate { color: #475569 !important; }
           
           h3 {
-            font-size: 11.5px;
-            color: #000000;
-            border-bottom: 1.5px solid #000000;
-            padding-bottom: 4px;
-            margin-top: 14px;
-            margin-bottom: 6px;
+            font-size: 12px;
+            color: #0f172a;
+            border-right: 4px solid #16a34a;
+            padding-right: 8px;
+            padding-bottom: 2px;
+            margin-top: 20px;
+            margin-bottom: 8px;
             font-weight: 800;
             page-break-after: avoid;
+            break-after: avoid;
           }
           table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 12px;
-            border: 1.5px solid #000000 !important;
+            margin-bottom: 16px;
+            border: 1px solid #cbd5e1 !important;
             page-break-inside: auto;
           }
           th {
             background: #f1f5f9 !important;
-            color: #000000 !important;
-            padding: 5px 6px;
-            border: 1.5px solid #000000 !important;
+            color: #1e293b !important;
+            padding: 6px 8px;
+            border: 1px solid #cbd5e1 !important;
             font-size: 10px;
             font-weight: 800;
             text-align: right;
           }
           td {
-            padding: 5px 6px;
-            border: 1px solid #000000 !important;
+            padding: 6px 8px;
+            border: 1px solid #e2e8f0 !important;
             font-size: 9.5px;
-            color: #000000 !important;
-            font-weight: bold;
+            color: #334155 !important;
             page-break-inside: avoid;
           }
           tr {
@@ -612,56 +663,112 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
             page-break-after: auto;
           }
           tr:nth-child(even) td {
-            background-color: #fafafa !important;
+            background-color: #f8fafc !important;
           }
           .bold {
             font-weight: bold;
           }
           .footer {
-            margin-top: 16px;
+            margin-top: 24px;
             text-align: center;
-            color: #111111;
+            color: #64748b;
             font-size: 9px;
-            border-top: 1.5px dashed #000000;
-            padding-top: 6px;
+            border-top: 1px dashed #cbd5e1;
+            padding-top: 8px;
             font-weight: bold;
             page-break-inside: avoid;
           }
           
+          /* SIGN-OFF SECTION */
+          .signature-section {
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 2px solid #e2e8f0;
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .signature-title {
+            font-size: 11px;
+            font-weight: bold;
+            color: #1e293b;
+            margin-bottom: 12px;
+            display: block;
+          }
+          .signature-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            text-align: center;
+          }
+          .signature-box {
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+          }
+          .signature-label {
+            font-size: 10.5px;
+            font-weight: bold;
+            color: #334155;
+          }
+          .signature-line {
+            border-bottom: 1px dashed #94a3b8;
+            width: 80%;
+            margin: 0 auto;
+          }
+          .signature-name {
+            font-size: 9px;
+            color: #64748b;
+          }
+          
           @page {
             size: A4 portrait;
-            margin: 8mm 10mm;
+            margin: 15mm 15mm 15mm 15mm;
           }
           @media print {
             html, body {
               background-color: #ffffff !important;
-              width: 100% !important;
-              margin: 0 !important;
-              padding: 0 !important;
-              color: #000000 !important;
+              color: #0f172a !important;
             }
             .print-wrapper {
               width: 100% !important;
               max-width: 100% !important;
               margin: 0 !important;
-              padding: 0 !important;
+              padding: 12mm 15mm !important;
             }
             table {
               border-collapse: collapse !important;
               width: 100% !important;
-              border: 1.5px solid #000000 !important;
             }
             th {
               background-color: #f1f5f9 !important;
-              border: 1.5px solid #000000 !important;
-              color: #000000 !important;
-            }
-            td {
-              border: 1px solid #000000 !important;
-              color: #000000 !important;
+              color: #1e293b !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
             tr:nth-child(even) td {
-              background-color: #fafafa !important;
+              background-color: #f8fafc !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .stat-box.revenue {
+              background-color: #f0fdf4 !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .stat-box.expenses {
+              background-color: #fef2f2 !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .stat-box.vat {
+              background-color: #f8fafc !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .stat-box.profit {
+              background-color: #f5f3ff !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
           }
         </style>
@@ -669,15 +776,29 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
       <body>
         <div class="print-wrapper">
           <div class="header">
-            <div class="title">🍽️ مطعم أصل الاسكندر</div>
-            <div class="period">تقرير دوري مفصل للفترة من ${fromDate} إلى ${toDate} (${branch})</div>
+            <div class="header-right">
+              <h1 class="title">مطاعم أصل الإسكندر</h1>
+              <p class="subtitle">إدارة المراقبة المالية وقياس كفاءة الفروع الموحدة</p>
+            </div>
+            <div class="header-center">
+              <div style="font-size: 13px; font-weight: bold; color: #1e293b;">التقرير المالي والتحليلات الشاملة</div>
+              <div class="report-badge">مستند رسمي معتمد</div>
+            </div>
+            <div class="header-left">
+              <div>تاريخ الطباعة: ${new Date().toLocaleDateString("ar-SA")}</div>
+              <div>وقت الطباعة: ${new Date().toLocaleTimeString("ar-SA")}</div>
+            </div>
           </div>
           
+          <div style="text-align: center; margin-bottom: 14px; font-weight: bold; font-size: 11.5px; color: #1e293b;">
+            نطاق التقرير للفترة من ${fromDate} إلى ${toDate} (${branch === "all" ? "كافة الفروع الموحدة" : branch})
+          </div>
+
           <div class="stats">
-            <div class="stat-box"><div>إجمالي الإيرادات</div><div class="stat-val text-green">${totalRev.toFixed(2)} ر</div></div>
-            <div class="stat-box"><div>إجمالي المصروفات</div><div class="stat-val text-red">${totalExp.toFixed(2)} ر</div></div>
-            <div class="stat-box"><div>ضريبة الفرق المستحقة</div><div class="stat-val font-bold text-slate-700">${vatDueDiff.toFixed(2)} ر</div></div>
-            <div class="stat-box"><div>صافي الربح للفترة</div><div class="stat-val">${totalNet.toFixed(2)} ر</div></div>
+            <div class="stat-box revenue"><div>إجمالي الإيرادات</div><div class="stat-val text-green">${totalRev.toFixed(2)} ر</div></div>
+            <div class="stat-box expenses"><div>إجمالي المصروفات</div><div class="stat-val text-red">${totalExp.toFixed(2)} ر</div></div>
+            <div class="stat-box vat"><div>ضريبة الفرق المستحقة</div><div class="stat-val text-slate font-bold">${vatDueDiff.toFixed(2)} ر</div></div>
+            <div class="stat-box profit"><div>صافي الربح للفترة</div><div class="stat-val text-purple">${totalNet.toFixed(2)} ر</div></div>
           </div>
   
           <h3>1. مقارنة الفرعين والتحصيل المالي</h3>
@@ -729,6 +850,27 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
   
           ${notesTimelineHtml}
           
+          <div class="signature-section">
+            <span class="signature-title">قسم الاعتمادات والتوقيعات الرسمية والمطابقة:</span>
+            <div class="signature-grid">
+              <div class="signature-box">
+                <span class="signature-label">توقيع المحاسب المالي</span>
+                <div class="signature-line"></div>
+                <span class="signature-name">الاسم والتوقيع: ..........................</span>
+              </div>
+              <div class="signature-box">
+                <span class="signature-label">توقيع الكاشير / مشرف الفرع</span>
+                <div class="signature-line"></div>
+                <span class="signature-name">الاسم والتوقيع: ..........................</span>
+              </div>
+              <div class="signature-box">
+                <span class="signature-label">مدير عام المؤسسة</span>
+                <div class="signature-line"></div>
+                <span class="signature-name">الاعتماد والتوقيع: ..........................</span>
+              </div>
+            </div>
+          </div>
+
           <div class="footer">
             نظام محاسبة أصل الاسكندر للفروع الموحدة وبنود التصفية • تم إصدار وتثبيت هذه التقارير طبقاً للسجلات الرسمية للمطعم والمستودع.
           </div>

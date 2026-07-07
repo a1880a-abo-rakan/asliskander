@@ -157,6 +157,7 @@ export interface UnifiedUser {
   status: 'نشط' | 'موقوف';
   branch?: 'الكل' | 'القادسية' | 'المروج';
   createdAt: string;
+  canEnterInvoices?: boolean;
 }
 
 export interface Employee {

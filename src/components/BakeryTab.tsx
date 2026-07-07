@@ -1170,38 +1170,149 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
             </div>
           ) : (
             /* PRINTABLE REPORT CARD */
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 md:p-8 space-y-8 print:shadow-none print:border-none print:p-0">
+            <div id="printable-bakery-report-area" className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 md:p-8 space-y-8 print:space-y-4 print:shadow-none print:border-none print:p-0 print-report-area animate-fade-in">
+              <style dangerouslySetInnerHTML={{ __html: `
+                @media print {
+                  header, nav, aside, footer, .print\\:hidden, button, [role="alert"], .no-print {
+                    display: none !important;
+                  }
+                  @page {
+                    size: A4 portrait;
+                    margin: 15mm 15mm 15mm 15mm;
+                  }
+                  body {
+                    background: #ffffff !important;
+                    color: #0f172a !important;
+                    font-size: 10px !important;
+                    line-height: 1.25 !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                  }
+                  .print-report-area {
+                    padding: 10mm 12mm !important;
+                    margin: 0 !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    width: 100% !important;
+                    max-width: 100% !important;
+                  }
+                  .print-report-area > div {
+                    margin-bottom: 8px !important;
+                    margin-top: 0 !important;
+                  }
+                  .print-space-y-compact > :not([hidden]) ~ :not([hidden]) {
+                    margin-top: 6px !important;
+                    margin-bottom: 0 !important;
+                  }
+                  .print-grid {
+                    display: grid !important;
+                    grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+                    gap: 8px !important;
+                  }
+                  .print-col-span-8 {
+                    grid-column: span 8 / span 8 !important;
+                  }
+                  .print-col-span-4 {
+                    grid-column: span 4 / span 4 !important;
+                  }
+                  table {
+                    width: 100% !important;
+                    border-collapse: collapse !important;
+                  }
+                  th, td {
+                    padding: 3px 5px !important;
+                    font-size: 9px !important;
+                    border: 1px solid #cbd5e1 !important;
+                    line-height: 1.2 !important;
+                  }
+                  th {
+                    font-weight: bold !important;
+                    background-color: #f1f5f9 !important;
+                    color: #1e293b !important;
+                  }
+                  .print-avoid-break {
+                    page-break-inside: avoid !important;
+                    break-inside: avoid !important;
+                  }
+                  .print-bg-emerald {
+                    background-color: #f0fdf4 !important;
+                    border-color: #cbd5e1 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                  .print-bg-sky {
+                    background-color: #f0f9ff !important;
+                    border-color: #cbd5e1 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                  .print-bg-amber {
+                    background-color: #fffbeb !important;
+                    border-color: #cbd5e1 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                  .print-bg-red {
+                    background-color: #fef2f2 !important;
+                    border-color: #fca5a5 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                  .print-bg-purple {
+                    background-color: #faf5ff !important;
+                    border-color: #cbd5e1 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                  .print-bg-slate {
+                    background-color: #f8fafc !important;
+                    border-color: #cbd5e1 !important;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                  * {
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
+                  }
+                }
+              ` }} />
               
               {/* REPORT HEADER */}
-              <div className="flex justify-between items-start border-b-2 border-slate-200 pb-5">
-                <div className="space-y-1">
-                  <h1 className="text-xl font-black text-slate-900">مطاعم أصل الإسكندر</h1>
-                  <p className="text-xs text-slate-500 font-semibold">قسم المراقبة والجودة والمطابقات الميدانية</p>
-                </div>
-                <div className="text-left">
-                  <h2 className="text-base font-bold text-emerald-700">تقرير مطابقة وجرد عجز المخبز</h2>
-                  <p className="text-[10px] text-slate-400 font-mono">تاريخ التوليد: {new Date().toLocaleDateString("ar-SA")}</p>
+              <div className="border-b-2 border-slate-200 pb-3 print:pb-1.5">
+                <div className="flex flex-row justify-between items-center">
+                  <div className="text-right space-y-0.5">
+                    <h1 className="text-lg font-black text-slate-900 tracking-tight">مطاعم أصل الإسكندر</h1>
+                    <p className="text-[10px] text-slate-500 font-semibold">إدارة المراقبة والجودة والمطابقات الميدانية</p>
+                  </div>
+                  <div className="text-center space-y-1">
+                    <h2 className="text-base font-bold text-emerald-700 print:text-sm">تقرير مطابقة وجرد عجز المخبز</h2>
+                    <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-800 rounded-full text-[9px] font-bold border border-emerald-100 print:bg-emerald-50">مستند رسمي معتمد</span>
+                  </div>
+                  <div className="text-left space-y-0.5 font-mono text-[9px] text-slate-400">
+                    <p className="text-slate-500 font-bold">تاريخ الطباعة: {new Date().toLocaleDateString("ar-SA")}</p>
+                    <p>وقت الطباعة: {new Date().toLocaleTimeString("ar-SA")}</p>
+                  </div>
                 </div>
               </div>
 
               {/* REPORT METADATA */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100 print:bg-white print:border-slate-300 print:rounded-none">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-slate-50 rounded-xl border border-slate-100 print:bg-white print-bg-slate print:border-slate-300 print:rounded-none print:p-2">
                 <div>
-                  <span className="text-[10px] text-slate-400 block font-semibold">الفرع المستهدف:</span>
-                  <span className="text-sm font-bold text-slate-800">فرع {reportBranch}</span>
+                  <span className="text-[10px] text-slate-400 block font-semibold print:text-[8px]">الفرع المستهدف:</span>
+                  <span className="text-xs font-bold text-slate-800">فرع {reportBranch}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block font-semibold">الفترة الزمنية:</span>
+                  <span className="text-[10px] text-slate-400 block font-semibold print:text-[8px]">الفترة الزمنية:</span>
                   <span className="text-xs font-bold text-slate-800 font-mono">
                     {reportType === "day" ? reportSingleDate : `${reportStartDate} إلى ${reportEndDate}`}
                   </span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block font-semibold">عدد أيام التسوية:</span>
+                  <span className="text-[10px] text-slate-400 block font-semibold print:text-[8px]">عدد أيام التسوية:</span>
                   <span className="text-xs font-bold text-slate-800">{reportRecords.length} يوم عمل</span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-400 block font-semibold">نوع التقرير:</span>
+                  <span className="text-[10px] text-slate-400 block font-semibold print:text-[8px]">نوع التقرير:</span>
                   <span className="text-xs font-bold text-slate-800">
                     {reportType === "day" ? "مطابقة يومية مفصلة" : "تقرير جرد وتراكمي للفترة"}
                   </span>
@@ -1209,89 +1320,91 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
               </div>
 
               {/* KEY STATS BAR */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/10 text-center print:bg-white print:border-slate-300 print:rounded-none">
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-1">المبيعات المتوقعة (نظرياً)</span>
-                  <span className="text-lg font-black text-slate-800 font-mono">{reportMetrics.theoreticalSales.toLocaleString()}</span>
-                  <span className="text-[10px] text-slate-400 block">ريال</span>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 print:gap-2">
+                <div className="p-3 rounded-xl border border-slate-150 bg-slate-50/40 text-center print:bg-white print-bg-slate print:border-slate-300 print:rounded-none print:p-1.5">
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-0.5 print:text-[8px]">المبيعات المتوقعة (نظرياً)</span>
+                  <span className="text-base font-black text-slate-800 font-mono">{reportMetrics.theoreticalSales.toLocaleString()}</span>
+                  <span className="text-[10px] text-slate-400 block print:text-[8px]">ريال</span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-sky-100 bg-sky-50/10 text-center print:bg-white print:border-slate-300 print:rounded-none">
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-1">المبيعات المسجلة فعلياً</span>
-                  <span className="text-lg font-black text-slate-800 font-mono">
+                <div className="p-3 rounded-xl border border-sky-100 bg-sky-50/10 text-center print:bg-white print-bg-sky print:border-slate-300 print:rounded-none print:p-1.5">
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-0.5 print:text-[8px]">المبيعات المسجلة فعلياً</span>
+                  <span className="text-base font-black text-slate-800 font-mono">
                     {reportRecords.reduce((sum, r) => sum + (r.actual_sales || 0), 0).toLocaleString()}
                   </span>
-                  <span className="text-[10px] text-slate-400 block">ريال</span>
+                  <span className="text-[10px] text-slate-400 block print:text-[8px]">ريال</span>
                 </div>
 
-                <div className={`p-4 rounded-xl border text-center print:bg-white print:border-slate-300 print:rounded-none ${
+                <div className={`p-3 rounded-xl border text-center print:bg-white print:border-slate-300 print:rounded-none print:p-1.5 ${
                   reportMetrics.cashVariance < 0 
-                    ? "border-red-100 bg-red-50/10" 
+                    ? "border-red-100 bg-red-50/10 print-bg-red" 
                     : reportMetrics.cashVariance > 0 
-                    ? "border-amber-100 bg-amber-50/10" 
-                    : "border-emerald-100 bg-emerald-50/10"
+                    ? "border-amber-100 bg-amber-50/10 print-bg-amber" 
+                    : "border-emerald-100 bg-emerald-50/10 print-bg-emerald"
                 }`}>
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-1">الفارق المالي (العجز/الفائض)</span>
-                  <span className={`text-lg font-black font-mono block ${
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-0.5 print:text-[8px]">الفارق المالي (العجز/الفائض)</span>
+                  <span className={`text-base font-black font-mono block ${
                     reportMetrics.cashVariance < 0 ? "text-red-600" : reportMetrics.cashVariance > 0 ? "text-amber-600" : "text-emerald-600"
                   }`}>
                     {reportMetrics.cashVariance > 0 ? `+${reportMetrics.cashVariance.toLocaleString()}` : reportMetrics.cashVariance.toLocaleString()}
                   </span>
-                  <span className="text-[10px] text-slate-400 block">ريال</span>
+                  <span className="text-[10px] text-slate-400 block print:text-[8px]">ريال</span>
                 </div>
 
-                <div className="p-4 rounded-xl border border-purple-100 bg-purple-50/10 text-center print:bg-white print:border-slate-300 print:rounded-none">
-                  <span className="text-[10px] text-slate-400 font-semibold block mb-1">الخبز الوارد الإجمالي</span>
-                  <span className="text-lg font-black text-slate-800 font-mono">
+                <div className="p-3 rounded-xl border border-purple-100 bg-purple-50/10 text-center print:bg-white print-bg-purple print:border-slate-300 print:rounded-none print:p-1.5">
+                  <span className="text-[10px] text-slate-400 font-semibold block mb-0.5 print:text-[8px]">الخبز الوارد الإجمالي</span>
+                  <span className="text-base font-black text-slate-800 font-mono">
                     {reportMetrics.breadDetails.reduce((sum, b) => sum + b.arrived, 0).toLocaleString()}
                   </span>
-                  <span className="text-[10px] text-slate-400 block">حبة خبز</span>
+                  <span className="text-[10px] text-slate-400 block print:text-[8px]">حبة خبز</span>
                 </div>
               </div>
 
               {/* TABLE 1: BREAD QUANTITIES MATCHING */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-slate-800 border-r-4 border-emerald-500 pr-2">أولاً: مطابقة كميات حبات الخبز وجرد الفروقات بالتفصيل</h3>
+              <div className="space-y-2 print:space-y-1 print-avoid-break">
+                <h3 className="text-xs font-bold text-slate-800 border-r-4 border-emerald-500 pr-2">أولاً: مطابقة كميات حبات الخبز وجرد الفروقات بالتفصيل</h3>
                 <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300 print:rounded-none">
                   <table className="w-full text-xs text-right text-slate-600">
-                    <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 print:bg-white print:border-b-2 print:border-slate-300">
+                    <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 print:bg-slate-100">
                       <tr>
-                        <th className="px-4 py-3">نوع الخبز</th>
-                        <th className="px-4 py-3 text-center">الوارد</th>
-                        <th className="px-4 py-3 text-center">المباع (المستهلك)</th>
-                        <th className="px-4 py-3 text-center">التالف (الهدر)</th>
-                        <th className="px-4 py-3 text-center">أكل العمال</th>
-                        <th className="px-4 py-3 text-center">تبادل المنافع</th>
-                        <th className="px-4 py-3 text-center">إجمالي المسجل</th>
-                        <th className="px-4 py-3 text-center">الفارق</th>
-                        <th className="px-4 py-3 text-left">حالة الجرد</th>
+                        <th className="px-3 py-2">نوع الخبز</th>
+                        <th className="px-3 py-2 text-center">الوارد</th>
+                        <th className="px-3 py-2 text-center">المباع (المستهلك)</th>
+                        <th className="px-3 py-2 text-center">التالف (الهدر)</th>
+                        <th className="px-3 py-2 text-center">أكل العمال</th>
+                        <th className="px-3 py-2 text-center">تبادل المنافع</th>
+                        <th className="px-3 py-2 text-center">إجمالي المسجل</th>
+                        <th className="px-3 py-2 text-center">الفارق</th>
+                        <th className="px-3 py-2 text-left">حالة الجرد</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 print:divide-slate-300">
+                    <tbody className="divide-y divide-slate-100 print:divide-slate-200">
                       {reportMetrics.breadDetails.map((b) => {
                         const hasDeficit = b.variance < 0;
                         const hasSurplus = b.variance > 0;
                         return (
                           <tr key={b.id} className="hover:bg-slate-50/30 print:hover:bg-transparent">
-                            <td className="px-4 py-3 font-semibold text-slate-800">{b.name}</td>
-                            <td className="px-4 py-3 text-center font-mono font-bold text-slate-700">{b.arrived}</td>
-                            <td className="px-4 py-3 text-center font-mono text-slate-500">{b.consumed}</td>
-                            <td className="px-4 py-3 text-center font-mono text-slate-400">{b.wasted}</td>
-                            <td className="px-4 py-3 text-center font-mono text-slate-400">{b.staff}</td>
-                            <td className="px-4 py-3 text-center font-mono text-slate-400">{b.shared}</td>
-                            <td className="px-4 py-3 text-center font-mono font-semibold text-slate-600">{b.totalAccounted}</td>
-                            <td className={`px-4 py-3 text-center font-mono font-black ${
-                              hasDeficit ? "text-red-600" : hasSurplus ? "text-amber-600" : "text-emerald-600"
+                            <td className="px-3 py-2 font-semibold text-slate-800">{b.name}</td>
+                            <td className="px-3 py-2 text-center font-mono font-bold text-slate-700">{b.arrived}</td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-500">{b.consumed}</td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-400">{b.wasted}</td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-400">{b.staff}</td>
+                            <td className="px-3 py-2 text-center font-mono text-slate-400">{b.shared}</td>
+                            <td className="px-3 py-2 text-center font-mono font-semibold text-slate-600">{b.totalAccounted}</td>
+                            <td className={`px-3 py-2 text-center font-mono font-black ${
+                              hasDeficit ? "text-red-600 print-bg-red" : hasSurplus ? "text-amber-600 print-bg-amber" : "text-emerald-600 print-bg-emerald"
                             }`}>
                               {hasSurplus ? `+${b.variance}` : b.variance}
                             </td>
-                            <td className="px-4 py-3 text-left font-semibold">
+                            <td className={`px-3 py-2 text-left font-semibold ${
+                              b.variance === 0 ? "text-emerald-600 print-bg-emerald" : hasDeficit ? "text-red-600 print-bg-red" : "text-amber-600 print-bg-amber"
+                            }`}>
                               {b.variance === 0 ? (
-                                <span className="text-emerald-600">✅ مطابق</span>
+                                <span>✅ مطابق تماماً</span>
                               ) : hasDeficit ? (
-                                <span className="text-red-600">⚠️ عجز ({Math.abs(b.variance)}-)</span>
+                                <span>⚠️ عجز ({Math.abs(b.variance)}-)</span>
                               ) : (
-                                <span className="text-amber-600">➕ فائض (+{b.variance})</span>
+                                <span>➕ فائض (+{b.variance})</span>
                               )}
                             </td>
                           </tr>
@@ -1302,24 +1415,24 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
                 </div>
               </div>
 
-              {/* TABLE 2: PRODUCT SALES DETAILS */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* TABLE 2: PRODUCT SALES DETAILS & DIAGNOSTICS */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start print-grid print:gap-2 print-avoid-break">
                 
                 {/* Product Sales table */}
-                <div className="lg:col-span-8 space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800 border-r-4 border-emerald-500 pr-2">ثانياً: تفاصيل مبيعات الوجبات والخبز المستهلك بها</h3>
+                <div className="lg:col-span-8 space-y-2 print-col-span-8">
+                  <h3 className="text-xs font-bold text-slate-800 border-r-4 border-emerald-500 pr-2">ثانياً: تفاصيل مبيعات الوجبات والخبز المستهلك بها</h3>
                   <div className="border border-slate-200 rounded-xl overflow-hidden print:border-slate-300 print:rounded-none">
-                    <table className="w-full text-[11px] text-right text-slate-600">
-                      <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 print:bg-white print:border-b-2 print:border-slate-300">
+                    <table className="w-full text-[10px] text-right text-slate-600">
+                      <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 print:bg-slate-100">
                         <tr>
-                          <th className="px-3 py-2.5">اسم الوجبة</th>
-                          <th className="px-3 py-2.5 text-center">السعر</th>
-                          <th className="px-3 py-2.5 text-center">الكمية المباعة</th>
-                          <th className="px-3 py-2.5 text-center">القيمة الإجمالية</th>
-                          <th className="px-3 py-2.5 text-left">معدل استهلاك الخبز</th>
+                          <th className="px-2.5 py-1.5">اسم الوجبة</th>
+                          <th className="px-2.5 py-1.5 text-center">السعر</th>
+                          <th className="px-2.5 py-1.5 text-center">الكمية المباعة</th>
+                          <th className="px-2.5 py-1.5 text-center">القيمة الإجمالية</th>
+                          <th className="px-2.5 py-1.5 text-left">معدل استهلاك الخبز</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 print:divide-slate-300">
+                      <tbody className="divide-y divide-slate-100 print:divide-slate-200">
                         {PRODUCTS.map((p) => {
                           // Find total sold in records
                           const totalSold = reportRecords.reduce((sum, r) => {
@@ -1330,15 +1443,15 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
 
                           return (
                             <tr key={p.id} className="hover:bg-slate-50/20 print:hover:bg-transparent">
-                              <td className="px-3 py-2.5 font-semibold text-slate-800">{p.name}</td>
-                              <td className="px-3 py-2.5 text-center font-mono">{p.price} ريال</td>
-                              <td className="px-3 py-2.5 text-center font-mono font-bold text-slate-900">{totalSold}</td>
-                              <td className="px-3 py-2.5 text-center font-mono font-bold text-slate-700">{(totalSold * p.price).toLocaleString()} ريال</td>
-                              <td className="px-3 py-2.5 text-left text-[10px] text-slate-500 font-medium">
+                              <td className="px-2.5 py-1.5 font-semibold text-slate-800">{p.name}</td>
+                              <td className="px-2.5 py-1.5 text-center font-mono">{p.price} ريال</td>
+                              <td className="px-2.5 py-1.5 text-center font-mono font-bold text-slate-900">{totalSold}</td>
+                              <td className="px-2.5 py-1.5 text-center font-mono font-bold text-slate-700">{(totalSold * p.price).toLocaleString()} ريال</td>
+                              <td className="px-2.5 py-1.5 text-left text-[9px] text-slate-500 font-medium">
                                 {Object.entries(p.use).map(([breadId, count]) => {
                                   const breadLabel = BREAD_TYPES.find(b => b.id === breadId)?.name || breadId;
                                   return (
-                                    <span key={breadId} className="bg-slate-100 px-1 py-0.5 rounded ml-1 print:bg-transparent print:p-0 print:font-bold">
+                                    <span key={breadId} className="bg-slate-100 px-1 py-0.5 rounded ml-1 print:bg-slate-50 print:border print:border-slate-200">
                                       {count}x {breadLabel}
                                     </span>
                                   );
@@ -1353,40 +1466,40 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
                 </div>
 
                 {/* DIAGNOSTICS & ALERTS */}
-                <div className="lg:col-span-4 space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800 border-r-4 border-emerald-500 pr-2">ثالثاً: التحليل التلقائي والتشخيص</h3>
-                  <div className="border border-slate-150 rounded-xl p-4 bg-slate-50/50 space-y-3 print:bg-white print:border-slate-300 print:rounded-none">
-                    <span className="text-[10px] font-bold text-slate-400 block">التقييم الآلي للفترة:</span>
-                    <div className="space-y-2">
+                <div className="lg:col-span-4 space-y-2 print-col-span-4">
+                  <h3 className="text-xs font-bold text-slate-800 border-r-4 border-emerald-500 pr-2">ثالثاً: التحليل التلقائي والتشخيص الآلي</h3>
+                  <div className="border border-slate-150 rounded-xl p-3 bg-slate-50/50 space-y-2 print:bg-white print-bg-slate print:border-slate-300 print:rounded-none print:p-2">
+                    <span className="text-[9px] font-bold text-slate-400 block print:text-[8px]">التقييم الفني المباشر:</span>
+                    <div className="space-y-1.5">
                       {reportMetrics.alerts.map((alert, idx) => (
                         <div 
                           key={idx} 
-                          className={`p-3 rounded-lg border text-xs flex gap-2 items-start print:bg-white print:text-black print:border-slate-300 ${
+                          className={`p-2 rounded-lg border text-[10px] flex gap-1.5 items-start print:p-1.5 print:bg-white ${
                             alert.type === "error" 
-                              ? "bg-red-50 border-red-100 text-red-800" 
+                              ? "bg-red-50 border-red-100 text-red-800 print-bg-red" 
                               : alert.type === "warning" 
-                              ? "bg-amber-50 border-amber-100 text-amber-800" 
-                              : "bg-emerald-50 border-emerald-100 text-emerald-800"
+                              ? "bg-amber-50 border-amber-100 text-amber-800 print-bg-amber" 
+                              : "bg-emerald-50 border-emerald-100 text-emerald-800 print-bg-emerald"
                           }`}
                         >
-                          {alert.type === "error" && <AlertOctagon className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-500 print:text-black" />}
-                          {alert.type === "warning" && <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-500 print:text-black" />}
-                          {alert.type === "success" && <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-emerald-500 print:text-black" />}
-                          <span className="leading-relaxed">{alert.text}</span>
+                          {alert.type === "error" && <AlertOctagon className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-red-500 print:text-red-700" />}
+                          {alert.type === "warning" && <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500 print:text-amber-700" />}
+                          {alert.type === "success" && <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-500 print:text-emerald-700" />}
+                          <span className="leading-relaxed font-medium">{alert.text}</span>
                         </div>
                       ))}
                     </div>
 
                     {/* Aggregate Notes */}
                     {reportRecords.some(r => r.notes) && (
-                      <div className="pt-2 border-t border-slate-200">
-                        <span className="text-[10px] font-bold text-slate-400 block mb-1">الملاحظات المدونة خلال الفترة:</span>
-                        <div className="max-h-32 overflow-y-auto text-[10px] text-slate-600 space-y-1 divide-y divide-slate-100 pr-1">
+                      <div className="pt-1.5 border-t border-slate-200">
+                        <span className="text-[9px] font-bold text-slate-400 block mb-0.5 print:text-[8px]">ملاحظات مدونة بالفترة:</span>
+                        <div className="max-h-24 overflow-y-auto text-[9px] text-slate-600 space-y-1 divide-y divide-slate-100 pr-1">
                           {reportRecords.map((r, idx) => {
                             if (!r.notes) return null;
                             return (
                               <div key={idx} className="pt-1 first:pt-0">
-                                <span className="font-mono text-[9px] text-slate-400 font-bold">{r.date}: </span>
+                                <span className="font-mono text-[8px] text-slate-400 font-bold">{r.date}: </span>
                                 <span>{r.notes}</span>
                               </div>
                             );
@@ -1399,24 +1512,24 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
 
               </div>
 
-              {/* REPORT VERIFICATION & SIGN-OFF (Print only or very light screen) */}
-              <div className="pt-6 border-t-2 border-slate-200 space-y-4">
-                <span className="text-xs font-bold text-slate-700 block">قسم الاعتمادات والتوقيعات الرسمية:</span>
-                <div className="grid grid-cols-3 gap-6 text-center text-xs pt-2">
-                  <div className="space-y-8">
-                    <span className="block font-semibold text-slate-500">مراقب المخبز والإنتاج</span>
+              {/* REPORT VERIFICATION & SIGN-OFF */}
+              <div className="pt-4 border-t-2 border-slate-200 space-y-3 print:pt-2 print-avoid-break print-signature-box">
+                <span className="text-xs font-bold text-slate-700 block print:text-[9px]">قسم الاعتمادات والتوقيعات الرسمية والمطابقة:</span>
+                <div className="grid grid-cols-3 gap-6 text-center text-xs pt-1.5 print:gap-4 print:pt-0">
+                  <div className="space-y-7 print:space-y-4">
+                    <span className="block font-bold text-slate-700 print:text-[9px]">توقيع المحاسب</span>
                     <div className="border-b border-dashed border-slate-300 w-3/4 mx-auto"></div>
-                    <span className="block text-[10px] text-slate-400 font-medium">التوقيع: ..........................</span>
+                    <span className="block text-[9px] text-slate-400 font-medium">الاسم والتوقيع: ..........................</span>
                   </div>
-                  <div className="space-y-8">
-                    <span className="block font-semibold text-slate-500">الكاشير / مدير الفرع المستلم</span>
+                  <div className="space-y-7 print:space-y-4">
+                    <span className="block font-bold text-slate-700 print:text-[9px]">توقيع الكاشير</span>
                     <div className="border-b border-dashed border-slate-300 w-3/4 mx-auto"></div>
-                    <span className="block text-[10px] text-slate-400 font-medium">التوقيع: ..........................</span>
+                    <span className="block text-[9px] text-slate-400 font-medium">الاسم والتوقيع: ..........................</span>
                   </div>
-                  <div className="space-y-8">
-                    <span className="block font-semibold text-slate-500">المدير العام / الاعتماد المالي</span>
+                  <div className="space-y-7 print:space-y-4">
+                    <span className="block font-bold text-slate-700 print:text-[9px]">مدير عام المؤسسة</span>
                     <div className="border-b border-dashed border-slate-300 w-3/4 mx-auto"></div>
-                    <span className="block text-[10px] text-slate-400 font-medium">التوقيع: ..........................</span>
+                    <span className="block text-[9px] text-slate-400 font-medium">الاعتماد والتوقيع: ..........................</span>
                   </div>
                 </div>
               </div>

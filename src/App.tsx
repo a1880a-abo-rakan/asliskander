@@ -20,7 +20,7 @@ type RoleType = "مدير" | "محاسب" | "مدخل فواتير";
 
 const PERMISSIONS: Record<RoleType, Record<TabType, boolean>> = {
   "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true, bakery: true, drinks: true },
-  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: true, drinks: true },
+  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: false, drinks: false },
   "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false, bakery: false, drinks: false }
 };
 
@@ -30,6 +30,7 @@ interface UserSession {
   role: RoleType;
   status: string;
   branch?: 'الكل' | 'القادسية' | 'المروج';
+  canEnterInvoices?: boolean;
 }
 
 export default function App() {
@@ -176,9 +177,14 @@ export default function App() {
     
     // Auto sync tab based on roles on mount if logged in
     if (currentUser) {
-      const allowed = PERMISSIONS[currentUser.role];
-      if (!allowed[activeTab]) {
-        const firstAllowed = (Object.keys(allowed) as TabType[]).find((tab) => allowed[tab]);
+      const isAllowed = (tab: TabType) => {
+        if (tab === "tax" && currentUser.role === "محاسب" && currentUser.canEnterInvoices) {
+          return true;
+        }
+        return PERMISSIONS[currentUser.role][tab];
+      };
+      if (!isAllowed(activeTab)) {
+        const firstAllowed = (Object.keys(PERMISSIONS[currentUser.role]) as TabType[]).find((tab) => isAllowed(tab));
         if (firstAllowed) {
           setActiveTab(firstAllowed);
         }
@@ -222,7 +228,12 @@ export default function App() {
   };
 
   const userRole = currentUser?.role || "محاسب";
-  const isTabAllowed = (tab: TabType) => PERMISSIONS[userRole][tab];
+  const isTabAllowed = (tab: TabType) => {
+    if (tab === "tax" && userRole === "محاسب" && currentUser?.canEnterInvoices) {
+      return true;
+    }
+    return PERMISSIONS[userRole][tab];
+  };
 
   if (!currentUser) {
     return (

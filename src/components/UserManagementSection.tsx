@@ -20,6 +20,7 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
   const [role, setRole] = useState<'مدير' | 'محاسب' | 'مدخل فواتير'>("محاسب");
   const [status, setStatus] = useState<'نشط' | 'موقوف'>("نشط");
   const [branch, setBranch] = useState<'الكل' | 'القادسية' | 'المروج'>("الكل");
+  const [canEnterInvoices, setCanEnterInvoices] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
 
   const fetchUsers = async () => {
@@ -68,7 +69,8 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
         role,
         status,
         branch,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        canEnterInvoices: role === "محاسب" ? canEnterInvoices : false
       };
 
       const res = await fetch("/api/users", {
@@ -86,6 +88,7 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
         setRole("محاسب");
         setStatus("نشط");
         setBranch("الكل");
+        setCanEnterInvoices(false);
         setIsEditing(false);
         fetchUsers();
       } else {
@@ -170,6 +173,7 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
     setRole(user.role);
     setStatus(user.status);
     setBranch(user.branch || "الكل");
+    setCanEnterInvoices(user.canEnterInvoices || false);
     setIsEditing(true);
     onShowToast(`✏️ تعديل بيانات الحساب: ${user.username}`);
   };
@@ -286,6 +290,24 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
               </select>
             </div>
 
+            {/* Accountant Invoice Entry Permission (only if role is accountant) */}
+            {role === "محاسب" && (
+              <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3 space-y-1.5">
+                <label className="flex items-center gap-2 text-xs font-bold text-indigo-950 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={canEnterInvoices}
+                    onChange={(e) => setCanEnterInvoices(e.target.checked)}
+                    className="w-4 h-4 text-indigo-700 border-indigo-300 rounded focus:ring-indigo-500 accent-indigo-600"
+                  />
+                  <span>تفويض صلاحية إدخال الفواتير الضريبية</span>
+                </label>
+                <p className="text-[10px] text-indigo-700 font-medium leading-relaxed">
+                  عند تفعيل هذا الخيار، سيتمكن المحاسب من فتح شاشة الفواتير الضريبية وإدخال فواتير المصروفات لكلا الفرعين لتتدفق بانتظار اعتماد المدير العام.
+                </p>
+              </div>
+            )}
+
             {/* Status selection */}
             <div className="space-y-1">
               <label className="block text-[11px] font-bold text-slate-700">حالة نشاط الحساب بالنظام:</label>
@@ -330,6 +352,7 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
                     setRole("محاسب");
                     setStatus("نشط");
                     setBranch("الكل");
+                    setCanEnterInvoices(false);
                     setIsEditing(false);
                   }}
                   className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs px-3 rounded-lg transition-all cursor-pointer"
@@ -375,9 +398,16 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
                       <td className="p-3 font-extrabold text-slate-800">{user.displayName}</td>
                       <td className="p-3 font-mono text-[11px] text-slate-500">{user.username}</td>
                       <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${roleColors[user.role] || "bg-slate-100"}`}>
-                          {user.role}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${roleColors[user.role] || "bg-slate-100"}`}>
+                            {user.role}
+                          </span>
+                          {user.role === "محاسب" && user.canEnterInvoices && (
+                            <span className="text-[9px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-md font-bold whitespace-nowrap">
+                              📝 مفوض بالفواتير الضريبية
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3">
                         <span className="font-extrabold text-[10px] text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">

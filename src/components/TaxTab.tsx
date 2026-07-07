@@ -688,7 +688,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         amount: parseFloat(v.amount as string) || 0,
         items: v.items || [],
         createdBy: currentUser?.username || "unknown",
-        status: userRole === "مدخل فواتير" ? "pending" : "approved"
+        status: (userRole === "مدخل فواتير" || userRole === "محاسب") ? "pending" : "approved"
       }));
 
       const res = await fetch("/api/tax-invoices", {
@@ -951,7 +951,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   const isInvoiceEditableByClerk = (inv: TaxInvoice) => {
     if (userRole === "مدير") return true;
-    if (userRole !== "مدخل فواتير") return false;
+    if (userRole !== "مدخل فواتير" && userRole !== "محاسب") return false;
 
     // Get all invoices entered by this user
     const myInvs = invoices.filter(i => i.createdBy === currentUser?.username);
@@ -2044,7 +2044,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         amount: parseFloat(v.amount as string) || 0,
                         items: v.items || [],
                         createdBy: currentUser?.username || "unknown",
-                        status: userRole === "مدخل فواتير" ? "pending" : "approved",
+                        status: (userRole === "مدخل فواتير" || userRole === "محاسب") ? "pending" : "approved",
                         rawImage: v.rawImage || "",
                         fileType: v.fileType || ""
                       }));
@@ -2361,7 +2361,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       </div>
 
       {/* For Invoice clerks show a neat simple list of entered branch invoices to avoid confusion and double-entries */}
-      {userRole === "مدخل فواتير" && (() => {
+      {(userRole === "مدخل فواتير" || (userRole === "محاسب" && currentUser?.canEnterInvoices)) && (() => {
         const myInvoices = invoices.filter(i => i.createdBy === currentUser?.username);
         const myInvoicesSorted = [...myInvoices].sort((a, b) => a.id.localeCompare(b.id));
         const latestInvoice = myInvoicesSorted[myInvoicesSorted.length - 1];
@@ -2491,13 +2491,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             }
             @page {
               size: A4 portrait;
-              margin: 8mm 6mm 8mm 6mm;
+              margin: 15mm 15mm 15mm 15mm;
             }
             #printable-tax-report-area {
               display: block !important;
               border: none !important;
               box-shadow: none !important;
-              padding: 0 !important;
+              padding: 10mm 12mm !important;
               margin: 0 !important;
               width: 100% !important;
               max-width: 100% !important;
