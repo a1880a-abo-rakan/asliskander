@@ -9,7 +9,7 @@ import "dotenv/config";
 // Firebase Integration Setup
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc 
+  getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc, initializeFirestore
 } from "firebase/firestore";
 
 let firebaseConfig: any = null;
@@ -37,7 +37,9 @@ if (!firebaseConfig) {
 }
 
 const appFirebase = initializeApp(firebaseConfig);
-const db = getFirestore(appFirebase, firebaseConfig.firestoreDatabaseId || "(default)");
+const db = initializeFirestore(appFirebase, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId || "(default)");
 
 
 // Initialize Gemini Client
@@ -145,6 +147,29 @@ function cleanObject(obj: any): any {
     return cleaned;
   }
   return obj;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 6000, errorMsg: string = "طلب قاعدة البيانات استغرق وقتا طويلا (انتهت المهلة)"): Promise<T> {
+  let timeoutId: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error("TIMEOUT"));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    if (errMsg === "TIMEOUT") {
+      throw new Error("تأخرت قاعدة البيانات في الاستجابة (TIMEOUT). قد يكون السبب تجاوز الحصة المجانية للكتابة (Firestore Quota Exceeded) أو انقطاع في الشبكة.");
+    }
+    if (errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("exhausted") || errMsg.toLowerCase().includes("resource-exhausted")) {
+      throw new Error("لقد تم تجاوز الحصة اليومية المجانية لقاعدة البيانات (Firestore Quota Exceeded). يرجى الانتظار حتى يتم تصفير العداد اليومي أو ترقية الحساب.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function getSettings(): Promise<Settings> {
@@ -615,7 +640,7 @@ async function getBakeryEntries(): Promise<BakeryEntry[]> {
 
 async function saveBakeryEntry(entry: BakeryEntry): Promise<void> {
   try {
-    await setDoc(doc(db, "bakery_entries", entry.id), cleanObject(entry));
+    await withTimeout(setDoc(doc(db, "bakery_entries", entry.id), cleanObject(entry)));
   } catch (err) {
     console.error("Error saving bakery entry to Firestore:", err);
     throw err;
@@ -651,7 +676,7 @@ async function getDrinksEntries(): Promise<DrinksEntry[]> {
 
 async function saveDrinksEntry(entry: DrinksEntry): Promise<void> {
   try {
-    await setDoc(doc(db, "drinks_entries", entry.id), cleanObject(entry));
+    await withTimeout(setDoc(doc(db, "drinks_entries", entry.id), cleanObject(entry)));
   } catch (err) {
     console.error("Error saving drinks entry to Firestore:", err);
     throw err;
@@ -693,7 +718,7 @@ async function getDrinkPrices(): Promise<Record<string, number>> {
 
 async function saveDrinkPrices(prices: Record<string, number>): Promise<void> {
   try {
-    await setDoc(doc(db, "settings", "drink_prices"), cleanObject(prices));
+    await withTimeout(setDoc(doc(db, "settings", "drink_prices"), cleanObject(prices)));
   } catch (err) {
     console.error("Error saving drink prices to Firestore:", err);
     throw err;
@@ -722,7 +747,7 @@ async function getPurchases(): Promise<Purchase[]> {
 
 async function savePurchase(p: Purchase): Promise<void> {
   try {
-    await setDoc(doc(db, "purchases", p.id), cleanObject(p));
+    await withTimeout(setDoc(doc(db, "purchases", p.id), cleanObject(p)));
   } catch (err) {
     console.error("Error saving purchase to Firestore:", err);
   }
@@ -2545,7 +2570,7 @@ async function startServer() {
       res.json({ success: true, entry: data });
     } catch (err: any) {
       console.error("Error saving bakery entry:", err);
-      res.status(500).json({ error: "فشل حفظ سجل ضبط المخبز" });
+      res.status(500).json({ error: err?.message || "فشل حفظ سجل ضبط المخبز" });
     }
   });
 
@@ -2588,7 +2613,7 @@ async function startServer() {
       res.json({ success: true, entry: data });
     } catch (err: any) {
       console.error("Error saving drinks entry:", err);
-      res.status(500).json({ error: "فشل حفظ سجل ضبط المشروبات" });
+      res.status(500).json({ error: err?.message || "فشل حفظ سجل ضبط المشروبات" });
     }
   });
 

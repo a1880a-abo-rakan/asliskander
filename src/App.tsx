@@ -192,6 +192,120 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // Global enhancement for ultra-fast and fluent data entry (Excel-like experience)
+  useEffect(() => {
+    const handleGlobalFocus = (e: FocusEvent) => {
+      const target = e.target as HTMLInputElement;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        const inputType = target.type;
+        if (inputType === "number" || inputType === "text" || inputType === "tel" || inputType === "password") {
+          setTimeout(() => {
+            try {
+              target.select();
+            } catch (err) {
+              // ignore
+            }
+          }, 50);
+        }
+      }
+    };
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+
+      const isInput = target.tagName === "INPUT";
+      const isSelect = target.tagName === "SELECT";
+      const isTextArea = target.tagName === "TEXTAREA";
+
+      if (!isInput && !isSelect && !isTextArea) return;
+      if (isTextArea) return; // Leave textareas alone so they can handle Enter and arrows normally
+
+      // Identify if we should handle the key
+      const isEnter = e.key === "Enter";
+      const isArrowDown = e.key === "ArrowDown";
+      const isArrowUp = e.key === "ArrowUp";
+
+      if (!isEnter && !isArrowDown && !isArrowUp) return;
+
+      if (isInput) {
+        const inputType = (target as HTMLInputElement).type;
+        // Don't hijack Enter/Arrows on buttons, checkboxes, radio, file, color inputs
+        if (["submit", "button", "reset", "image", "file", "checkbox", "radio", "color"].includes(inputType)) {
+          return;
+        }
+      }
+
+      // Restrict Arrow navigation to text, number, and tel inputs to avoid breaking date pickers or dropdowns
+      if (isArrowUp || isArrowDown) {
+        if (isInput) {
+          const inputType = (target as HTMLInputElement).type;
+          if (inputType !== "number" && inputType !== "text" && inputType !== "tel") {
+            return;
+          }
+        } else {
+          return;
+        }
+      }
+
+      // Prevent default form submission or default browser behavior
+      e.preventDefault();
+
+      // Gather all visible and enabled inputs, select elements, textareas, and submit buttons
+      const selectors = [
+        'input:not([disabled]):not([type="hidden"]):not([readonly])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        'button[type="submit"]:not([disabled])'
+      ].join(", ");
+
+      const elements = Array.from(document.querySelectorAll(selectors)) as HTMLElement[];
+
+      // Filter only visible elements
+      const visibleElements = elements.filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+      });
+
+      const index = visibleElements.indexOf(target);
+      if (index === -1) return;
+
+      if (isEnter || isArrowDown) {
+        if (index < visibleElements.length - 1) {
+          const nextElement = visibleElements[index + 1];
+          nextElement.focus();
+          if (nextElement instanceof HTMLInputElement && (nextElement.type === "number" || nextElement.type === "text" || nextElement.type === "tel")) {
+            setTimeout(() => {
+              try {
+                nextElement.select();
+              } catch (err) {}
+            }, 50);
+          }
+        }
+      } else if (isArrowUp) {
+        if (index > 0) {
+          const prevElement = visibleElements[index - 1];
+          prevElement.focus();
+          if (prevElement instanceof HTMLInputElement && (prevElement.type === "number" || prevElement.type === "text" || prevElement.type === "tel")) {
+            setTimeout(() => {
+              try {
+                prevElement.select();
+              } catch (err) {}
+            }, 50);
+          }
+        }
+      }
+    };
+
+    document.addEventListener("focusin", handleGlobalFocus);
+    document.addEventListener("keydown", handleGlobalKeyDown);
+
+    return () => {
+      document.removeEventListener("focusin", handleGlobalFocus);
+      document.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);

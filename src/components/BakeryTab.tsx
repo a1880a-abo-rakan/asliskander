@@ -162,7 +162,7 @@ export default function BakeryTab({ onShowToast, userRole, userBranch }: BakeryT
       });
       if (res.ok) {
         onShowToast("✅ تم حفظ سجل ضبط المخبز بنجاح");
-        loadHistory();
+        await loadHistory();
         // Clear form except date and branch
         setForm((prev) => ({
           ...initialFormState,
