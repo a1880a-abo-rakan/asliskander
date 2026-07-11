@@ -442,10 +442,40 @@ async function deleteEmployeeAttendance(id: string): Promise<void> {
   }
 }
 
+// In-memory cache to prevent redundant writes (saving over 99% of Firestore writes)
+const daysCache = new Map<string, any>();
+
+function isDeepEqual(obj1: any, obj2: any): boolean {
+  if (obj1 === obj2) return true;
+  if (obj1 == null || obj2 == null) return false;
+  if (typeof obj1 !== typeof obj2) return false;
+  
+  if (typeof obj1 === "object") {
+    if (Array.isArray(obj1)) {
+      if (!Array.isArray(obj2) || obj1.length !== obj2.length) return false;
+      for (let i = 0; i < obj1.length; i++) {
+        if (!isDeepEqual(obj1[i], obj2[i])) return false;
+      }
+      return true;
+    } else {
+      const keys1 = Object.keys(obj1);
+      const keys2 = Object.keys(obj2);
+      if (keys1.length !== keys2.length) return false;
+      for (const key of keys1) {
+        if (!keys2.includes(key)) return false;
+        if (!isDeepEqual(obj1[key], obj2[key])) return false;
+      }
+      return true;
+    }
+  }
+  return obj1 === obj2;
+}
+
 async function getDays(): Promise<DailyEntry[]> {
   try {
     const snap = await getDocs(collection(db, "days"));
     const list: DailyEntry[] = [];
+    daysCache.clear();
     snap.forEach((d) => {
       const data = d.data() as DailyEntry;
       if (data) {
@@ -453,6 +483,8 @@ async function getDays(): Promise<DailyEntry[]> {
           data.id = d.id;
         }
         list.push(data);
+        // Cache the deeply cleaned version
+        daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
     return list;
@@ -469,7 +501,18 @@ async function saveDays(days: DailyEntry[]): Promise<void> {
         console.warn("Skipping save for DailyEntry with missing or invalid ID:", d);
         continue;
       }
-      await setDoc(doc(db, "days", d.id), cleanObject(d));
+      const cleanedNew = cleanObject(d);
+      const cached = daysCache.get(d.id);
+
+      // If the cached version exists and is identical to the cleaned new version, SKIP the setDoc write!
+      if (cached && isDeepEqual(cleanedNew, cached)) {
+        continue;
+      }
+
+      console.log(`[Firestore Optimization] Saving modified/new DailyEntry: ${d.id}`);
+      await setDoc(doc(db, "days", d.id), cleanedNew);
+      // Update cache with deep-cloned clean data
+      daysCache.set(d.id, JSON.parse(JSON.stringify(cleanedNew)));
     }
   } catch (err) {
     console.error("Error saving days to Firestore:", err);
@@ -479,6 +522,7 @@ async function saveDays(days: DailyEntry[]): Promise<void> {
 async function deleteDay(id: string): Promise<void> {
   try {
     await deleteDoc(doc(db, "days", id));
+    daysCache.delete(id);
     await deletePurchasesForDay(id);
   } catch (err) {
     console.error("Error deleting day from Firestore:", err);

@@ -106,6 +106,100 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
   // Compute Total Revenue
   const totalRev = (showQ ? q.total : 0) + (showM ? m.total : 0);
 
+  const getFixedDeductionsList = () => {
+    const list: { date: string; branch: string; note: string; amt: number }[] = [];
+    if (reportData) {
+      if (showQ && reportData.qData) {
+        reportData.qData.forEach((d: any) => {
+          if (d.fixed_deduct && d.fixed_deduct > 0) {
+            list.push({
+              date: d.date,
+              branch: "القادسية",
+              note: d.fixed_note || "خصوم ثابتة",
+              amt: d.fixed_deduct
+            });
+          }
+        });
+      }
+      if (showM && reportData.mData) {
+        reportData.mData.forEach((d: any) => {
+          if (d.fixed_deduct && d.fixed_deduct > 0) {
+            list.push({
+              date: d.date,
+              branch: "المروج",
+              note: d.fixed_note || "خصوم ثابتة",
+              amt: d.fixed_deduct
+            });
+          }
+        });
+      }
+    }
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  };
+
+  const getOtherExpensesList = () => {
+    const list: { date: string; branch: string; name: string; amt: number }[] = [];
+    if (reportData) {
+      if (showQ && reportData.qData) {
+        reportData.qData.forEach((d: any) => {
+          if (d.others) {
+            d.others.forEach((o: any) => {
+              if (o.amt && o.amt > 0) {
+                list.push({
+                  date: d.date,
+                  branch: "القادسية",
+                  name: o.name || "مصروفات أخرى",
+                  amt: o.amt
+                });
+              }
+            });
+          }
+          if (d.pur_extras) {
+            d.pur_extras.forEach((o: any) => {
+              if (o.amt && o.amt > 0) {
+                list.push({
+                  date: d.date,
+                  branch: "القادسية",
+                  name: o.name || "مشتريات إضافية",
+                  amt: o.amt
+                });
+              }
+            });
+          }
+        });
+      }
+      if (showM && reportData.mData) {
+        reportData.mData.forEach((d: any) => {
+          if (d.others) {
+            d.others.forEach((o: any) => {
+              if (o.amt && o.amt > 0) {
+                list.push({
+                  date: d.date,
+                  branch: "المروج",
+                  name: o.name || "مصروفات أخرى",
+                  amt: o.amt
+                });
+              }
+            });
+          }
+          if (d.pur_extras) {
+            d.pur_extras.forEach((o: any) => {
+              if (o.amt && o.amt > 0) {
+                list.push({
+                  date: d.date,
+                  branch: "المروج",
+                  name: o.name || "مشتريات إضافية",
+                  amt: o.amt
+                });
+              }
+            });
+          }
+        });
+      }
+    }
+    return list.sort((a, b) => b.date.localeCompare(a.date));
+  };
+
   // Group all expenses
   const allExpKeys = Array.from(new Set([...Object.keys(qExp), ...Object.keys(mExp)]));
   const allExpList = allExpKeys.map((key) => {
@@ -722,18 +816,25 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
           
           @page {
             size: A4 portrait;
-            margin: 15mm 15mm 15mm 15mm;
+            margin: 1.3cm;
           }
           @media print {
+            @page {
+              size: A4 portrait;
+              margin: 1.3cm;
+            }
             html, body {
               background-color: #ffffff !important;
               color: #0f172a !important;
+              margin: 0 !important;
+              padding: 0 !important;
             }
             .print-wrapper {
               width: 100% !important;
               max-width: 100% !important;
               margin: 0 !important;
-              padding: 12mm 15mm !important;
+              padding: 0 !important;
+              box-sizing: border-box !important;
             }
             table {
               border-collapse: collapse !important;
@@ -827,7 +928,25 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
             <tbody>
               ${allExpList.map((item) => `
                 <tr>
-                  <td>${item.name}</td>
+                  <td>
+                    <div style="font-weight: bold;">${item.name}</div>
+                    ${item.name === "الخصوم الدائمة" ? `
+                      <div style="font-size: 8px; color: #475569; font-weight: normal; margin-top: 4px; border-right: 2px solid #cbd5e1; padding-right: 6px; line-height: 1.3;">
+                        ${getFixedDeductionsList().map(fd => `
+                          <div style="margin-bottom: 2px;">• ${fd.date} (${fd.branch}): ${fd.note} ← <span style="font-family: monospace; color: #dc2626; font-weight: bold;">${fd.amt.toFixed(2)} ر</span></div>
+                        `).join("")}
+                        ${getFixedDeductionsList().length === 0 ? '<div>(لا توجد تدوينات تفصيلية)</div>' : ''}
+                      </div>
+                    ` : ""}
+                    ${item.name === "مصروفات أخرى" ? `
+                      <div style="font-size: 8px; color: #475569; font-weight: normal; margin-top: 4px; border-right: 2px solid #cbd5e1; padding-right: 6px; line-height: 1.3;">
+                        ${getOtherExpensesList().map(oe => `
+                          <div style="margin-bottom: 2px;">• ${oe.date} (${oe.branch}): ${oe.name} ← <span style="font-family: monospace; color: #dc2626; font-weight: bold;">${oe.amt.toFixed(2)} ر</span></div>
+                        `).join("")}
+                        ${getOtherExpensesList().length === 0 ? '<div>(لا توجد تدوينات تفصيلية)</div>' : ''}
+                      </div>
+                    ` : ""}
+                  </td>
                   <td>${item.q.toFixed(2)} ر</td>
                   <td>${item.m.toFixed(2)} ر</td>
                   <td class="bold">${item.total.toFixed(2)} ر</td>
@@ -1423,7 +1542,29 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                       ) : (
                         allExpList.map((item) => (
                            <tr key={item.name} className="hover:bg-slate-50 border-b border-slate-100 font-semibold transition-colors duration-100">
-                             <td className="p-3 border border-slate-200 text-slate-900 font-extrabold">{item.name}</td>
+                             <td className="p-3 border border-slate-200 text-slate-900 font-extrabold">
+                               <div>{item.name}</div>
+                               {item.name === "الخصوم الدائمة" && (
+                                 <div className="text-[10px] text-slate-500 font-normal mt-1.5 border-r-2 border-slate-300 pr-2 space-y-0.5">
+                                   {getFixedDeductionsList().map((fd, i) => (
+                                     <div key={i} className="flex items-center gap-1 flex-wrap">
+                                       • <span>{fd.date}</span> <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded font-medium">{fd.branch}</span>: <span>{fd.note}</span> ← <span className="font-mono text-rose-600 font-bold">{fd.amt.toFixed(2)} ر</span>
+                                     </div>
+                                   ))}
+                                   {getFixedDeductionsList().length === 0 && <div className="text-slate-400 font-medium">(لا توجد تدوينات تفصيلية)</div>}
+                                 </div>
+                               )}
+                               {item.name === "مصروفات أخرى" && (
+                                 <div className="text-[10px] text-slate-500 font-normal mt-1.5 border-r-2 border-slate-300 pr-2 space-y-0.5">
+                                   {getOtherExpensesList().map((oe, i) => (
+                                     <div key={i} className="flex items-center gap-1 flex-wrap">
+                                       • <span>{oe.date}</span> <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded font-medium">{oe.branch}</span>: <span>{oe.name}</span> ← <span className="font-mono text-rose-600 font-bold">{oe.amt.toFixed(2)} ر</span>
+                                     </div>
+                                   ))}
+                                   {getOtherExpensesList().length === 0 && <div className="text-slate-400 font-medium">(لا توجد تدوينات تفصيلية)</div>}
+                                 </div>
+                               )}
+                             </td>
                              {showQ && <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{item.q.toFixed(2)} ر</td>}
                              {showM && <td className="p-3 border border-slate-200 text-left text-slate-700 font-mono">{item.m.toFixed(2)} ر</td>}
                              <td className="p-3 border border-slate-200 text-left text-indigo-900 font-extrabold font-mono">{item.total.toFixed(2)} ر</td>
