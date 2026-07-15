@@ -60,10 +60,10 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
     throw new Error("لم يتم تهيئة مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) في الخادم بشكل صحيح.");
   }
   let attempt = 0;
-  // Dynamic fallback models list to stay operational when a model gets 503 high-demand errors
+  // Dynamic fallback models list to stay operational when a model gets 503 high-demand errors or quota limits
+  // We alternate models dynamically and filter out duplicates to ensure we always try a different API endpoint
   const modelsToTry = [
-    params.model || "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
+    params.model || "gemini-3.5-flash",
     "gemini-3.1-flash-lite"
   ];
 
@@ -89,15 +89,17 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
         errMsg.includes("temporary") || 
         errMsg.includes("UNAVAILABLE") || 
         errMsg.includes("Rate limit") || 
+        errMsg.includes("quota") ||
         errMsg.includes("resource exhausted") ||
+        errMsg.includes("RESOURCE_EXHAUSTED") ||
         err.status === "UNAVAILABLE" ||
         err.status === 429 ||
         err.status === 503;
 
       if (isTransient && attempt < maxRetries) {
         attempt++;
-        // First retry can happen instantly (100ms) to switch backend pool immediately
-        const waitTime = attempt === 1 ? 150 : delayMs;
+        // On transient/quota error, let's immediately wait a small bit and double back to try the next model
+        const waitTime = attempt === 1 ? 200 : delayMs;
         console.warn(`[Gemini API] Transient error (Attempt ${attempt}/${maxRetries}). Retrying in ${waitTime}ms... Error: ${errMsg}`);
         await new Promise((resolve) => setTimeout(resolve, waitTime));
         delayMs *= 1.5;
@@ -444,6 +446,16 @@ async function deleteEmployeeAttendance(id: string): Promise<void> {
 
 // In-memory cache to prevent redundant writes (saving over 99% of Firestore writes)
 const daysCache = new Map<string, any>();
+let daysLoaded = false;
+
+const taxInvoicesCache = new Map<string, any>();
+let taxInvoicesLoaded = false;
+
+const dieselsCache = new Map<string, any>();
+let dieselsLoaded = false;
+
+const purchasesCache = new Map<string, any>();
+let purchasesLoaded = false;
 
 function isDeepEqual(obj1: any, obj2: any): boolean {
   if (obj1 === obj2) return true;
@@ -472,6 +484,9 @@ function isDeepEqual(obj1: any, obj2: any): boolean {
 }
 
 async function getDays(): Promise<DailyEntry[]> {
+  if (daysLoaded) {
+    return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
+  }
   try {
     const snap = await getDocs(collection(db, "days"));
     const list: DailyEntry[] = [];
@@ -487,6 +502,7 @@ async function getDays(): Promise<DailyEntry[]> {
         daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
+    daysLoaded = true;
     return list;
   } catch (err) {
     console.error("Error reading days from Firestore:", err);
@@ -514,6 +530,7 @@ async function saveDays(days: DailyEntry[]): Promise<void> {
       // Update cache with deep-cloned clean data
       daysCache.set(d.id, JSON.parse(JSON.stringify(cleanedNew)));
     }
+    daysLoaded = true;
   } catch (err) {
     console.error("Error saving days to Firestore:", err);
   }
@@ -530,9 +547,13 @@ async function deleteDay(id: string): Promise<void> {
 }
 
 async function getDiesels(): Promise<SharedDiesel[]> {
+  if (dieselsLoaded) {
+    return Array.from(dieselsCache.values()).map(b => JSON.parse(JSON.stringify(b)));
+  }
   try {
     const snap = await getDocs(collection(db, "diesel"));
     const list: SharedDiesel[] = [];
+    dieselsCache.clear();
     snap.forEach((d) => {
       const data = d.data() as SharedDiesel;
       if (data) {
@@ -540,8 +561,10 @@ async function getDiesels(): Promise<SharedDiesel[]> {
           data.id = d.id;
         }
         list.push(data);
+        dieselsCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
+    dieselsLoaded = true;
     return list;
   } catch (err) {
     console.error("Error reading diesels from Firestore:", err);
@@ -556,17 +579,31 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
         console.warn("Skipping save for Diesel with missing or invalid ID:", b);
         continue;
       }
-      await setDoc(doc(db, "diesel", b.id), cleanObject(b));
+      const cleanedNew = cleanObject(b);
+      const cached = dieselsCache.get(b.id);
+
+      if (cached && isDeepEqual(cleanedNew, cached)) {
+        continue;
+      }
+
+      console.log(`[Firestore Optimization] Saving modified/new SharedDiesel: ${b.id}`);
+      await setDoc(doc(db, "diesel", b.id), cleanedNew);
+      dieselsCache.set(b.id, JSON.parse(JSON.stringify(cleanedNew)));
     }
+    dieselsLoaded = true;
   } catch (err) {
     console.error("Error saving diesels to Firestore:", err);
   }
 }
 
 async function getTaxInvoices(): Promise<TaxInvoice[]> {
+  if (taxInvoicesLoaded) {
+    return Array.from(taxInvoicesCache.values()).map(i => JSON.parse(JSON.stringify(i)));
+  }
   try {
     const snap = await getDocs(collection(db, "tax_invoices"));
     const list: TaxInvoice[] = [];
+    taxInvoicesCache.clear();
     snap.forEach((d) => {
       const data = d.data() as TaxInvoice;
       if (data) {
@@ -574,8 +611,10 @@ async function getTaxInvoices(): Promise<TaxInvoice[]> {
           data.id = d.id;
         }
         list.push(data);
+        taxInvoicesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
+    taxInvoicesLoaded = true;
     return list;
   } catch (err) {
     console.error("Error reading tax invoices from Firestore:", err);
@@ -590,8 +629,18 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
         console.warn("Skipping save for TaxInvoice with missing or invalid ID:", i);
         continue;
       }
-      await setDoc(doc(db, "tax_invoices", i.id), cleanObject(i));
+      const cleanedNew = cleanObject(i);
+      const cached = taxInvoicesCache.get(i.id);
+
+      if (cached && isDeepEqual(cleanedNew, cached)) {
+        continue;
+      }
+
+      console.log(`[Firestore Optimization] Saving modified/new TaxInvoice: ${i.id}`);
+      await setDoc(doc(db, "tax_invoices", i.id), cleanedNew);
+      taxInvoicesCache.set(i.id, JSON.parse(JSON.stringify(cleanedNew)));
     }
+    taxInvoicesLoaded = true;
   } catch (err) {
     console.error("Error saving tax invoices to Firestore:", err);
   }
@@ -600,6 +649,7 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
 async function deleteTaxInvoice(id: string): Promise<void> {
   try {
     await deleteDoc(doc(db, "tax_invoices", id));
+    taxInvoicesCache.delete(id);
   } catch (err) {
     console.error("Error deleting tax invoice from Firestore:", err);
   }
@@ -770,9 +820,13 @@ async function saveDrinkPrices(prices: Record<string, number>): Promise<void> {
 }
 
 async function getPurchases(): Promise<Purchase[]> {
+  if (purchasesLoaded) {
+    return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
+  }
   try {
     const snap = await getDocs(collection(db, "purchases"));
     const list: Purchase[] = [];
+    purchasesCache.clear();
     snap.forEach((d) => {
       const data = d.data() as Purchase;
       if (data) {
@@ -780,8 +834,10 @@ async function getPurchases(): Promise<Purchase[]> {
           data.id = d.id;
         }
         list.push(data);
+        purchasesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
+    purchasesLoaded = true;
     return list;
   } catch (err) {
     console.error("Error reading purchases from Firestore:", err);
@@ -791,7 +847,15 @@ async function getPurchases(): Promise<Purchase[]> {
 
 async function savePurchase(p: Purchase): Promise<void> {
   try {
-    await withTimeout(setDoc(doc(db, "purchases", p.id), cleanObject(p)));
+    const cleanedNew = cleanObject(p);
+    const cached = purchasesCache.get(p.id);
+    if (cached && isDeepEqual(cleanedNew, cached)) {
+      return;
+    }
+    console.log(`[Firestore Optimization] Saving modified/new Purchase: ${p.id}`);
+    await withTimeout(setDoc(doc(db, "purchases", p.id), cleanedNew));
+    purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanedNew)));
+    purchasesLoaded = true;
   } catch (err) {
     console.error("Error saving purchase to Firestore:", err);
   }
@@ -800,6 +864,7 @@ async function savePurchase(p: Purchase): Promise<void> {
 async function deletePurchase(id: string): Promise<void> {
   try {
     await deleteDoc(doc(db, "purchases", id));
+    purchasesCache.delete(id);
   } catch (err) {
     console.error("Error deleting purchase from Firestore:", err);
   }
@@ -814,9 +879,8 @@ async function deletePurchasesForDay(dayId: string) {
       const isHeaderMatch = p.invoiceId === dayId || p.invoiceId === decodedId || (p.invoiceId?.trim() === decodedId);
       return isStart || isHeaderMatch;
     });
-    for (const p of toDelete) {
-      await deleteDoc(doc(db, "purchases", p.id));
-    }
+    // Run deletions concurrently to maximize network and Firestore performance (massively reducing lags)
+    await Promise.all(toDelete.map(p => deletePurchase(p.id)));
   } catch (err) {
     console.error("Error deleting day purchases:", err);
   }
@@ -864,9 +928,8 @@ async function deletePurchasesForInvoice(invoiceId: string) {
              pInvId.toLowerCase() === invoiceId.toLowerCase() || 
              pInvId.toLowerCase() === decodedId.toLowerCase();
     });
-    for (const p of toDelete) {
-      await deleteDoc(doc(db, "purchases", p.id));
-    }
+    // Run deletions concurrently to maximize network and Firestore performance (massively reducing lags)
+    await Promise.all(toDelete.map(p => deletePurchase(p.id)));
   } catch (err) {
     console.error("Error deleting invoice purchases:", err);
   }
@@ -1042,6 +1105,8 @@ async function autoRegisterInvoiceItemsAsPurchases(invoice: TaxInvoice, external
   if (!invoice.items || invoice.items.length === 0) return;
   const allPurchases = externalPurchases || (await getPurchases());
   
+  const purchasesToSave: Purchase[] = [];
+
   for (const item of invoice.items) {
     if (!item || !item.name || item.name.trim() === "") continue;
     const cleanName = getConsolidatedProductName(item.name.trim());
@@ -1065,14 +1130,14 @@ async function autoRegisterInvoiceItemsAsPurchases(invoice: TaxInvoice, external
     for (const prev of activePrevs) {
       prev.status = 'depleted';
       prev.depletedDate = invoice.date;
-      await savePurchase(prev);
+      purchasesToSave.push(prev);
     }
     
     const numericQty = parseQtyVal(item.qty);
     const unitPrice = numericQty > 0 ? Number((item.price_with_tax / numericQty).toFixed(2)) : item.price_with_tax;
 
     const newPurchase: Purchase = {
-      id: `pur-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `pur-${Date.now()}-${Math.floor(Math.random() * 1000)}-${Math.floor(Math.random() * 100)}`,
       name: cleanName,
       date: invoice.date,
       qty: item.qty ? String(item.qty) : "1",
@@ -1084,8 +1149,13 @@ async function autoRegisterInvoiceItemsAsPurchases(invoice: TaxInvoice, external
       invoiceId: invoice.id,
       category: item.category
     };
-    await savePurchase(newPurchase);
+    purchasesToSave.push(newPurchase);
     allPurchases.push(newPurchase); // instantly accessible within the sequential in-memory flow
+  }
+
+  // Save all modified and new purchases concurrently to minimize Firestore I/O delays
+  if (purchasesToSave.length > 0) {
+    await Promise.all(purchasesToSave.map(p => savePurchase(p)));
   }
 }
 
@@ -2209,7 +2279,7 @@ async function startServer() {
         rawImage: data.rawImage || "",
         fileType: data.fileType || ""
       };
-      await setDoc(doc(db, "tax_invoices", id), cleanObject(updatedInvoice));
+      await saveTaxInvoices([updatedInvoice]);
 
       // Clean old purchases generated by this invoice first so we don't duplicate them
       await deletePurchasesForInvoice(id);
@@ -2239,144 +2309,145 @@ async function startServer() {
         });
       }
 
-      const parsedResults = await Promise.all(
-        images.map(async (img: string, idx: number) => {
-          try {
-            // Extract mime type and base64 data
-            const matches = img.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-            let mimeType = "image/jpeg";
-            let base64Data = img;
+      // Process images sequentially to avoid triggering concurrent rate limits/exceeding quota limits
+      const parsedResults: any[] = [];
+      for (let idx = 0; idx < images.length; idx++) {
+        const img = images[idx];
+        try {
+          // Extract mime type and base64 data
+          const matches = img.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+          let mimeType = "image/jpeg";
+          let base64Data = img;
 
-            if (matches && matches.length === 3) {
-              mimeType = matches[1];
-              base64Data = matches[2];
-            }
-
-            const isPdf = mimeType === "application/pdf";
-            // Highly precise prompt for absolute accuracy in OCR numbers and details
-            const promptInstruction = "Extract invoice details with extreme high-precision OCR.\n" +
-              "CRITICAL DIRECTIVES FOR NUMBERS & DIGITS ACCURACY:\n" +
-              "1. You must read and double-check every single digit of the total amount and prices with absolute perfection. " +
-              "Never mistake Arabic-Indic numerals (e.g., ٠ ١ ٢ ٣ ٤ ٥ ٦ ٧ ٨ ٩) or misinterpret standard numerals. Convert all numbers to standard English digits and parse decimals accurately.\n" +
-              "2. Decimals represent point values. Do not mistake thousands separator commas (,) as decimal points (.), and do not mistake decimal points (.) as commas (,). E.g., '1,500.00' is 1500, not 1.5. '12.50' is 12.5, not 1250.\n" +
-              "3. Double check the grand total amount 'amount'. Look for labels such as 'الإجمالي شامل ضريبة القيمة المضافة', 'المجموع', 'Total', 'Net Amount', 'الصافي', or similar. Verify that the 'amount' field matches are transcribed character-by-character to avoid reading errors.\n" +
-              "4. Ensure item prices in 'price_with_tax' are extracted with digit-by-digit accuracy. If an item has '10.50', extract exactly 10.5.\n" +
-              "\n" +
-              "FIELD DEFINITIONS:\n" +
-              "- 'company' (Arabic supplier name, e.g., المراعي, or write 'فاتورة' if the supplier name is not clearly visible/readable/identifiable directly).\n" +
-              "- 'invoice_no' (The real actual serial invoice number representing the invoice itself. DO NOT grab the Tax Identification Number / الرقم الضريبي which starts with 3 and has 15 digits, and DO NOT grab the CR 10-digit number. Look specifically for 'رقم الفاتورة', 'رقم الفاتورة الضريبية', 'مسلسل الفاتورة', 'Invoice No', 'INV-#', 'رقم المستند' and separate them distinctly).\n" +
-              "- 'invoice_date' (formatted strictly as YYYY-MM-DD).\n" +
-              "- 'amount' (grand total inclusive of VAT as a decimal).\n" +
-              "- 'items' (JSON array of objects representing items, each containing 'name' [Arabic name of the product], 'qty' [quantity/spec], 'price_with_tax' [total price for this item after tax], and 'category' [Arabic commodity type e.g., 'خضار', 'غاز', 'ديزل', 'بيبسي', 'لحوم', 'منظفات', 'مستلزمات' based on name]).\n" +
-              "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
-
-            const response = await generateContentWithRetry({
-              model: "gemini-3.5-flash",
-              contents: [
-                {
-                  inlineData: {
-                    mimeType,
-                    data: base64Data,
-                  },
-                },
-                promptInstruction
-              ],
-              config: {
-                temperature: 0.1,
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    company: { 
-                      type: Type.STRING, 
-                      description: "Brief Arabic name of the supplier company or output 'فاتورة' if unclear." 
-                    },
-                    invoice_no: { 
-                      type: Type.STRING, 
-                      description: "The actual invoice serial number. CRITICAL: NEVER capture the Tax Identification Number (الرقم الضريبي / TIN / 15-digit code) or Commercial Registration (السجل التجاري / CR) here. Specifically find and separate actual invoice number labels like 'رقم الفاتورة', 'Invoice No', 'رقم المستند', 'F#', or sequential code from any 15-digit Tax Identification number." 
-                    },
-                    invoice_date: { 
-                      type: Type.STRING, 
-                      description: "Printed invoice date, formatted STRICTLY as YYYY-MM-DD." 
-                    },
-                    amount: { 
-                      type: Type.NUMBER, 
-                      description: "Absolute grand total amount inclusive of VAT as a decimal." 
-                    },
-                    items: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          name: { type: Type.STRING, description: "Arabic name of the purchased item/product" },
-                          qty: { type: Type.STRING, description: "Quantity or specification of the purchased item" },
-                          price_with_tax: { type: Type.NUMBER, description: "Total price of this item after VAT/Tax" },
-                          category: { type: Type.STRING, description: "Arabic category/type of the item (e.g. خضار, غاز, ديزل, بيبسي, لحوم, إلخ) based on its identity" }
-                        },
-                        required: ["name", "price_with_tax", "category"]
-                      },
-                      description: "List of items/materials identified inside this invoice."
-                    }
-                  },
-                  required: ["company", "amount"]
-                }
-              }
-            });
-
-            const textStr = response.text || "{}";
-            const parsedObj = JSON.parse(textStr.trim());
-
-            let company = (parsedObj.company || "").trim();
-            const companyLower = company.toLowerCase();
-            const isUnclear = 
-              !company || 
-              company === "" || 
-              company === "فاتورة" ||
-              company === "مورد غير معروف" || 
-              company === "غير معروف" || 
-              company === "فاتورة غير واضحة" || 
-              company.includes("غير واضح") || 
-              company.includes("غير معروف") || 
-              company.includes("غير محدد") || 
-              company.includes("غير مدون") || 
-              companyLower.includes("unknown") || 
-              companyLower.includes("unclear") || 
-              companyLower.includes("n/a") || 
-              companyLower.includes("null") || 
-              companyLower.includes("invoice");
-
-            if (isUnclear) {
-              company = "فاتورة";
-            }
-
-            return {
-              success: true,
-              company: company,
-              invoice_no: parsedObj.invoice_no || "",
-              invoice_date: parsedObj.invoice_date || "",
-              amount: typeof parsedObj.amount === "number" ? parsedObj.amount : (parseFloat(parsedObj.amount) || 0),
-              items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => ({
-                name: String(it.name || "").trim(),
-                qty: it.qty !== undefined ? String(it.qty).trim() : "1 حبة",
-                price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
-              })).filter((it: any) => it.name !== "") : [],
-              tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-            };
-          } catch (err: any) {
-            console.error(`Error parsing image at index ${idx}:`, err);
-            return {
-              success: false,
-              error: err.message || "فشل قراءة تفاصيل الصورة",
-              company: "فاتورة",
-              invoice_no: "",
-              invoice_date: "",
-              amount: 0,
-              items: [],
-              tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-            };
+          if (matches && matches.length === 3) {
+            mimeType = matches[1];
+            base64Data = matches[2];
           }
-        })
-      );
+
+          const isPdf = mimeType === "application/pdf";
+          // Highly precise prompt for absolute accuracy in OCR numbers and details
+          const promptInstruction = "Extract invoice details with extreme high-precision OCR.\n" +
+            "CRITICAL DIRECTIVES FOR NUMBERS & DIGITS ACCURACY:\n" +
+            "1. You must read and double-check every single digit of the total amount and prices with absolute perfection. " +
+            "Never mistake Arabic-Indic numerals (e.g., ٠ ١ ٢ ٣ ٤ ٥ ٦ ٧ ٨ ٩) or misinterpret standard numerals. Convert all numbers to standard English digits and parse decimals accurately.\n" +
+            "2. Decimals represent point values. Do not mistake thousands separator commas (,) as decimal points (.), and do not mistake decimal points (.) as commas (,). E.g., '1,500.00' is 1500, not 1.5. '12.50' is 12.5, not 1250.\n" +
+            "3. Double check the grand total amount 'amount'. Look for labels such as 'الإجمالي شامل ضريبة القيمة المضافة', 'المجموع', 'Total', 'Net Amount', 'الصافي', or similar. Verify that the 'amount' field matches are transcribed character-by-character to avoid reading errors.\n" +
+            "4. Ensure item prices in 'price_with_tax' are extracted with digit-by-digit accuracy. If an item has '10.50', extract exactly 10.5.\n" +
+            "\n" +
+            "FIELD DEFINITIONS:\n" +
+            "- 'company' (Arabic supplier name, e.g., المراعي, or write 'فاتورة' if the supplier name is not clearly visible/readable/identifiable directly).\n" +
+            "- 'invoice_no' (The real actual serial invoice number representing the invoice itself. DO NOT grab the Tax Identification Number / الرقم الضريبي which starts with 3 and has 15 digits, and DO NOT grab the CR 10-digit number. Look specifically for 'رقم الفاتورة', 'رقم الفاتورة الضريبية', 'مسلسل الفاتورة', 'Invoice No', 'INV-#', 'رقم المستند' and separate them distinctly).\n" +
+            "- 'invoice_date' (formatted strictly as YYYY-MM-DD).\n" +
+            "- 'amount' (grand total inclusive of VAT as a decimal).\n" +
+            "- 'items' (JSON array of objects representing items, each containing 'name' [Arabic name of the product], 'qty' [quantity/spec], 'price_with_tax' [total price for this item after tax], and 'category' [Arabic commodity type e.g., 'خضار', 'غاز', 'ديزل', 'بيبسي', 'لحوم', 'منظفات', 'مستلزمات' based on name]).\n" +
+            "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
+
+          const response = await generateContentWithRetry({
+            model: "gemini-3.5-flash",
+            contents: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Data,
+                },
+              },
+              promptInstruction
+            ],
+            config: {
+              temperature: 0.1,
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  company: { 
+                    type: Type.STRING, 
+                    description: "Brief Arabic name of the supplier company or output 'فاتورة' if unclear." 
+                  },
+                  invoice_no: { 
+                    type: Type.STRING, 
+                    description: "The actual invoice serial number. CRITICAL: NEVER capture the Tax Identification Number (الرقم الضريبي / TIN / 15-digit code) or Commercial Registration (السجل التجاري / CR) here. Specifically find and separate actual invoice number labels like 'رقم الفاتورة', 'Invoice No', 'رقم المستند', 'F#', or sequential code from any 15-digit Tax Identification number." 
+                  },
+                  invoice_date: { 
+                    type: Type.STRING, 
+                    description: "Printed invoice date, formatted STRICTLY as YYYY-MM-DD." 
+                  },
+                  amount: { 
+                    type: Type.NUMBER, 
+                    description: "Absolute grand total amount inclusive of VAT as a decimal." 
+                  },
+                  items: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        name: { type: Type.STRING, description: "Arabic name of the purchased item/product" },
+                        qty: { type: Type.STRING, description: "Quantity or specification of the purchased item" },
+                        price_with_tax: { type: Type.NUMBER, description: "Total price of this item after VAT/Tax" },
+                        category: { type: Type.STRING, description: "Arabic category/type of the item (e.g. خضار, غاز, ديزل, بيبسي, لحوم, إلخ) based on its identity" }
+                      },
+                      required: ["name", "price_with_tax", "category"]
+                    },
+                    description: "List of items/materials identified inside this invoice."
+                  }
+                },
+                required: ["company", "amount"]
+              }
+            }
+          });
+
+          const textStr = response.text || "{}";
+          const parsedObj = JSON.parse(textStr.trim());
+
+          let company = (parsedObj.company || "").trim();
+          const companyLower = company.toLowerCase();
+          const isUnclear = 
+            !company || 
+            company === "" || 
+            company === "فاتورة" ||
+            company === "مورد غير معروف" || 
+            company === "غير معروف" || 
+            company === "فاتورة غير واضحة" || 
+            company.includes("غير واضح") || 
+            company.includes("غير معروف") || 
+            company.includes("غير محدد") || 
+            company.includes("غير مدون") || 
+            companyLower.includes("unknown") || 
+            companyLower.includes("unclear") || 
+            companyLower.includes("n/a") || 
+            companyLower.includes("null") || 
+            companyLower.includes("invoice");
+
+          if (isUnclear) {
+            company = "فاتورة";
+          }
+
+          parsedResults.push({
+            success: true,
+            company: company,
+            invoice_no: parsedObj.invoice_no || "",
+            invoice_date: parsedObj.invoice_date || "",
+            amount: typeof parsedObj.amount === "number" ? parsedObj.amount : (parseFloat(parsedObj.amount) || 0),
+            items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => ({
+              name: String(it.name || "").trim(),
+              qty: it.qty !== undefined ? String(it.qty).trim() : "1 حبة",
+              price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
+            })).filter((it: any) => it.name !== "") : [],
+            tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
+          });
+        } catch (err: any) {
+          console.error(`Error parsing image at index ${idx}:`, err);
+          parsedResults.push({
+            success: false,
+            error: err.message || "فشل قراءة تفاصيل الصورة",
+            company: "فاتورة",
+            invoice_no: "",
+            invoice_date: "",
+            amount: 0,
+            items: [],
+            tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
+          });
+        }
+      }
 
       res.json({ success: true, results: parsedResults });
     } catch (error: any) {

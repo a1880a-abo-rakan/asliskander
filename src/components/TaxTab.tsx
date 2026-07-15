@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { TaxInvoice, TaxInvoiceItem } from "../types";
+import ReorderTimerBanner from "./ReorderTimerBanner";
 import { 
   Receipt, 
   Calendar, 
@@ -344,6 +345,24 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [previewIsDraggingPan, setPreviewIsDraggingPan] = useState(false);
   const previewDragStart = useRef({ x: 0, y: 0 });
   const [pendingInvoices, setPendingInvoices] = useState<TaxInvoice[]>([]);
+  
+  const [carryovers, setCarryovers] = useState<any[]>([]);
+
+  const loadCarryovers = async () => {
+    try {
+      const res = await fetch(`/api/carryover?branch=${branch}`);
+      if (res.ok) {
+        const list = await res.json();
+        setCarryovers(list);
+      }
+    } catch (err) {
+      console.error("Error loading carryovers in TaxTab:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadCarryovers();
+  }, [branch]);
   
   // Multiple incoming invoice submissions
   const [rows, setRows] = useState<InvoiceInput[]>([
@@ -879,6 +898,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     try {
       // Load companies list asynchronously
       loadCompanies();
+      loadCarryovers();
 
       if (userRole === "مدير") {
         await loadPendingInvoices();
@@ -1300,6 +1320,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           )}
         </div>
       </div>
+
+      {/* Re-order Countdown & Status Banner */}
+      {userRole !== "مدير" && <ReorderTimerBanner carryovers={carryovers} branch={branch} />}
 
       {/* Dynamic Pending Invoices Panel for Manager */}
       {userRole === "مدير" && (
@@ -2362,9 +2385,15 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       {/* For Invoice clerks show a neat simple list of entered branch invoices to avoid confusion and double-entries */}
       {(userRole === "مدخل فواتير" || (userRole === "محاسب" && currentUser?.canEnterInvoices)) && (() => {
-        const myInvoices = invoices.filter(i => i.createdBy === currentUser?.username);
+        const todayStr = new Date().toISOString().split("T")[0];
+        const myInvoices = invoices.filter(i => i.createdBy === currentUser?.username && i.date === todayStr);
         const myInvoicesSorted = [...myInvoices].sort((a, b) => a.id.localeCompare(b.id));
-        const latestInvoice = myInvoicesSorted[myInvoicesSorted.length - 1];
+        
+        // Keep overall latest invoice check for permission logic
+        const overallInvoices = invoices.filter(i => i.createdBy === currentUser?.username);
+        const overallSorted = [...overallInvoices].sort((a, b) => a.id.localeCompare(b.id));
+        const latestInvoice = overallSorted[overallSorted.length - 1];
+
         const displayInvoices = [...myInvoicesSorted].reverse();
         const totalAmount = displayInvoices.reduce((acc, inv) => acc + inv.amount, 0);
 
@@ -2373,7 +2402,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-indigo-700 font-extrabold" />
-                <h2 className="text-sm font-bold text-slate-800">الفواتير الضريبية التي قمت بإدخالها</h2>
+                <h2 className="text-sm font-bold text-slate-800">الفواتير الضريبية التي قمت بإدخالها اليوم ({todayStr})</h2>
               </div>
               <button
                 type="button"
@@ -2387,12 +2416,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </div>
 
             <p className="text-xs text-slate-500 font-medium leading-relaxed">
-              توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها. يُسمح لك بتعديل أو حذف <strong>الفاتورة الأحدث فقط</strong>. بمجرد قيامك بإدخال فاتورة تالية، تصبح الفاتورة السابقة مغلقة وتثبت تلقائياً في النظام لحماية البيانات.
+              توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها لتاريخ اليوم المحدد <strong>({todayStr})</strong>. يُسمح لك بتعديل أو حذف <strong>الفاتورة الأحدث فقط</strong>. بمجرد قيامك بإدخال فاتورة تالية، تصبح الفاتورة السابقة مغلقة وتثبت تلقائياً في النظام لحماية البيانات.
             </p>
 
             {displayInvoices.length === 0 ? (
               <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-slate-500 font-medium text-xs">
-                لم تقم بإدخال أي فواتير ضريبية في النظام بعد.
+                لم تقم بإدخال أي فواتير ضريبية في تاريخ {todayStr} حتى الآن.
               </div>
             ) : (
               <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs">

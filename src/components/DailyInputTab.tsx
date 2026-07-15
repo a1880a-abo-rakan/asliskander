@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Settings, DailyEntry, ExtraPurchase, OtherExpense } from "../types";
+import ReorderTimerBanner from "./ReorderTimerBanner";
 import { 
   Building, Calendar, DollarSign, CreditCard, ChevronRight, AlertCircle, 
   Trash, Save, Info, Plus, FileText, ChevronLeft, RefreshCw, TrendingDown,
@@ -868,6 +869,9 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
           </button>
         )}
       </div>
+
+      {/* Re-order Countdown & Status Banner */}
+      {userRole !== "مدير" && <ReorderTimerBanner carryovers={carryovers} branch={branch} />}
 
       {/* Carry Overs alerts */}
       {carryovers.length > 0 && userRole !== "محاسب" && (
