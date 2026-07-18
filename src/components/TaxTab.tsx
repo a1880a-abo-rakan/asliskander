@@ -278,6 +278,16 @@ const getDatesInRange = (startStr: string, endStr: string): string[] => {
   return dates;
 };
 
+// Module-level caches for instant UI switching (Stale-While-Revalidate)
+let cachedPendingInvoices: TaxInvoice[] = [];
+let cachedCarryovers: any[] = [];
+let cachedRegisteredCompanies: TaxCompany[] = [];
+let cachedAllCompanies: string[] = [];
+let cachedInvoices: TaxInvoice[] = [];
+let cachedStats: { qPos: number; mPos: number; totalPos: number } | null = null;
+let cachedReportRawData: any = null;
+let hasInitiallyLoaded = false;
+
 export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProps) {
   const currentUser = (() => {
     const saved = sessionStorage.getItem("alex_user_session");
@@ -335,24 +345,34 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [editCompany, setEditCompany] = useState("");
   const [editInvoiceNo, setEditInvoiceNo] = useState("");
   const [editInvoiceDate, setEditInvoiceDate] = useState("");
-  const [editAmount, setEditAmount] = useState<number | "">("");
+  const [editAmount, setEditAmount] = useState<number | string>("");
   const [editBranch, setEditBranch] = useState<"القادسية" | "المروج">("القادسية");
   const [editDate, setEditDate] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<TaxInvoice | null>(null);
+  const [previewAmountStr, setPreviewAmountStr] = useState<string>("");
+
+  useEffect(() => {
+    if (previewInvoice) {
+      setPreviewAmountStr(String(previewInvoice.amount));
+    } else {
+      setPreviewAmountStr("");
+    }
+  }, [previewInvoice?.id]);
   const [previewImgZoom, setPreviewImgZoom] = useState(1);
   const [previewImgRotation, setPreviewImgRotation] = useState(0);
   const [previewImgPan, setPreviewImgPan] = useState({ x: 0, y: 0 });
   const [previewIsDraggingPan, setPreviewIsDraggingPan] = useState(false);
   const previewDragStart = useRef({ x: 0, y: 0 });
-  const [pendingInvoices, setPendingInvoices] = useState<TaxInvoice[]>([]);
+  const [pendingInvoices, setPendingInvoices] = useState<TaxInvoice[]>(() => cachedPendingInvoices);
   
-  const [carryovers, setCarryovers] = useState<any[]>([]);
+  const [carryovers, setCarryovers] = useState<any[]>(() => cachedCarryovers);
 
   const loadCarryovers = async () => {
     try {
       const res = await fetch(`/api/carryover?branch=${branch}`);
       if (res.ok) {
         const list = await res.json();
+        cachedCarryovers = list;
         setCarryovers(list);
       }
     } catch (err) {
@@ -370,12 +390,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   ]);
 
   // Company filtering & similarity states
-  const [registeredCompanies, setRegisteredCompanies] = useState<TaxCompany[]>([]);
+  const [registeredCompanies, setRegisteredCompanies] = useState<TaxCompany[]>(() => cachedRegisteredCompanies);
   const [showSuppliersManager, setShowSuppliersManager] = useState(false);
   const [newSupplierName, setNewSupplierName] = useState("");
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
   const [editingSupplierName, setEditingSupplierName] = useState<string>("");
-  const [allCompanies, setAllCompanies] = useState<string[]>([]);
+  const [allCompanies, setAllCompanies] = useState<string[]>(() => cachedAllCompanies);
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string>("الكل");
   const [ignoredSimilarities, setIgnoredSimilarities] = useState<Record<string, boolean>>({});
 
@@ -386,7 +406,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     company: string;
     invoice_no: string;
     invoice_date: string;
-    amount: number | "";
+    amount: number | string | "";
     tempId: string;
     success: boolean;
     error?: string;
@@ -634,7 +654,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     sessionStorage.setItem("app_tax_report_mode", reportMode);
   }, [reportMode]);
 
-  const [reportRawData, setReportRawData] = useState<any>(null);
+  const [reportRawData, setReportRawData] = useState<any>(() => cachedReportRawData);
   const [dailyCashKeyTrigger, setDailyCashKeyTrigger] = useState<number>(0);
 
   const getDailyCash = (dateStr: string) => {
@@ -658,8 +678,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   };
 
-  const [invoices, setInvoices] = useState<TaxInvoice[]>([]);
-  const [stats, setStats] = useState<{ qPos: number; mPos: number; totalPos: number } | null>(null);
+  const [invoices, setInvoices] = useState<TaxInvoice[]>(() => cachedInvoices);
+  const [stats, setStats] = useState<{ qPos: number; mPos: number; totalPos: number } | null>(() => cachedStats);
   const [cashInput, setCashInput] = useState<number>(0);
   const [tempCashInput, setTempCashInput] = useState<string>("");
   const [isTaxCalculated, setIsTaxCalculated] = useState<boolean>(false);
@@ -737,8 +757,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const res = await fetch("/api/tax-companies");
       if (res.ok) {
         const data = await res.json() as TaxCompany[];
+        cachedRegisteredCompanies = data;
+        const companyNames = data.map(c => c.name);
+        cachedAllCompanies = companyNames;
         setRegisteredCompanies(data);
-        setAllCompanies(data.map(c => c.name));
+        setAllCompanies(companyNames);
       }
     } catch (err) {
       console.error("Error loading tax companies:", err);
@@ -819,10 +842,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   const loadPendingInvoices = async () => {
     try {
-      const res = await fetch("/api/tax-invoices");
+      const res = await fetch("/api/tax-invoices?status=pending");
       if (res.ok) {
-        const allInvs: TaxInvoice[] = await res.json();
-        const pending = allInvs.filter(i => i.status === "pending");
+        const pending: TaxInvoice[] = await res.json();
+        cachedPendingInvoices = pending;
         setPendingInvoices(pending);
       }
     } catch (err) {
@@ -831,8 +854,36 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const handleApprovePendingInvoice = async (inv: TaxInvoice) => {
+    // 1. Optimistic UI update: Remove from pending immediately
+    setPendingInvoices((prev) => {
+      const updated = prev.filter((i) => i.id !== inv.id);
+      cachedPendingInvoices = updated;
+      return updated;
+    });
+
+    // Move to approved in main invoices list immediately
+    setInvoices((prev) => {
+      const exists = prev.some((i) => i.id === inv.id);
+      let updatedList;
+      if (exists) {
+        updatedList = prev.map((i) =>
+          i.id === inv.id ? { ...inv, status: "approved" as const } : i
+        );
+      } else {
+        updatedList = [...prev, { ...inv, status: "approved" as const }];
+      }
+      cachedInvoices = updatedList;
+      return updatedList;
+    });
+
+    if (previewInvoice?.id === inv.id) {
+      setPreviewInvoice(null);
+    }
+
+    onShowToast(`✅ تم اعتماد وتثبيت فاتورة ${inv.company} بفرع ${inv.branch} بنجاح!`);
+
+    // 2. Perform network request in background
     try {
-      setLoading(true);
       const updated = {
         ...inv,
         status: "approved" as const
@@ -842,21 +893,15 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated)
       });
-      if (res.ok) {
-        onShowToast(`✅ تم اعتماد وتثبيت فاتورة ${inv.company} بفرع ${inv.branch} بنجاح!`);
-        await loadPendingInvoices();
-        loadTaxReport();
-        if (previewInvoice?.id === inv.id) {
-          setPreviewInvoice(null);
-        }
-      } else {
-        onShowToast("❌ فشل اعتماد الفاتورة المعلقة");
+      if (!res.ok) {
+        console.error("Failed to approve invoice on server");
       }
+      
+      // Quietly sync in the background to ensure consistency
+      await loadPendingInvoices();
+      await loadTaxReport();
     } catch (err) {
-      console.error(err);
-      onShowToast("❌ خطأ بالشبكة أثناء اعتماد الفاتورة");
-    } finally {
-      setLoading(false);
+      console.error("Network error during approval:", err);
     }
   };
 
@@ -866,24 +911,36 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       title: "تأكيد رفض وحذف الفاتورة المعلقة",
       message: `هل أنت متأكد من رغبتك في رفض وحذف فاتورة "${company}" المعلقة نهائياً؟ لن يتم اعتمادها أو تسجيل مشترياتها في النظام.`,
       onConfirm: async () => {
+        // 1. Optimistic UI update: Remove from both pending and main list immediately
+        setPendingInvoices((prev) => {
+          const updated = prev.filter((i) => i.id !== id);
+          cachedPendingInvoices = updated;
+          return updated;
+        });
+
+        setInvoices((prev) => {
+          const updated = prev.filter((i) => i.id !== id);
+          cachedInvoices = updated;
+          return updated;
+        });
+
+        if (previewInvoice?.id === id) {
+          setPreviewInvoice(null);
+        }
+
+        onShowToast("✅ تم رفض وحذف الفاتورة المعلقة بنجاح");
+
+        // 2. Perform network request in background
         try {
-          setLoading(true);
           const res = await fetch(`/api/tax-invoices/${encodeURIComponent(id)}`, { method: "DELETE" });
-          if (res.ok) {
-            onShowToast("✅ تم رفض وحذف الفاتورة المعلقة بنجاح");
-            await loadPendingInvoices();
-            loadTaxReport();
-            if (previewInvoice?.id === id) {
-              setPreviewInvoice(null);
-            }
-          } else {
-            onShowToast("❌ فشل حذف الفاتورة المعلقة");
+          if (!res.ok) {
+            console.error("Failed to delete invoice on server");
           }
+          // Quietly sync in the background
+          await loadPendingInvoices();
+          await loadTaxReport();
         } catch (err) {
-          console.error(err);
-          onShowToast("❌ خطأ بالشبكة أثناء حذف الفاتورة");
-        } finally {
-          setLoading(false);
+          console.error("Network error during rejection:", err);
         }
       }
     });
@@ -894,39 +951,59 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       onShowToast("⚠️ يرجى تحديد نطاق التاريخ المطلوب");
       return;
     }
-    setLoading(true);
+    const isFirstTime = !hasInitiallyLoaded;
+    if (isFirstTime) {
+      setLoading(true);
+    }
     try {
-      // Load companies list asynchronously
-      loadCompanies();
-      loadCarryovers();
+      const promises: Promise<any>[] = [
+        loadCompanies(),
+        loadCarryovers()
+      ];
 
       if (userRole === "مدير") {
-        await loadPendingInvoices();
+        promises.push(loadPendingInvoices());
       }
 
-      // 1. Get tax invoices (or all of them for the clerk)
       const url = userRole === "مدخل فواتير"
         ? "/api/tax-invoices"
         : `/api/tax-invoices?from=${from}&to=${to}`;
-      const resInvs = await fetch(url);
-      const invData = await resInvs.ok ? await resInvs.json() : [];
-      setInvoices(invData);
 
-      // 2. Get branch POS revenue in range from reports API
+      promises.push(
+        fetch(url)
+          .then(async (resInvs) => {
+            const invData = resInvs.ok ? await resInvs.json() : [];
+            cachedInvoices = invData;
+            setInvoices(invData);
+          })
+          .catch((err) => console.error("Error loading tax invoices:", err))
+      );
+
       if (userRole !== "مدخل فواتير") {
-        const resReport = await fetch(`/api/reports?from=${from}&to=${to}`);
-        if (resReport.ok) {
-          const rep = await resReport.json();
-          setReportRawData(rep);
-          const qPos = rep.qStats.pos || 0;
-          const mPos = rep.mStats.pos || 0;
-          setStats({
-            qPos,
-            mPos,
-            totalPos: qPos + mPos
-          });
-        }
+        promises.push(
+          fetch(`/api/reports?from=${from}&to=${to}`)
+            .then(async (resReport) => {
+              if (resReport.ok) {
+                const rep = await resReport.json();
+                cachedReportRawData = rep;
+                setReportRawData(rep);
+                const qPos = rep.qStats.pos || 0;
+                const mPos = rep.mStats.pos || 0;
+                const newStats = {
+                  qPos,
+                  mPos,
+                  totalPos: qPos + mPos
+                };
+                cachedStats = newStats;
+                setStats(newStats);
+              }
+            })
+            .catch((err) => console.error("Error loading reports:", err))
+        );
       }
+
+      await Promise.all(promises);
+      hasInitiallyLoaded = true;
     } catch (err) {
       console.error(err);
       onShowToast("❌ فشل تحميل بيانات التقرير الضريبي");
@@ -1353,7 +1430,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </button>
           </div>
 
-          {pendingInvoices.length === 0 ? (
+          {loading && pendingInvoices.length === 0 ? (
+            <div className="p-10 text-center text-slate-500 text-xs font-semibold flex flex-col items-center justify-center gap-3 bg-slate-50/50 border border-slate-100 rounded-xl">
+              <Loader2 className="w-6 h-6 text-indigo-600 animate-spin" />
+              <span>جاري تحميل وفحص الفواتير المعلقة بانتظار الاعتماد...</span>
+            </div>
+          ) : pendingInvoices.length === 0 ? (
             <div className="p-5 text-center bg-emerald-50/20 text-emerald-700 border border-emerald-100 rounded-xl text-xs font-semibold flex items-center justify-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               <span>رائع! لا توجد فواتير معلقة بانتظار المراجعة والاعتماد حالياً. جميع الفواتير من الفروع مستقرة ومؤكدة.</span>
@@ -1856,12 +1938,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold text-indigo-900 block">المبلغ الإجمالي</label>
                         <input
-                          type="number"
-                          step="0.01"
+                          type="text"
+                          inputMode="decimal"
                           value={pinv.amount}
                           onChange={(e) => {
                             const updated = [...parsedInvoices];
-                            updated[idx].amount = e.target.value === "" ? "" : parseFloat(e.target.value);
+                            updated[idx].amount = e.target.value;
                             setParsedInvoices(updated);
                           }}
                           className="w-full px-2.5 py-1 text-xs border border-indigo-200 focus:border-indigo-500 rounded-md bg-slate-50/30 focus:bg-white focus:outline-none font-bold text-indigo-700"
@@ -2421,7 +2503,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
             {displayInvoices.length === 0 ? (
               <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-slate-500 font-medium text-xs">
-                لم تقم بإدخال أي فواتير ضريبية في تاريخ {todayStr} حتى الآن.
+                {loading ? (
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                    <span>جاري تحميل قائمة فواتيرك...</span>
+                  </div>
+                ) : (
+                  `لم تقم بإدخال أي فواتير ضريبية في تاريخ ${todayStr} حتى الآن.`
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs">
@@ -3210,7 +3299,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           
                           {/* Empty indicators for invoices */}
                           <td colSpan={userRole === "مدير" ? 5 : 4} className="p-4 text-center text-slate-400 border-l border-slate-300 font-medium">
-                            لا توجد فواتير ضريبية مستلمة أو مثبتة للفترة المحددة.
+                            {loading ? (
+                              <div className="flex items-center justify-center gap-2 py-1 text-xs text-indigo-600 font-bold">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span>جاري تحميل ومطابقة الفواتير...</span>
+                              </div>
+                            ) : (
+                              "لا توجد فواتير ضريبية مستلمة أو مثبتة للفترة المحددة."
+                            )}
                           </td>
                           <td className="p-2 text-center print:hidden">—</td>
                         </tr>
@@ -3549,12 +3645,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                   <div className="space-y-1">
                     <label className="block text-xs font-bold text-slate-700">المبلغ الإجمالي شامل الضريبة (ر.س): <span className="text-red-500">*</span></label>
                     <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
+                      type="text"
+                      inputMode="decimal"
                       required
                       value={editAmount}
-                      onChange={(e) => setEditAmount(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                      onChange={(e) => setEditAmount(e.target.value)}
                       className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 text-left font-mono font-extrabold text-blue-900"
                       placeholder="0.00"
                     />
@@ -3799,12 +3894,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
                         <label className="block text-[10px] font-bold text-indigo-400">المبلغ الإجمالي شامل الضريبة:</label>
                         <input
-                          type="number"
-                          step="0.01"
+                          type="text"
+                          inputMode="decimal"
                           value={pinv.amount}
                           onChange={(e) => {
                             const updated = [...parsedInvoices];
-                            updated[pinvIdx].amount = e.target.value === "" ? "" : parseFloat(e.target.value);
+                            updated[pinvIdx].amount = e.target.value;
                             setParsedInvoices(updated);
                           }}
                           className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
@@ -4244,12 +4339,17 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
                       <label className="block text-[10px] font-bold text-indigo-400">المبلغ الإجمالي شامل الضريبة:</label>
                       <input
-                        type="number"
-                        step="0.01"
-                        value={previewInvoice.amount}
+                        type="text"
+                        inputMode="decimal"
+                        value={previewAmountStr}
                         onChange={(e) => {
-                          const val = e.target.value === "" ? 0 : parseFloat(e.target.value);
-                          setPreviewInvoice({ ...previewInvoice, amount: val });
+                          const valStr = e.target.value;
+                          setPreviewAmountStr(valStr);
+                          const parsed = parseFloat(valStr);
+                          setPreviewInvoice({
+                            ...previewInvoice,
+                            amount: isNaN(parsed) ? 0 : parsed
+                          });
                         }}
                         className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
                       />

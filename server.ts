@@ -512,6 +512,7 @@ async function getDays(): Promise<DailyEntry[]> {
 
 async function saveDays(days: DailyEntry[]): Promise<void> {
   try {
+    const toWrite: { id: string; cleaned: any }[] = [];
     for (const d of days) {
       if (!d || !d.id) {
         console.warn("Skipping save for DailyEntry with missing or invalid ID:", d);
@@ -524,11 +525,15 @@ async function saveDays(days: DailyEntry[]): Promise<void> {
       if (cached && isDeepEqual(cleanedNew, cached)) {
         continue;
       }
+      toWrite.push({ id: d.id, cleaned: cleanedNew });
+    }
 
-      console.log(`[Firestore Optimization] Saving modified/new DailyEntry: ${d.id}`);
-      await setDoc(doc(db, "days", d.id), cleanedNew);
-      // Update cache with deep-cloned clean data
-      daysCache.set(d.id, JSON.parse(JSON.stringify(cleanedNew)));
+    if (toWrite.length > 0) {
+      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new DailyEntries`);
+      await Promise.all(toWrite.map(async (item) => {
+        await setDoc(doc(db, "days", item.id), item.cleaned);
+        daysCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
+      }));
     }
     daysLoaded = true;
   } catch (err) {
@@ -574,6 +579,7 @@ async function getDiesels(): Promise<SharedDiesel[]> {
 
 async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
   try {
+    const toWrite: { id: string; cleaned: any }[] = [];
     for (const b of bills) {
       if (!b || !b.id) {
         console.warn("Skipping save for Diesel with missing or invalid ID:", b);
@@ -585,10 +591,15 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
       if (cached && isDeepEqual(cleanedNew, cached)) {
         continue;
       }
+      toWrite.push({ id: b.id, cleaned: cleanedNew });
+    }
 
-      console.log(`[Firestore Optimization] Saving modified/new SharedDiesel: ${b.id}`);
-      await setDoc(doc(db, "diesel", b.id), cleanedNew);
-      dieselsCache.set(b.id, JSON.parse(JSON.stringify(cleanedNew)));
+    if (toWrite.length > 0) {
+      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new SharedDiesels`);
+      await Promise.all(toWrite.map(async (item) => {
+        await setDoc(doc(db, "diesel", item.id), item.cleaned);
+        dieselsCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
+      }));
     }
     dieselsLoaded = true;
   } catch (err) {
@@ -624,6 +635,7 @@ async function getTaxInvoices(): Promise<TaxInvoice[]> {
 
 async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
   try {
+    const toWrite: { id: string; cleaned: any }[] = [];
     for (const i of invoices) {
       if (!i || !i.id) {
         console.warn("Skipping save for TaxInvoice with missing or invalid ID:", i);
@@ -635,10 +647,15 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
       if (cached && isDeepEqual(cleanedNew, cached)) {
         continue;
       }
+      toWrite.push({ id: i.id, cleaned: cleanedNew });
+    }
 
-      console.log(`[Firestore Optimization] Saving modified/new TaxInvoice: ${i.id}`);
-      await setDoc(doc(db, "tax_invoices", i.id), cleanedNew);
-      taxInvoicesCache.set(i.id, JSON.parse(JSON.stringify(cleanedNew)));
+    if (toWrite.length > 0) {
+      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new TaxInvoices`);
+      await Promise.all(toWrite.map(async (item) => {
+        await setDoc(doc(db, "tax_invoices", item.id), item.cleaned);
+        taxInvoicesCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
+      }));
     }
     taxInvoicesLoaded = true;
   } catch (err) {
@@ -968,7 +985,9 @@ async function addNewPurchaseInServer(data: Omit<Purchase, "id">): Promise<Purch
   for (const prev of activePrevs) {
     prev.status = 'depleted';
     prev.depletedDate = data.date;
-    await savePurchase(prev);
+  }
+  if (activePrevs.length > 0) {
+    await Promise.all(activePrevs.map(prev => savePurchase(prev)));
   }
   
   const newPurchase: Purchase = {
@@ -998,7 +1017,9 @@ async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
     // 2. Fetch current purchase records for auto depletion checks
     const allPurchases = await getPurchases();
 
-    const addOrUpdate = async (itemKey: string, itemName: string, priceVal: number, customQty?: string) => {
+    const purchasesToSaveMap = new Map<string, Purchase>();
+
+    const addOrUpdate = (itemKey: string, itemName: string, priceVal: number, customQty?: string) => {
       if (priceVal <= 0) return;
       const cleanName = getConsolidatedProductName(itemName.trim());
       const normName = normalizeArabicString(cleanName);
@@ -1021,7 +1042,7 @@ async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
       for (const prev of activePrevs) {
         prev.status = 'depleted';
         prev.depletedDate = entry.date;
-        await savePurchase(prev);
+        purchasesToSaveMap.set(prev.id, prev);
       }
 
       const p: Purchase = {
@@ -1036,44 +1057,44 @@ async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
         source: 'manual',
         invoiceId: entry.id
       };
-      await savePurchase(p);
+      purchasesToSaveMap.set(p.id, p);
       allPurchases.push(p);
     };
 
     // Standard cash box expenses (المصروفات النقدية وقسم المصروفات)
     const gasVal = Math.max(entry.pur_gas || 0, entry.gas || 0);
     if (gasVal > 0) {
-      await addOrUpdate("gas", "غاز", gasVal, "1");
+      addOrUpdate("gas", "غاز", gasVal, "1");
     }
 
     const breadVal = Math.max(entry.pur_bread || 0, entry.bread || 0);
     if (breadVal > 0) {
-      await addOrUpdate("bread", "خبز", breadVal, "1");
+      addOrUpdate("bread", "خبز", breadVal, "1");
     }
 
     const vegVal = Math.max(entry.pur_veg || 0, entry.vegetables || 0);
     if (vegVal > 0) {
-      await addOrUpdate("veg", "خضار", vegVal, "1");
+      addOrUpdate("veg", "خضار", vegVal, "1");
     }
 
     const grocVal = Math.max(entry.pur_groc || 0, entry.grocery || 0);
     if (grocVal > 0) {
-      await addOrUpdate("groc", "بقالة", grocVal, "1");
+      addOrUpdate("groc", "بقالة", grocVal, "1");
     }
 
     // Invoices / payments entered as part of day
     if (entry.pepsi_paid && entry.pepsi_paid > 0 && entry.pepsi_type === 'invoice') {
-      await addOrUpdate("pepsi", "بيبسي", entry.pepsi_paid, "1");
+      addOrUpdate("pepsi", "بيبسي", entry.pepsi_paid, "1");
     }
     if (entry.plastic_paid && entry.plastic_paid > 0 && entry.plastic_type === 'invoice') {
-      await addOrUpdate("plastic", "بلاستيك", entry.plastic_paid, "1");
+      addOrUpdate("plastic", "بلاستيك", entry.plastic_paid, "1");
     }
     if (entry.sauces_paid && entry.sauces_paid > 0 && entry.sauces_type === 'invoice') {
-      await addOrUpdate("sauces", "صلصات", entry.sauces_paid, "1");
+      addOrUpdate("sauces", "صلصات", entry.sauces_paid, "1");
     }
     // Only register Diesel if it is a new Invoice, completely ignoring fragmented payments/installments
     if (entry.diesel_paid && entry.diesel_paid > 0 && entry.diesel_type === 'invoice') {
-      await addOrUpdate("diesel", "ديزل", entry.diesel_paid, "1");
+      addOrUpdate("diesel", "ديزل", entry.diesel_paid, "1");
     }
 
     // Handlers for pur_extras (المصروفات الإضافية بالطوارئ وغيرها)
@@ -1081,7 +1102,7 @@ async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
       for (let i = 0; i < entry.pur_extras.length; i++) {
         const extra = entry.pur_extras[i];
         if (extra.name && extra.amt > 0) {
-          await addOrUpdate(`extra-${i}`, extra.name, extra.amt, "1");
+          addOrUpdate(`extra-${i}`, extra.name, extra.amt, "1");
         }
       }
     }
@@ -1091,9 +1112,14 @@ async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
       for (let i = 0; i < entry.others.length; i++) {
         const oInput = entry.others[i];
         if (oInput.name && oInput.amt > 0) {
-          await addOrUpdate(`other-${i}`, oInput.name, oInput.amt, "1");
+          addOrUpdate(`other-${i}`, oInput.name, oInput.amt, "1");
         }
       }
+    }
+
+    if (purchasesToSaveMap.size > 0) {
+      console.log(`[Firestore Optimization] Concurrently saving ${purchasesToSaveMap.size} purchases for DailyEntry ${entry.id}`);
+      await Promise.all(Array.from(purchasesToSaveMap.values()).map(p => savePurchase(p)));
     }
 
   } catch (err) {
@@ -1930,21 +1956,28 @@ async function startServer() {
     }
     await saveDays(allDays);
 
-    // Call dynamic carry-over recalculation loop for both branches sequentially
-    await recalculateCarryOvers("القادسية");
-    await recalculateCarryOvers("المروج");
+    // Call dynamic carry-over recalculation loop for both branches concurrently
+    await Promise.all([
+      recalculateCarryOvers("القادسية"),
+      recalculateCarryOvers("المروج")
+    ]);
 
     // Fetch refreshed result back
     const refreshed = (await getDays()).find((d) => d.id === id);
-    if (refreshed) {
-      await autoRegisterDayInputsAsPurchases(refreshed);
-    }
 
     // Also auto-register purchase items for the other branch on that date if updated
     const otherId = `${otherBranchName}-${data.date}`;
     const refreshedOther = (await getDays()).find((d) => d.id === otherId);
+
+    const registerPromises: Promise<any>[] = [];
+    if (refreshed) {
+      registerPromises.push(autoRegisterDayInputsAsPurchases(refreshed));
+    }
     if (refreshedOther) {
-      await autoRegisterDayInputsAsPurchases(refreshedOther);
+      registerPromises.push(autoRegisterDayInputsAsPurchases(refreshedOther));
+    }
+    if (registerPromises.length > 0) {
+      await Promise.all(registerPromises);
     }
 
     res.json({
@@ -1981,8 +2014,10 @@ async function startServer() {
         );
         if (entryByDateAndBranch) {
           const branch = entryByDateAndBranch.branch;
-          await deleteDay(entryByDateAndBranch.id);
-          await deletePurchasesForDay(entryByDateAndBranch.id);
+          await Promise.all([
+            deleteDay(entryByDateAndBranch.id),
+            deletePurchasesForDay(entryByDateAndBranch.id)
+          ]);
           await recalculateCarryOvers(branch);
           return res.json({ success: true });
         }
@@ -1991,8 +2026,10 @@ async function startServer() {
     }
 
     const branch = entry.branch;
-    await deleteDay(entry.id);
-    await deletePurchasesForDay(entry.id);
+    await Promise.all([
+      deleteDay(entry.id),
+      deletePurchasesForDay(entry.id)
+    ]);
 
     // Recalculate everything after removing this day so downstream elements are re-balanced perfectly Let's go!
     await recalculateCarryOvers(branch);
@@ -2005,19 +2042,14 @@ async function startServer() {
     const allDays = await getDays();
     
     if (deleteAll) {
-      if (branch) {
-        const toDeleteIds = allDays.filter((d) => d.branch === branch).map(d => d.id);
-        for (const id of toDeleteIds) {
-          await deleteDay(id);
-          await deletePurchasesForDay(id);
-        }
-      } else {
-        const toDeleteIds = allDays.map(d => d.id);
-        for (const id of toDeleteIds) {
-          await deleteDay(id);
-          await deletePurchasesForDay(id);
-        }
-      }
+      const toDeleteIds = branch && branch !== "الكل"
+        ? allDays.filter((d) => d.branch === branch).map(d => d.id)
+        : allDays.map(d => d.id);
+
+      await Promise.all(toDeleteIds.map(async (id) => {
+        await deleteDay(id);
+        await deletePurchasesForDay(id);
+      }));
     } else if (ids && ids.length > 0) {
       const decodedIds = ids.map(id => decodeURIComponent(id).trim());
       const toDelete = allDays.filter((d) => {
@@ -2028,17 +2060,19 @@ async function startServer() {
                            decodedIds.some(dec => dec.trim() === d.id.trim());
         return matchFound;
       });
-      for (const d of toDelete) {
+      await Promise.all(toDelete.map(async (d) => {
         await deleteDay(d.id);
         await deletePurchasesForDay(d.id);
-      }
+      }));
     } else {
       return res.status(400).json({ error: "No ids or deleteAll specified" });
     }
 
-    // Recalculate carryovers for both branches so everything re-balances correctly
-    await recalculateCarryOvers("القادسية");
-    await recalculateCarryOvers("المروج");
+    // Recalculate carryovers for both branches concurrently so everything re-balances correctly
+    await Promise.all([
+      recalculateCarryOvers("القادسية"),
+      recalculateCarryOvers("المروج")
+    ]);
 
     res.json({ success: true });
   });
@@ -2170,10 +2204,12 @@ async function startServer() {
   app.get("/api/tax-invoices", async (req, res) => {
     const from = req.query.from as string;
     const to = req.query.to as string;
+    const status = req.query.status as string;
     let invoices = await getTaxInvoices();
 
     if (from) invoices = invoices.filter((i) => i.date >= from);
     if (to) invoices = invoices.filter((i) => i.date <= to);
+    if (status) invoices = invoices.filter((i) => i.status === status);
 
     invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
     res.json(invoices);
@@ -2221,8 +2257,10 @@ async function startServer() {
 
   app.delete("/api/tax-invoices/:id", async (req, res) => {
     const id = req.params.id;
-    await deleteTaxInvoice(id);
-    await deletePurchasesForInvoice(id);
+    await Promise.all([
+      deleteTaxInvoice(id),
+      deletePurchasesForInvoice(id)
+    ]);
     res.json({ success: true });
   });
 
@@ -2236,10 +2274,10 @@ async function startServer() {
         if (to) allInvoices = allInvoices.filter((i) => i.date <= to);
         if (branch && branch !== "الكل") allInvoices = allInvoices.filter((i) => i.branch === branch);
         
-        for (const i of allInvoices) {
+        await Promise.all(allInvoices.map(async (i) => {
           await deleteTaxInvoice(i.id);
           await deletePurchasesForInvoice(i.id);
-        }
+        }));
         return res.json({ success: true, message: `تم حذف جميع الفواتير الضريبية (${allInvoices.length}) للفترة المحددة بنجاح` });
       }
 
@@ -2247,10 +2285,10 @@ async function startServer() {
         return res.status(400).json({ error: "Required array parameter 'ids' is missing or empty" });
       }
 
-      for (const id of ids) {
+      await Promise.all(ids.map(async (id) => {
         await deleteTaxInvoice(id);
         await deletePurchasesForInvoice(id);
-      }
+      }));
       res.json({ success: true, message: `تم حذف الفواتير الضريبية المحددة (${ids.length}) بنجاح` });
     } catch (err: any) {
       console.error("Error bulk deleting tax invoices:", err);
@@ -2279,10 +2317,12 @@ async function startServer() {
         rawImage: data.rawImage || "",
         fileType: data.fileType || ""
       };
-      await saveTaxInvoices([updatedInvoice]);
 
-      // Clean old purchases generated by this invoice first so we don't duplicate them
-      await deletePurchasesForInvoice(id);
+      // Save tax invoice and clean old purchases in parallel to maximize speed
+      await Promise.all([
+        saveTaxInvoices([updatedInvoice]),
+        deletePurchasesForInvoice(id)
+      ]);
 
       if (updatedInvoice.status === "approved" && updatedInvoice.items && updatedInvoice.items.length > 0) {
         await autoRegisterInvoiceItemsAsPurchases(updatedInvoice);
@@ -2637,9 +2677,8 @@ async function startServer() {
         const toDelete = branch && branch !== "الكل" 
           ? allPurchases.filter(p => p.branch === branch)
           : allPurchases;
-        for (const p of toDelete) {
-          await deletePurchase(p.id);
-        }
+        
+        await Promise.all(toDelete.map(p => deletePurchase(p.id)));
         return res.json({ success: true, message: `تم حذف جميع السجلات (${toDelete.length}) بنجاح` });
       }
 
@@ -2647,9 +2686,7 @@ async function startServer() {
         return res.status(400).json({ error: "Required array parameter 'ids' is missing or empty" });
       }
 
-      for (const id of ids) {
-        await deletePurchase(id);
-      }
+      await Promise.all(ids.map(id => deletePurchase(id)));
       res.json({ success: true, message: `تم حذف ${ids.length} سجل بنجاح` });
     } catch (err: any) {
       console.error("Error bulk deleting purchases:", err);
