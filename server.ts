@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry } from "./src/types";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import "dotenv/config";
 
 // Firebase Integration Setup
@@ -2395,6 +2395,7 @@ async function startServer() {
             ],
             config: {
               temperature: 0.1,
+              thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.OBJECT,

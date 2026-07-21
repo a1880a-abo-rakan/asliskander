@@ -451,7 +451,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   // Helper to compress images on client-side before sending to server for OCR
-  const compressImage = (file: File, maxWidth = 2000, maxHeight = 2000): Promise<string> => {
+  const compressImage = (file: File, maxWidth = 1100, maxHeight = 1100): Promise<string> => {
     return new Promise((resolve, reject) => {
       // If it's not an image file (e.g. PDF), fall back to standard reader
       if (!file.type.startsWith("image/")) {
@@ -493,8 +493,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as JPEG format with 0.85 quality for crystal-clear clarity
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+        // Compress as JPEG format with 0.72 quality for ultra-fast upload and perfect OCR legibility
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.72);
         resolve(compressedBase64);
       };
       img.onerror = (err) => {
