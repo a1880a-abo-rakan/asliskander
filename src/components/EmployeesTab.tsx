@@ -1955,7 +1955,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
 
       </div>
 
-      {/* 🔮 BEAUTIFUL FULLSCREEN PRINT PREVIEW MODAL OVERLAY */}
+      {/* 🔮 BEAUTIFUL FULLSCREEN PRINT PREVIEW MODAL OVERLAY (A4 VERTICAL PORTRAIT FORMATTED) */}
       {printEmployeeData && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:relative print:z-0 select-none">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] overflow-y-auto flex flex-col print:max-h-none print:shadow-none print:border-none print:rounded-none">
@@ -1964,7 +1964,10 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
             <div className="bg-slate-50 border-b border-slate-200 p-4 shrink-0 flex items-center justify-between print:hidden">
               <div className="flex items-center gap-2 text-slate-800">
                 <Printer className="w-5 h-5 text-indigo-600 animate-pulse" />
-                <h3 className="text-sm font-bold">بوابة تجهيز طباعة كشوفات الرواتب والحضور</h3>
+                <div>
+                  <h3 className="text-sm font-bold">بوابة طباعة مسير الأجور التفصيلي (نموذج A4 عمودي للتوقيع)</h3>
+                  <p className="text-[10px] text-slate-500 font-medium">تصميم عمودي متكامل يتضمن إقرار واستلام الموظف واعتماد الموارد البشرية</p>
+                </div>
               </div>
               <div className="flex gap-2">
                 <button
@@ -1972,7 +1975,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                   className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all hover:scale-103"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>بدء عملية الطباعة الورقية الآن</span>
+                  <span>طباعة ورقية / حفظ PDF (A4 عمودي)</span>
                 </button>
                 <button
                   onClick={() => setPrintEmployeeData(null)}
@@ -1984,10 +1987,22 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
             </div>
 
             {/* Document Content Area */}
-            <div id="print-area" className="p-8 space-y-12 text-right text-slate-900 print:p-[15mm] bg-white" dir="rtl">
+            <div id="print-area" className="p-6 sm:p-8 space-y-4 text-right text-slate-900 print:p-0 bg-white" dir="rtl">
               
               <style>{`
+                @page {
+                  size: A4 portrait;
+                  margin: 10mm 8mm 10mm 8mm;
+                }
                 @media print {
+                  html, body {
+                    width: 210mm;
+                    height: 297mm;
+                    background: #ffffff !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    font-size: 10px !important;
+                  }
                   body * {
                     visibility: hidden !important;
                   }
@@ -1999,230 +2014,271 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     left: 0 !important;
                     top: 0 !important;
                     width: 100% !important;
+                    padding: 4mm !important;
                     color: #000000 !important;
                     background-color: #ffffff !important;
+                  }
+                  .print-page {
+                    page-break-after: always;
+                    break-after: page;
+                    page-break-inside: avoid;
+                    break-inside: avoid;
+                    width: 100% !important;
+                    max-height: 275mm;
+                    box-sizing: border-box;
+                    padding: 4mm;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                  }
+                  .print-page:last-child {
+                    page-break-after: auto;
+                    break-after: auto;
                   }
                   table {
-                    border: 1.5px solid #000000 !important;
+                    border: 1px solid #1e293b !important;
                     border-collapse: collapse !important;
                     color: #000000 !important;
-                    background: none !important;
+                    width: 100% !important;
                   }
                   th {
-                    background-color: #000000 !important;
-                    color: #ffffff !important;
-                    border: 1px solid #000000 !important;
-                    print-color-adjust: exact;
+                    background-color: #f1f5f9 !important;
+                    color: #0f172a !important;
+                    border: 1px solid #1e293b !important;
+                    font-weight: 800 !important;
+                    font-size: 9px !important;
+                    padding: 4px 6px !important;
                     -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
                   }
                   td {
-                    border: 1px solid #000000 !important;
+                    border: 1px solid #334155 !important;
                     color: #000000 !important;
-                    background: none !important;
+                    font-size: 9px !important;
+                    padding: 3px 5px !important;
                   }
-                  tr {
-                    background: none !important;
+                  .bg-slate-50, .bg-slate-100 {
+                    background-color: #f8fafc !important;
+                    border-color: #cbd5e1 !important;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
                   }
-                  .bg-slate-50, .bg-slate-100, .bg-slate-900, .bg-white {
-                    background: none !important;
-                    background-color: #ffffff !important;
-                    color: #000000 !important;
-                    box-shadow: none !important;
-                    border-color: #000000 !important;
-                  }
-                  .text-indigo-600, .text-indigo-700, .text-rose-700, .text-rose-800, .text-emerald-800, .text-slate-800, .text-slate-600, .text-slate-500, .text-slate-400 {
-                    color: #000000 !important;
-                  }
-                  .border-indigo-600, .border-emerald-600, .border-slate-200 {
-                    border-color: #000000 !important;
+                  .bg-indigo-50 {
+                    background-color: #eef2ff !important;
+                    border-color: #c7d2fe !important;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
                   }
                 }
               `}</style>
 
-              {printEmployeeData.data.map((item: any, idx: number) => (
-                <div key={idx} className="print-item border-b border-slate-300 pb-10 last:border-0 last:pb-0 font-sans text-xs leading-relaxed" style={{ pageBreakAfter: printEmployeeData.data.length > 1 ? "always" : "auto" }}>
-                  
-                  {/* Top document layout heading */}
-                  <div className="border-b-4 border-double border-slate-800 pb-5 flex items-center justify-between">
-                    <div>
-                      <h1 className="text-lg font-black tracking-tight text-slate-900 font-sans">📄 كشف مالي ومسير أجور تفصيلي موحد</h1>
-                      <p className="text-[10px] text-slate-500 font-bold mt-1">تجهيز ومطابقة النظام المحاسبى الذكي لقسم إدارة شؤون الحضور والموظفين</p>
-                    </div>
-                    <div className="text-left font-sans">
-                      <div className="text-[10px] text-slate-500 font-bold mt-1">النطاق السجلاتي: من <span className="font-mono">{printEmployeeData.start}</span> إلى <span className="font-mono">{printEmployeeData.end}</span></div>
-                    </div>
-                  </div>
+              {printEmployeeData.data.map((item: any, idx: number) => {
+                const totalLatenessDeduction = item.attendance.reduce(
+                  (sum: number, x: any) => sum + (x.hasExcuse ? 0 : x.deductionAmount), 0
+                );
+                const totalViolationDeduction = (item.violations || []).reduce(
+                  (sum: number, x: any) => sum + (x.type === "deduction" ? x.deductionAmount : 0), 0
+                );
+                const totalAdvancesAmt = item.totals.totalAdvances || 0;
 
-                  {/* Basic information */}
-                  <div className="my-6 bg-slate-50 p-4 rounded-2xl border border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-4">
+                return (
+                  <div key={idx} className="print-page border border-slate-300 rounded-2xl p-5 mb-6 last:mb-0 bg-white space-y-3 font-sans text-xs">
+                    
+                    {/* Header Banner */}
                     <div>
-                      <span className="block text-[10px] text-slate-400 font-bold">اسم الموظف المسجل:</span>
-                      <strong className="text-slate-800 text-xs">{item.employee.name}</strong>
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-slate-400 font-bold">المسمى الوظيفي:</span>
-                      <strong className="text-slate-800 text-xs">{item.employee.job}</strong>
-                    </div>
-                    <div>
-                      <span className="block text-[10px] text-slate-400 font-bold">الراتب الأساسي المعتمد:</span>
-                      <strong className="text-slate-800 text-xs font-mono">{item.employee.salary.toLocaleString("ar-SA")} ر.س</strong>
-                    </div>
-                    <div>
-                      {item.totals.totalAdvances > 0 ? (
-                        <>
-                          <span className="block text-[10px] text-slate-400 font-bold">السلفة والنسبة المستقطعة:</span>
-                          <strong className="text-rose-800 text-xs font-mono font-bold">
-                            {item.totals.totalAdvances.toLocaleString("ar-SA")} ر.س ({((item.totals.totalAdvances / item.employee.salary) * 100).toFixed(1)}%)
-                          </strong>
-                        </>
-                      ) : (
-                        <>
-                          <span className="block text-[10px] text-slate-400 font-bold">سحب السلف:</span>
-                          <strong className="text-slate-500 text-xs font-sans font-black">لا يوجد سُلفة نشطة</strong>
-                        </>
-                      )}
-                    </div>
-                  </div>
+                      <div className="border-b-2 border-slate-800 pb-3 flex items-center justify-between">
+                        <div>
+                          <h1 className="text-base font-black tracking-tight text-slate-900">مطعم أصل إسكندر - ASL ISKANDER</h1>
+                          <h2 className="text-xs font-bold text-indigo-900 mt-0.5">كشف مسير الأجور والمستحقات التفصيلي (نموذج إقرار واستلام)</h2>
+                        </div>
+                        <div className="text-left">
+                          <div className="text-[10px] font-bold text-slate-700">تاريخ الطباعة: <span className="font-mono">{new Date().toLocaleDateString("ar-SA")}</span></div>
+                          <div className="text-[10px] font-bold text-slate-500 mt-0.5">فترة الكشف: <span className="font-mono">{printEmployeeData.start}</span> إلى <span className="font-mono">{printEmployeeData.end}</span></div>
+                        </div>
+                      </div>
 
-                  {/* Detailed Attendance Logs */}
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-extrabold text-slate-800 border-r-2 border-indigo-600 pr-2">📋 كشف أيام الحضور وحصيلة دقائق التأخير بالفترة:</h4>
-                    {item.attendance.length === 0 ? (
-                      <div className="p-3 bg-slate-50 text-slate-400 text-center rounded-xl text-[11px]">لا يوجد سجل حضور مسجل في هذه الفترة المعنية بالبحث.</div>
-                    ) : (
-                      <table className="w-full text-right border-collapse border border-slate-200 text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-100 text-slate-700 font-bold">
-                            <th className="p-2 border border-slate-200">تاريخ الدوام</th>
-                            <th className="p-2 border border-slate-200 text-center">أوقات الدوام الفعلي</th>
-                            <th className="p-2 border border-slate-200 text-center">دقائق التأخير</th>
-                            <th className="p-2 border border-slate-200 text-center">أثر المخالفة والخصم</th>
-                            <th className="p-2 border border-slate-200 text-center">مبلغ الاستقطاع</th>
-                            <th className="p-2 border border-slate-200">ملاحظات</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {item.attendance.map((att: any, attIdx: number) => (
-                            <tr key={attIdx} className="hover:bg-slate-50/50">
-                              <td className="p-2 border border-slate-200 font-mono text-slate-600">{att.date}</td>
-                              <td className="p-2 border border-slate-200 text-center font-mono">{att.arrivalTime} - {att.departureTime}</td>
-                              <td className="p-2 border border-slate-200 text-center font-mono font-bold text-slate-700">
-                                {att.latenessMinutes > 0 ? `${att.latenessMinutes} د` : "ملتزم بالثوانى"}
-                              </td>
-                              <td className="p-2 border border-slate-200 text-center">
-                                {att.latenessMinutes === 0 ? "سليم" : att.oralWarning ? "🗣️ إنذار شفهي قانوني" : `تأخير ${att.latenessCategory === "simple" ? "بسيط" : att.latenessCategory === "medium" ? "متوسط" : att.latenessCategory === "large" ? "كبير" : "شديد"}`}
-                              </td>
-                              <td className="p-2 border border-slate-200 text-center font-bold text-rose-700 font-mono">
-                                {att.deductionAmount > 0 ? `${att.deductionAmount.toLocaleString("ar-SA")} ر.س` : "لا يوجد"}
-                              </td>
-                              <td className="p-2 border border-slate-200 text-slate-500 font-semibold">{att.notes || (att.hasExcuse ? "حضور بعذر مقبول" : "")}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-
-                  {/* Detailed Violations Logs */}
-                  <div className="space-y-2 mt-6">
-                    <h4 className="text-xs font-extrabold text-slate-800 border-r-2 border-rose-600 pr-2">⚠️ كشف جزاءات المخالفات والتنبيهات الإدارية القائمة بالفترة:</h4>
-                    {!item.violations || item.violations.length === 0 ? (
-                      <div className="p-3 bg-slate-50 text-slate-400 text-center rounded-xl text-[11px]">لا يوجد سجل جزاءات أو مخالفات إدارية مسجل في حق الموظف خلال هذه الفترة.</div>
-                    ) : (
-                      <table className="w-full text-right border-collapse border border-slate-200 text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-100 text-slate-700 font-bold">
-                            <th className="p-2 border border-slate-200">التاريخ</th>
-                            <th className="p-2 border border-slate-200">بيان ووصف المخالفة الصادر</th>
-                            <th className="p-2 border border-slate-200 text-center">نوع الإجراء المطبق</th>
-                            <th className="p-2 border border-slate-200 text-center">استقطاع العقوبة المالي</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {item.violations.map((v: any, vIdx: number) => (
-                            <tr key={vIdx}>
-                              <td className="p-2 border border-slate-200 font-mono text-slate-600">{v.date}</td>
-                              <td className="p-2 border border-slate-200 text-slate-800 font-semibold">{v.description}</td>
-                              <td className="p-2 border border-slate-200 text-center">
-                                {v.type === "warning" ? "🗣️ تنبيه إداري رسمي" : "حسم مالي مباشر"}
-                              </td>
-                              <td className="p-2 border border-slate-200 text-center font-bold text-rose-700 font-mono">
-                                {v.type === "deduction" && v.deductionAmount > 0 ? `${v.deductionAmount.toLocaleString("ar-SA")} ر.س` : "لا يوجد"}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-
-                  {/* Detailed Advances/Loans Logs */}
-                  <div className="space-y-2 mt-6">
-                    <h4 className="text-xs font-extrabold text-slate-800 border-r-2 border-emerald-600 pr-2">💵 كشف مبالغ السلف والاستلاف المصروفة والموجبة للاستيفاء:</h4>
-                    {item.advances.length === 0 ? (
-                      <div className="p-3 bg-slate-50 text-slate-400 text-center rounded-xl text-[11px]">الموظف المذكور لم يحصل على أي سلفيات نشطة خلال هذا النطاق السجلاتى.</div>
-                    ) : (
-                      <table className="w-full text-right border-collapse border border-slate-200 text-[10px]">
-                        <thead>
-                          <tr className="bg-slate-100 text-slate-700 font-bold">
-                            <th className="p-2 border border-slate-200">تاريخ استلام السلفة</th>
-                            <th className="p-2 border border-slate-200 text-center">الرصيد الدفتري المسحوب</th>
-                            <th className="p-2 border border-slate-200">تفاصيل السداد والخصم المفتوح</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {item.advances.map((adv: any, advIdx: number) => (
-                            <tr key={advIdx}>
-                              <td className="p-2 border border-slate-200 font-mono text-slate-600">{adv.date}</td>
-                              <td className="p-2 border border-slate-200 text-center font-bold text-rose-800 font-mono text-xs">{adv.amount.toLocaleString("ar-SA")} ر.س</td>
-                              <td className="p-2 border border-slate-200 text-slate-500 font-semibold">{adv.notes || "خصم تلقائي مباشر من ميزان رواتب الموظفين بالفترة"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-
-                  {/* Final Balance Settlement Layout */}
-                  <div className="mt-8 bg-slate-100 p-5 rounded-2xl border border-slate-200/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="text-[10px] text-slate-500 font-bold">صافي المبلّغ والاستحقاق المالى النهائي المبرهن:</div>
-                      <div className="text-[11px] text-slate-600 font-semibold leading-relaxed">
-                        الجروميات والمقتطعات الإجمالية بلغت <span className="text-rose-700 font-bold font-mono">{((item.totals.totalDeductions || 0) + (item.totals.totalAdvances || 0)).toLocaleString("ar-SA")} ر.س</span> 
-                        (مقسمة تفصيلاً إلى: <span className="font-mono text-xs text-rose-700">{(item.attendance.reduce((sum: number, x: any) => sum + (x.hasExcuse ? 0 : x.deductionAmount), 0)).toLocaleString("ar-SA")} ر.س</span> غرامات تأخر، 
-                        و <span className="font-mono text-xs text-rose-700">{((item.violations || []).reduce((sum: number, x: any) => sum + (x.type === "deduction" ? x.deductionAmount : 0), 0)).toLocaleString("ar-SA")} ر.س</span> جزاءات مخالفات إدارية، 
-                        و <span className="font-mono text-xs text-rose-800">{(item.totals.totalAdvances || 0).toLocaleString("ar-SA")} ر.س</span> سلفيات مستحقة الاسترداد).
+                      {/* Employee Profile Box */}
+                      <div className="mt-3 bg-slate-50 p-3 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+                        <div>
+                          <span className="block text-[9px] text-slate-500 font-bold">اسم الموظف:</span>
+                          <strong className="text-slate-900 font-extrabold">{item.employee.name}</strong>
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-slate-500 font-bold">المسمى الوظيفي:</span>
+                          <strong className="text-slate-800 font-bold">{item.employee.job}</strong>
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-slate-500 font-bold">الراتب الأساسي:</span>
+                          <strong className="text-slate-900 font-mono font-black">{item.employee.salary.toLocaleString("ar-SA")} ر.س</strong>
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-slate-500 font-bold">رقم الهاتف / الدوام:</span>
+                          <strong className="text-slate-700 font-mono text-[10px]">{item.employee.phone || "مسجل"} ({item.employee.requiredArrivalTime} - {item.employee.requiredDepartureTime})</strong>
+                        </div>
                       </div>
                     </div>
-                    <div className="bg-white border-2 border-indigo-600/30 rounded-xl px-5 py-3 text-center self-end md:self-auto shadow-xs">
-                      <span className="block text-[10px] text-slate-500 font-bold uppercase mb-1">الصافي الممنوح للاستلام الكلي:</span>
-                      <span className="text-lg font-black font-mono text-indigo-700">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ر.س</span>
+
+                    {/* Attendance & Lateness Table */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[11px] font-black text-slate-800 border-r-2 border-indigo-600 pr-2">📋 سجل الحضور والتأخيرات ({item.totals.daysAttended || item.attendance.length} يوم عمل):</h4>
+                        <span className="text-[9px] font-bold text-slate-500">مجموع دقائق التأخير: <span className="font-mono font-bold text-rose-700">{item.totals.totalLatenessMins || 0} دقيقة</span></span>
+                      </div>
+                      {item.attendance.length === 0 ? (
+                        <div className="p-2 bg-slate-50 text-slate-400 text-center rounded-lg text-[10px]">لا توجد سجلات حضور مسجلة خلال الفترة.</div>
+                      ) : (
+                        <table className="w-full text-right border-collapse text-[9px]">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-800 font-bold">
+                              <th className="p-1.5 border border-slate-300">التاريخ</th>
+                              <th className="p-1.5 border border-slate-300 text-center">أوقات الدوام الفعلي</th>
+                              <th className="p-1.5 border border-slate-300 text-center">التأخير</th>
+                              <th className="p-1.5 border border-slate-300 text-center">أثر المخالفة</th>
+                              <th className="p-1.5 border border-slate-300 text-center">مبلغ الخصم</th>
+                              <th className="p-1.5 border border-slate-300">ملاحظات العذر/التبرير</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {item.attendance.map((att: any, attIdx: number) => (
+                              <tr key={attIdx}>
+                                <td className="p-1 border border-slate-200 font-mono">{att.date}</td>
+                                <td className="p-1 border border-slate-200 text-center font-mono">{att.arrivalTime} - {att.departureTime}</td>
+                                <td className="p-1 border border-slate-200 text-center font-mono font-bold">
+                                  {att.latenessMinutes > 0 ? `${att.latenessMinutes} د` : "ملتزم"}
+                                </td>
+                                <td className="p-1 border border-slate-200 text-center">
+                                  {att.latenessMinutes === 0 ? "سليم" : att.oralWarning ? "🗣️ إنذار شفهي" : `خصم (${att.latenessCategory === "simple" ? "بسيط" : att.latenessCategory === "medium" ? "متوسط" : att.latenessCategory === "large" ? "كبير" : "شديد"})`}
+                                </td>
+                                <td className="p-1 border border-slate-200 text-center font-bold text-rose-700 font-mono">
+                                  {att.deductionAmount > 0 ? `${att.deductionAmount.toLocaleString("ar-SA")} ر.س` : "0"}
+                                </td>
+                                <td className="p-1 border border-slate-200 text-slate-600">{att.notes || (att.hasExcuse ? "بعذر مقبول" : "بدون")}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
+
+                    {/* Violations & Advances (Combined Compact Table) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[9px]">
+                      {/* Violations */}
+                      <div className="space-y-1">
+                        <h4 className="font-bold text-slate-800 border-r-2 border-rose-600 pr-1.5">⚠️ المخالفات والجزاءات الإدارية:</h4>
+                        {!item.violations || item.violations.length === 0 ? (
+                          <div className="p-1.5 bg-slate-50 text-slate-400 text-center rounded border border-slate-100">لا توجد مخالفات إدارية.</div>
+                        ) : (
+                          <table className="w-full text-right border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-800 font-bold">
+                                <th className="p-1 border border-slate-200">التاريخ</th>
+                                <th className="p-1 border border-slate-200">السبب</th>
+                                <th className="p-1 border border-slate-200 text-center">الخصم</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {item.violations.map((v: any, vIdx: number) => (
+                                <tr key={vIdx}>
+                                  <td className="p-1 border border-slate-200 font-mono">{v.date}</td>
+                                  <td className="p-1 border border-slate-200 truncate max-w-[120px]" title={v.description}>{v.description}</td>
+                                  <td className="p-1 border border-slate-200 text-center font-bold text-rose-700 font-mono">
+                                    {v.type === "deduction" ? `${v.deductionAmount} ر.س` : "تنبيه"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+
+                      {/* Advances */}
+                      <div className="space-y-1">
+                        <h4 className="font-bold text-slate-800 border-r-2 border-emerald-600 pr-1.5">💵 السلفيات المستلمة والمستقطعة:</h4>
+                        {item.advances.length === 0 ? (
+                          <div className="p-1.5 bg-slate-50 text-slate-400 text-center rounded border border-slate-100">لا توجد سلفيات مستلمة.</div>
+                        ) : (
+                          <table className="w-full text-right border-collapse">
+                            <thead>
+                              <tr className="bg-slate-100 text-slate-800 font-bold">
+                                <th className="p-1 border border-slate-200">التاريخ</th>
+                                <th className="p-1 border border-slate-200">الملاحظات</th>
+                                <th className="p-1 border border-slate-200 text-center">المبلغ</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {item.advances.map((adv: any, advIdx: number) => (
+                                <tr key={advIdx}>
+                                  <td className="p-1 border border-slate-200 font-mono">{adv.date}</td>
+                                  <td className="p-1 border border-slate-200 truncate max-w-[120px]">{adv.notes || "سلفة"}</td>
+                                  <td className="p-1 border border-slate-200 text-center font-bold text-rose-800 font-mono">{adv.amount.toLocaleString("ar-SA")} ر.س</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Final Salary Settlement Summary Card */}
+                    <div className="bg-indigo-50/70 p-3 rounded-xl border border-indigo-200/80 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-[10px] items-center">
+                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
+                        <span className="block text-[9px] text-slate-500 font-bold">الراتب الأساسي</span>
+                        <span className="font-bold font-mono text-slate-800 text-xs">{item.employee.salary.toLocaleString("ar-SA")} ر.س</span>
+                      </div>
+                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
+                        <span className="block text-[9px] text-rose-600 font-bold">خصوم التأخيرات</span>
+                        <span className="font-bold font-mono text-rose-700 text-xs">-{totalLatenessDeduction.toLocaleString("ar-SA")} ر.س</span>
+                      </div>
+                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
+                        <span className="block text-[9px] text-rose-600 font-bold">جزاءات المخالفات</span>
+                        <span className="font-bold font-mono text-rose-700 text-xs">-{totalViolationDeduction.toLocaleString("ar-SA")} ر.س</span>
+                      </div>
+                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
+                        <span className="block text-[9px] text-rose-800 font-bold">استقطاع السلف</span>
+                        <span className="font-bold font-mono text-rose-800 text-xs">-{totalAdvancesAmt.toLocaleString("ar-SA")} ر.س</span>
+                      </div>
+                      <div className="col-span-2 sm:col-span-1 bg-white border-2 border-indigo-600 p-1.5 rounded-lg shadow-xs">
+                        <span className="block text-[8px] text-slate-500 font-bold uppercase">الصافي المستحق للصرف</span>
+                        <span className="text-sm font-black font-mono text-indigo-800">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ر.س</span>
+                      </div>
+                    </div>
+
+                    {/* Employee Acknowledgment Declaration */}
+                    <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-[10px] text-slate-800 font-semibold leading-relaxed">
+                      <strong className="text-slate-900 font-extrabold text-[10px] block mb-0.5">📄 إقرار واستلام الموظف:</strong>
+                      أقر أنا الموظف / <span className="font-bold underline text-indigo-900">{item.employee.name}</span> بأنني اطلعت وراجعت كافة بيانات الدوام والخصوم الموضحة بهذا الكشف، وأقر باستلامي لصافي المستحق المالي المبيّن أعلاه وقدره (<span className="font-mono font-bold text-slate-900">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ريال</span>) كاملاً، ولا يحق لي المطالبة بأي مبالغ إضافية عن هذه الفترة بعد التوقيع.
+                    </div>
+
+                    {/* Official Signatures Block (HR on Right, Recipient Employee on Left) */}
+                    <div className="pt-3 border-t-2 border-slate-800 grid grid-cols-2 gap-6 text-[11px] font-bold text-slate-800">
+                      {/* Right side: HR Only */}
+                      <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <span className="block text-indigo-950 font-black border-b border-slate-200 pb-1.5">إدارة الموارد البشرية (HR):</span>
+                        <div className="space-y-2 text-[10px] text-slate-700">
+                          <div>اسم المسؤول: .......................................</div>
+                          <div>التوقيع والاعتماد: .......................................</div>
+                          <div>التاريخ: <span className="font-mono font-bold text-slate-900">{printEmployeeData.end}</span></div>
+                        </div>
+                      </div>
+
+                      {/* Left side: Recipient Employee */}
+                      <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <span className="block text-indigo-950 font-black border-b border-slate-200 pb-1.5">توقيع المستلم (الموظف):</span>
+                        <div className="space-y-2 text-[10px] text-slate-700">
+                          <div>اسم الموظف / المستلم: .......................................</div>
+                          <div>التوقيع / البصمة: .......................................</div>
+                          <div>تاريخ الاستلام: <span className="font-mono font-bold text-slate-900">{printEmployeeData.end}</span></div>
+                        </div>
+                      </div>
+                    </div>
+
                   </div>
+                );
+              })}
 
-                  {/* Approval and Signature lines for Official use */}
-                  <div className="mt-8 pt-6 border-t border-slate-200 grid grid-cols-3 gap-6 text-center text-[10px] font-bold text-slate-600">
-                    <div className="space-y-10">
-                      <span>إدارة الموارد البشرية (HR):</span>
-                      <div className="border-b border-dashed border-slate-400 w-3/4 mx-auto pb-1 mt-4 text-slate-400 text-[9px]">توقيع واعتماد شؤون الموظفين:.......................</div>
-                    </div>
-                    <div className="space-y-10">
-                      <span>اعتماد المدير العام للشركة:</span>
-                      <div className="border-b border-dashed border-slate-400 w-3/4 mx-auto pb-1 mt-4 text-slate-400 text-[9px]">توقيع الإدارة العامة:.......................</div>
-                    </div>
-                    <div className="space-y-10">
-                      <span>إمضاء وبصمة المستلم:</span>
-                      <div className="text-slate-800 text-[10px] font-bold leading-normal">{item.employee.name}</div>
-                      <div className="border-b border-dashed border-slate-400 w-3/4 mx-auto pb-1 mt-2 text-slate-500 text-[9px]">توقيع الموظف المعني:.......................</div>
-                    </div>
-                  </div>
-
-                </div>
-              ))}
-
-              {/* General official statement */}
-              <div className="pt-4 border-t border-slate-200 text-center text-[9px] text-slate-400 font-bold">
-                * تم إعداد هذا الكشف آلياً ومراجعته وتأمينه دفترياً من القليلة للمروج والقادسية الذكي بتاريخ {new Date().toLocaleDateString("ar-SA")}. تعديلات الخصم والالتزام تخضع لإشراف الإدارة العامة.
+              {/* General footer notice */}
+              <div className="pt-2 text-center text-[9px] text-slate-400 font-bold print:block">
+                * مستخرج آلياً وموثق من نظام مطعم أصل إسكندر المحاسبي الذكي بتاريخ {new Date().toLocaleDateString("ar-SA")}.
               </div>
 
             </div>
