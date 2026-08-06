@@ -37,6 +37,94 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
   // Printed report structure
   const [printEmployeeData, setPrintEmployeeData] = useState<any | null>(null);
 
+  const handleTriggerPrint = () => {
+    const printArea = document.getElementById("print-area");
+    if (!printArea) {
+      window.print();
+      return;
+    }
+
+    // Try opening clean print window for reliable printing without iframe / backdrop clipping
+    const printWin = window.open("", "_blank", "width=900,height=1000");
+    if (printWin) {
+      printWin.document.write(`
+        <!DOCTYPE html>
+        <html dir="rtl" lang="ar">
+        <head>
+          <title>مسير الأجور والمستحقات - مطعم أصل إسكندر</title>
+          <meta charset="utf-8" />
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 1cm;
+            }
+            html, body {
+              width: 100% !important;
+              height: 100% !important;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              background-color: #ffffff !important;
+              color: #000000 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .print-page {
+              page-break-after: always;
+              break-after: page;
+              page-break-inside: avoid;
+              break-inside: avoid;
+              box-sizing: border-box;
+              width: 100% !important;
+            }
+            .print-page:last-child {
+              page-break-after: auto;
+              break-after: auto;
+            }
+            table {
+              border-collapse: collapse !important;
+              width: 100% !important;
+            }
+            th {
+              background-color: #f1f5f9 !important;
+              color: #0f172a !important;
+              border: 1px solid #0f172a !important;
+              font-weight: 800 !important;
+              font-size: 11px !important;
+              padding: 6px 8px !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            td {
+              border: 1px solid #334155 !important;
+              color: #000000 !important;
+              font-size: 11px !important;
+              padding: 5px 7px !important;
+              font-weight: 600 !important;
+            }
+          </style>
+        </head>
+        <body dir="rtl">
+          <div style="width: 100%; box-sizing: border-box;">
+            ${printArea.innerHTML}
+          </div>
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+              }, 400);
+            };
+          </script>
+        </body>
+        </html>
+      `);
+      printWin.document.close();
+    } else {
+      window.print();
+    }
+  };
+
   // Forms States - Employee
   const [empName, setEmpName] = useState("");
   const [empJob, setEmpJob] = useState("");
@@ -1957,8 +2045,8 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
 
       {/* 🔮 BEAUTIFUL FULLSCREEN PRINT PREVIEW MODAL OVERLAY (A4 VERTICAL PORTRAIT FORMATTED) */}
       {printEmployeeData && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:relative print:z-0 select-none">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] overflow-y-auto flex flex-col print:max-h-none print:shadow-none print:border-none print:rounded-none">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-2 sm:p-4 overflow-y-auto print:p-0 print:bg-white print:relative print:z-0 select-none">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-5xl w-full max-h-[95vh] overflow-y-auto flex flex-col print:max-h-none print:shadow-none print:border-none print:rounded-none print:w-full">
             
             {/* Control Bar inside preview modal (hidden entirely on printed media) */}
             <div className="bg-slate-50 border-b border-slate-200 p-4 shrink-0 flex items-center justify-between print:hidden">
@@ -1966,12 +2054,12 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                 <Printer className="w-5 h-5 text-indigo-600 animate-pulse" />
                 <div>
                   <h3 className="text-sm font-bold">بوابة طباعة مسير الأجور التفصيلي (نموذج A4 عمودي للتوقيع)</h3>
-                  <p className="text-[10px] text-slate-500 font-medium">تصميم عمودي متكامل يتضمن إقرار واستلام الموظف واعتماد الموارد البشرية</p>
+                  <p className="text-[10px] text-slate-500 font-medium">تصميم عمودي متكامل على كامل الصفحة مع هوامش أفقية ورأسية 1.5 سم</p>
                 </div>
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => window.print()}
+                  onClick={handleTriggerPrint}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-md inline-flex items-center gap-1.5 cursor-pointer transition-all hover:scale-103"
                 >
                   <Printer className="w-4 h-4" />
@@ -1987,34 +2075,56 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
             </div>
 
             {/* Document Content Area */}
-            <div id="print-area" className="p-6 sm:p-8 space-y-4 text-right text-slate-900 print:p-0 bg-white" dir="rtl">
+            <div id="print-area" className="p-4 sm:p-8 space-y-6 text-right text-slate-900 print:p-0 bg-white w-full" dir="rtl">
               
               <style>{`
                 @page {
                   size: A4 portrait;
-                  margin: 10mm 8mm 10mm 8mm;
+                  margin: 1cm;
                 }
                 @media print {
                   html, body {
-                    width: 210mm;
-                    height: 297mm;
+                    width: 100% !important;
+                    height: 100% !important;
                     background: #ffffff !important;
                     margin: 0 !important;
                     padding: 0 !important;
-                    font-size: 10px !important;
+                    font-size: 11px !important;
+                    overflow: visible !important;
                   }
-                  body * {
-                    visibility: hidden !important;
+                  .print\\:hidden {
+                    display: none !important;
                   }
-                  #print-area, #print-area * {
-                    visibility: visible !important;
+                  .fixed.inset-0 {
+                    position: static !important;
+                    display: block !important;
+                    background: #ffffff !important;
+                    padding: 0 !important;
+                    overflow: visible !important;
+                    height: auto !important;
+                    width: 100% !important;
+                  }
+                  .max-w-5xl, .max-w-4xl {
+                    max-width: 100% !important;
+                    max-height: none !important;
+                    box-shadow: none !important;
+                    border: none !important;
+                    overflow: visible !important;
+                    height: auto !important;
+                    width: 100% !important;
+                    position: static !important;
+                    display: block !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
                   }
                   #print-area {
-                    position: absolute !important;
-                    left: 0 !important;
-                    top: 0 !important;
+                    position: static !important;
+                    display: block !important;
                     width: 100% !important;
-                    padding: 4mm !important;
+                    height: auto !important;
+                    overflow: visible !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
                     color: #000000 !important;
                     background-color: #ffffff !important;
                   }
@@ -2024,19 +2134,18 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     page-break-inside: avoid;
                     break-inside: avoid;
                     width: 100% !important;
-                    max-height: 275mm;
                     box-sizing: border-box;
-                    padding: 4mm;
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: space-between;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    border: none !important;
+                    box-shadow: none !important;
                   }
                   .print-page:last-child {
                     page-break-after: auto;
                     break-after: auto;
                   }
                   table {
-                    border: 1px solid #1e293b !important;
+                    border: 1px solid #0f172a !important;
                     border-collapse: collapse !important;
                     color: #000000 !important;
                     width: 100% !important;
@@ -2044,18 +2153,19 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                   th {
                     background-color: #f1f5f9 !important;
                     color: #0f172a !important;
-                    border: 1px solid #1e293b !important;
+                    border: 1px solid #0f172a !important;
                     font-weight: 800 !important;
-                    font-size: 9px !important;
-                    padding: 4px 6px !important;
+                    font-size: 11px !important;
+                    padding: 6px 8px !important;
                     -webkit-print-color-adjust: exact;
                     print-color-adjust: exact;
                   }
                   td {
                     border: 1px solid #334155 !important;
                     color: #000000 !important;
-                    font-size: 9px !important;
-                    padding: 3px 5px !important;
+                    font-size: 11px !important;
+                    padding: 5px 7px !important;
+                    font-weight: 600 !important;
                   }
                   .bg-slate-50, .bg-slate-100 {
                     background-color: #f8fafc !important;
@@ -2082,77 +2192,77 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                 const totalAdvancesAmt = item.totals.totalAdvances || 0;
 
                 return (
-                  <div key={idx} className="print-page border border-slate-300 rounded-2xl p-5 mb-6 last:mb-0 bg-white space-y-3 font-sans text-xs">
+                  <div key={idx} className="print-page border border-slate-300 rounded-2xl p-5 mb-6 last:mb-0 bg-white space-y-3.5 font-sans text-xs">
                     
                     {/* Header Banner */}
                     <div>
-                      <div className="border-b-2 border-slate-800 pb-3 flex items-center justify-between">
+                      <div className="border-b-2 border-slate-900 pb-3 flex items-center justify-between">
                         <div>
-                          <h1 className="text-base font-black tracking-tight text-slate-900">مطعم أصل إسكندر - ASL ISKANDER</h1>
-                          <h2 className="text-xs font-bold text-indigo-900 mt-0.5">كشف مسير الأجور والمستحقات التفصيلي (نموذج إقرار واستلام)</h2>
+                          <h1 className="text-lg font-black tracking-tight text-slate-950">مطعم أصل إسكندر - ASL ISKANDER</h1>
+                          <h2 className="text-xs font-extrabold text-indigo-950 mt-0.5">كشف مسير الأجور والمستحقات التفصيلي (نموذج إقرار واستلام)</h2>
                         </div>
                         <div className="text-left">
-                          <div className="text-[10px] font-bold text-slate-700">تاريخ الطباعة: <span className="font-mono">{new Date().toLocaleDateString("ar-SA")}</span></div>
-                          <div className="text-[10px] font-bold text-slate-500 mt-0.5">فترة الكشف: <span className="font-mono">{printEmployeeData.start}</span> إلى <span className="font-mono">{printEmployeeData.end}</span></div>
+                          <div className="text-xs font-bold text-slate-800">تاريخ الطباعة: <span className="font-mono">{new Date().toLocaleDateString("ar-SA")}</span></div>
+                          <div className="text-xs font-bold text-slate-600 mt-0.5">فترة الكشف: <span className="font-mono">{printEmployeeData.start}</span> إلى <span className="font-mono">{printEmployeeData.end}</span></div>
                         </div>
                       </div>
 
                       {/* Employee Profile Box */}
-                      <div className="mt-3 bg-slate-50 p-3 rounded-xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+                      <div className="mt-3 bg-slate-50 p-3 rounded-xl border border-slate-300 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                         <div>
-                          <span className="block text-[9px] text-slate-500 font-bold">اسم الموظف:</span>
-                          <strong className="text-slate-900 font-extrabold">{item.employee.name}</strong>
+                          <span className="block text-[10px] text-slate-600 font-bold">اسم الموظف:</span>
+                          <strong className="text-slate-950 font-black text-xs sm:text-sm">{item.employee.name}</strong>
                         </div>
                         <div>
-                          <span className="block text-[9px] text-slate-500 font-bold">المسمى الوظيفي:</span>
-                          <strong className="text-slate-800 font-bold">{item.employee.job}</strong>
+                          <span className="block text-[10px] text-slate-600 font-bold">المسمى الوظيفي:</span>
+                          <strong className="text-slate-900 font-bold text-xs">{item.employee.job}</strong>
                         </div>
                         <div>
-                          <span className="block text-[9px] text-slate-500 font-bold">الراتب الأساسي:</span>
-                          <strong className="text-slate-900 font-mono font-black">{item.employee.salary.toLocaleString("ar-SA")} ر.س</strong>
+                          <span className="block text-[10px] text-slate-600 font-bold">الراتب الأساسي:</span>
+                          <strong className="text-slate-950 font-mono font-black text-xs sm:text-sm">{item.employee.salary.toLocaleString("ar-SA")} ر.س</strong>
                         </div>
                         <div>
-                          <span className="block text-[9px] text-slate-500 font-bold">رقم الهاتف / الدوام:</span>
-                          <strong className="text-slate-700 font-mono text-[10px]">{item.employee.phone || "مسجل"} ({item.employee.requiredArrivalTime} - {item.employee.requiredDepartureTime})</strong>
+                          <span className="block text-[10px] text-slate-600 font-bold">رقم الهاتف / الدوام:</span>
+                          <strong className="text-slate-800 font-mono text-xs">{item.employee.phone || "مسجل"} ({item.employee.requiredArrivalTime} - {item.employee.requiredDepartureTime})</strong>
                         </div>
                       </div>
                     </div>
 
                     {/* Attendance & Lateness Table */}
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-[11px] font-black text-slate-800 border-r-2 border-indigo-600 pr-2">📋 سجل الحضور والتأخيرات ({item.totals.daysAttended || item.attendance.length} يوم عمل):</h4>
-                        <span className="text-[9px] font-bold text-slate-500">مجموع دقائق التأخير: <span className="font-mono font-bold text-rose-700">{item.totals.totalLatenessMins || 0} دقيقة</span></span>
+                        <h4 className="text-xs font-black text-slate-900 border-r-3 border-indigo-700 pr-2">📋 سجل الحضور والتأخيرات ({item.totals.daysAttended || item.attendance.length} يوم عمل):</h4>
+                        <span className="text-xs font-bold text-slate-700">مجموع دقائق التأخير: <span className="font-mono font-black text-rose-700">{item.totals.totalLatenessMins || 0} دقيقة</span></span>
                       </div>
                       {item.attendance.length === 0 ? (
-                        <div className="p-2 bg-slate-50 text-slate-400 text-center rounded-lg text-[10px]">لا توجد سجلات حضور مسجلة خلال الفترة.</div>
+                        <div className="p-2.5 bg-slate-50 text-slate-500 text-center rounded-lg text-xs font-bold">لا توجد سجلات حضور مسجلة خلال الفترة.</div>
                       ) : (
-                        <table className="w-full text-right border-collapse text-[9px]">
+                        <table className="w-full text-right border-collapse text-xs">
                           <thead>
-                            <tr className="bg-slate-100 text-slate-800 font-bold">
-                              <th className="p-1.5 border border-slate-300">التاريخ</th>
-                              <th className="p-1.5 border border-slate-300 text-center">أوقات الدوام الفعلي</th>
-                              <th className="p-1.5 border border-slate-300 text-center">التأخير</th>
-                              <th className="p-1.5 border border-slate-300 text-center">أثر المخالفة</th>
-                              <th className="p-1.5 border border-slate-300 text-center">مبلغ الخصم</th>
-                              <th className="p-1.5 border border-slate-300">ملاحظات العذر/التبرير</th>
+                            <tr className="bg-slate-100 text-slate-900 font-extrabold">
+                              <th className="p-1.5 border border-slate-400">التاريخ</th>
+                              <th className="p-1.5 border border-slate-400 text-center">أوقات الدوام الفعلي</th>
+                              <th className="p-1.5 border border-slate-400 text-center">التأخير</th>
+                              <th className="p-1.5 border border-slate-400 text-center">أثر المخالفة</th>
+                              <th className="p-1.5 border border-slate-400 text-center">مبلغ الخصم</th>
+                              <th className="p-1.5 border border-slate-400">ملاحظات العذر/التبرير</th>
                             </tr>
                           </thead>
                           <tbody>
                             {item.attendance.map((att: any, attIdx: number) => (
                               <tr key={attIdx}>
-                                <td className="p-1 border border-slate-200 font-mono">{att.date}</td>
-                                <td className="p-1 border border-slate-200 text-center font-mono">{att.arrivalTime} - {att.departureTime}</td>
-                                <td className="p-1 border border-slate-200 text-center font-mono font-bold">
+                                <td className="p-1.5 border border-slate-300 font-mono font-bold">{att.date}</td>
+                                <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{att.arrivalTime} - {att.departureTime}</td>
+                                <td className="p-1.5 border border-slate-300 text-center font-mono font-black">
                                   {att.latenessMinutes > 0 ? `${att.latenessMinutes} د` : "ملتزم"}
                                 </td>
-                                <td className="p-1 border border-slate-200 text-center">
+                                <td className="p-1.5 border border-slate-300 text-center font-bold">
                                   {att.latenessMinutes === 0 ? "سليم" : att.oralWarning ? "🗣️ إنذار شفهي" : `خصم (${att.latenessCategory === "simple" ? "بسيط" : att.latenessCategory === "medium" ? "متوسط" : att.latenessCategory === "large" ? "كبير" : "شديد"})`}
                                 </td>
-                                <td className="p-1 border border-slate-200 text-center font-bold text-rose-700 font-mono">
+                                <td className="p-1.5 border border-slate-300 text-center font-black text-rose-700 font-mono">
                                   {att.deductionAmount > 0 ? `${att.deductionAmount.toLocaleString("ar-SA")} ر.س` : "0"}
                                 </td>
-                                <td className="p-1 border border-slate-200 text-slate-600">{att.notes || (att.hasExcuse ? "بعذر مقبول" : "بدون")}</td>
+                                <td className="p-1.5 border border-slate-300 text-slate-800 font-medium">{att.notes || (att.hasExcuse ? "بعذر مقبول" : "بدون")}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2161,27 +2271,27 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     </div>
 
                     {/* Violations & Advances (Combined Compact Table) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[9px]">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                       {/* Violations */}
-                      <div className="space-y-1">
-                        <h4 className="font-bold text-slate-800 border-r-2 border-rose-600 pr-1.5">⚠️ المخالفات والجزاءات الإدارية:</h4>
+                      <div className="space-y-1.5">
+                        <h4 className="font-black text-slate-900 border-r-3 border-rose-600 pr-1.5">⚠️ المخالفات والجزاءات الإدارية:</h4>
                         {!item.violations || item.violations.length === 0 ? (
-                          <div className="p-1.5 bg-slate-50 text-slate-400 text-center rounded border border-slate-100">لا توجد مخالفات إدارية.</div>
+                          <div className="p-2 bg-slate-50 text-slate-500 text-center rounded border border-slate-200 text-xs font-bold">لا توجد مخالفات إدارية.</div>
                         ) : (
-                          <table className="w-full text-right border-collapse">
+                          <table className="w-full text-right border-collapse text-xs">
                             <thead>
-                              <tr className="bg-slate-100 text-slate-800 font-bold">
-                                <th className="p-1 border border-slate-200">التاريخ</th>
-                                <th className="p-1 border border-slate-200">السبب</th>
-                                <th className="p-1 border border-slate-200 text-center">الخصم</th>
+                              <tr className="bg-slate-100 text-slate-900 font-extrabold">
+                                <th className="p-1.5 border border-slate-300">التاريخ</th>
+                                <th className="p-1.5 border border-slate-300">السبب</th>
+                                <th className="p-1.5 border border-slate-300 text-center">الخصم</th>
                               </tr>
                             </thead>
                             <tbody>
                               {item.violations.map((v: any, vIdx: number) => (
                                 <tr key={vIdx}>
-                                  <td className="p-1 border border-slate-200 font-mono">{v.date}</td>
-                                  <td className="p-1 border border-slate-200 truncate max-w-[120px]" title={v.description}>{v.description}</td>
-                                  <td className="p-1 border border-slate-200 text-center font-bold text-rose-700 font-mono">
+                                  <td className="p-1.5 border border-slate-300 font-mono font-bold">{v.date}</td>
+                                  <td className="p-1.5 border border-slate-300 font-bold break-words whitespace-normal">{v.description}</td>
+                                  <td className="p-1.5 border border-slate-300 text-center font-black text-rose-700 font-mono">
                                     {v.type === "deduction" ? `${v.deductionAmount} ر.س` : "تنبيه"}
                                   </td>
                                 </tr>
@@ -2192,25 +2302,25 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                       </div>
 
                       {/* Advances */}
-                      <div className="space-y-1">
-                        <h4 className="font-bold text-slate-800 border-r-2 border-emerald-600 pr-1.5">💵 السلفيات المستلمة والمستقطعة:</h4>
+                      <div className="space-y-1.5">
+                        <h4 className="font-black text-slate-900 border-r-3 border-emerald-600 pr-1.5">💵 السلفيات المستلمة والمستقطعة:</h4>
                         {item.advances.length === 0 ? (
-                          <div className="p-1.5 bg-slate-50 text-slate-400 text-center rounded border border-slate-100">لا توجد سلفيات مستلمة.</div>
+                          <div className="p-2 bg-slate-50 text-slate-500 text-center rounded border border-slate-200 text-xs font-bold">لا توجد سلفيات مستلمة.</div>
                         ) : (
-                          <table className="w-full text-right border-collapse">
+                          <table className="w-full text-right border-collapse text-xs">
                             <thead>
-                              <tr className="bg-slate-100 text-slate-800 font-bold">
-                                <th className="p-1 border border-slate-200">التاريخ</th>
-                                <th className="p-1 border border-slate-200">الملاحظات</th>
-                                <th className="p-1 border border-slate-200 text-center">المبلغ</th>
+                              <tr className="bg-slate-100 text-slate-900 font-extrabold">
+                                <th className="p-1.5 border border-slate-300">التاريخ</th>
+                                <th className="p-1.5 border border-slate-300">الملاحظات</th>
+                                <th className="p-1.5 border border-slate-300 text-center">المبلغ</th>
                               </tr>
                             </thead>
                             <tbody>
                               {item.advances.map((adv: any, advIdx: number) => (
                                 <tr key={advIdx}>
-                                  <td className="p-1 border border-slate-200 font-mono">{adv.date}</td>
-                                  <td className="p-1 border border-slate-200 truncate max-w-[120px]">{adv.notes || "سلفة"}</td>
-                                  <td className="p-1 border border-slate-200 text-center font-bold text-rose-800 font-mono">{adv.amount.toLocaleString("ar-SA")} ر.س</td>
+                                  <td className="p-1.5 border border-slate-300 font-mono font-bold">{adv.date}</td>
+                                  <td className="p-1.5 border border-slate-300 font-bold break-words whitespace-normal">{adv.notes || "سلفة"}</td>
+                                  <td className="p-1.5 border border-slate-300 text-center font-black text-rose-800 font-mono">{adv.amount.toLocaleString("ar-SA")} ر.س</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -2220,54 +2330,54 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     </div>
 
                     {/* Final Salary Settlement Summary Card */}
-                    <div className="bg-indigo-50/70 p-3 rounded-xl border border-indigo-200/80 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-[10px] items-center">
-                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
-                        <span className="block text-[9px] text-slate-500 font-bold">الراتب الأساسي</span>
-                        <span className="font-bold font-mono text-slate-800 text-xs">{item.employee.salary.toLocaleString("ar-SA")} ر.س</span>
+                    <div className="bg-indigo-50/90 p-3 rounded-xl border border-indigo-300 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs items-center">
+                      <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
+                        <span className="block text-[10px] text-slate-600 font-bold">الراتب الأساسي</span>
+                        <span className="font-black font-mono text-slate-900 text-xs sm:text-sm">{item.employee.salary.toLocaleString("ar-SA")} ر.س</span>
                       </div>
-                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
-                        <span className="block text-[9px] text-rose-600 font-bold">خصوم التأخيرات</span>
-                        <span className="font-bold font-mono text-rose-700 text-xs">-{totalLatenessDeduction.toLocaleString("ar-SA")} ر.س</span>
+                      <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
+                        <span className="block text-[10px] text-rose-700 font-bold">خصوم التأخيرات</span>
+                        <span className="font-black font-mono text-rose-700 text-xs sm:text-sm">-{totalLatenessDeduction.toLocaleString("ar-SA")} ر.س</span>
                       </div>
-                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
-                        <span className="block text-[9px] text-rose-600 font-bold">جزاءات المخالفات</span>
-                        <span className="font-bold font-mono text-rose-700 text-xs">-{totalViolationDeduction.toLocaleString("ar-SA")} ر.س</span>
+                      <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
+                        <span className="block text-[10px] text-rose-700 font-bold">جزاءات المخالفات</span>
+                        <span className="font-black font-mono text-rose-700 text-xs sm:text-sm">-{totalViolationDeduction.toLocaleString("ar-SA")} ر.س</span>
                       </div>
-                      <div className="border-l border-indigo-200/60 pb-1 sm:pb-0">
-                        <span className="block text-[9px] text-rose-800 font-bold">استقطاع السلف</span>
-                        <span className="font-bold font-mono text-rose-800 text-xs">-{totalAdvancesAmt.toLocaleString("ar-SA")} ر.س</span>
+                      <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
+                        <span className="block text-[10px] text-rose-800 font-bold">استقطاع السلف</span>
+                        <span className="font-black font-mono text-rose-800 text-xs sm:text-sm">-{totalAdvancesAmt.toLocaleString("ar-SA")} ر.س</span>
                       </div>
-                      <div className="col-span-2 sm:col-span-1 bg-white border-2 border-indigo-600 p-1.5 rounded-lg shadow-xs">
-                        <span className="block text-[8px] text-slate-500 font-bold uppercase">الصافي المستحق للصرف</span>
-                        <span className="text-sm font-black font-mono text-indigo-800">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ر.س</span>
+                      <div className="col-span-2 sm:col-span-1 bg-white border-2 border-indigo-700 p-2 rounded-lg shadow-xs">
+                        <span className="block text-[9px] text-slate-600 font-black uppercase">الصافي المستحق للصرف</span>
+                        <span className="text-base sm:text-lg font-black font-mono text-indigo-950">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ر.س</span>
                       </div>
                     </div>
 
                     {/* Employee Acknowledgment Declaration */}
-                    <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-[10px] text-slate-800 font-semibold leading-relaxed">
-                      <strong className="text-slate-900 font-extrabold text-[10px] block mb-0.5">📄 إقرار واستلام الموظف:</strong>
-                      أقر أنا الموظف / <span className="font-bold underline text-indigo-900">{item.employee.name}</span> بأنني اطلعت وراجعت كافة بيانات الدوام والخصوم الموضحة بهذا الكشف، وأقر باستلامي لصافي المستحق المالي المبيّن أعلاه وقدره (<span className="font-mono font-bold text-slate-900">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ريال</span>) كاملاً، ولا يحق لي المطالبة بأي مبالغ إضافية عن هذه الفترة بعد التوقيع.
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-300 text-xs text-slate-900 font-semibold leading-relaxed">
+                      <strong className="text-slate-950 font-black text-xs block mb-1">📄 إقرار واستلام الموظف:</strong>
+                      أقر أنا الموظف / <span className="font-black underline text-indigo-950">{item.employee.name}</span> بأنني اطلعت وراجعت كافة بيانات الدوام والخصوم الموضحة بهذا الكشف، وأقر باستلامي لصافي المستحق المالي المبيّن أعلاه وقدره (<span className="font-mono font-black text-slate-950">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ريال</span>) كاملاً، ولا يحق لي المطالبة بأي مبالغ إضافية عن هذه الفترة بعد التوقيع.
                     </div>
 
                     {/* Official Signatures Block (HR on Right, Recipient Employee on Left) */}
-                    <div className="pt-3 border-t-2 border-slate-800 grid grid-cols-2 gap-6 text-[11px] font-bold text-slate-800">
+                    <div className="pt-3 border-t-2 border-slate-900 grid grid-cols-2 gap-6 text-xs font-bold text-slate-900">
                       {/* Right side: HR Only */}
-                      <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                        <span className="block text-indigo-950 font-black border-b border-slate-200 pb-1.5">إدارة الموارد البشرية (HR):</span>
-                        <div className="space-y-2 text-[10px] text-slate-700">
+                      <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-300">
+                        <span className="block text-indigo-950 font-black text-xs border-b border-slate-300 pb-1.5">إدارة الموارد البشرية (HR):</span>
+                        <div className="space-y-2 text-xs text-slate-800 font-bold">
                           <div>اسم المسؤول: .......................................</div>
                           <div>التوقيع والاعتماد: .......................................</div>
-                          <div>التاريخ: <span className="font-mono font-bold text-slate-900">{printEmployeeData.end}</span></div>
+                          <div>التاريخ: <span className="font-mono font-black text-slate-950">{printEmployeeData.end}</span></div>
                         </div>
                       </div>
 
                       {/* Left side: Recipient Employee */}
-                      <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                        <span className="block text-indigo-950 font-black border-b border-slate-200 pb-1.5">توقيع المستلم (الموظف):</span>
-                        <div className="space-y-2 text-[10px] text-slate-700">
+                      <div className="space-y-3 bg-slate-50 p-3 rounded-xl border border-slate-300">
+                        <span className="block text-indigo-950 font-black text-xs border-b border-slate-300 pb-1.5">توقيع المستلم (الموظف):</span>
+                        <div className="space-y-2 text-xs text-slate-800 font-bold">
                           <div>اسم الموظف / المستلم: .......................................</div>
                           <div>التوقيع / البصمة: .......................................</div>
-                          <div>تاريخ الاستلام: <span className="font-mono font-bold text-slate-900">{printEmployeeData.end}</span></div>
+                          <div>تاريخ الاستلام: <span className="font-mono font-black text-slate-950">{printEmployeeData.end}</span></div>
                         </div>
                       </div>
                     </div>
