@@ -42,22 +42,25 @@ const db = initializeFirestore(appFirebase, {
 }, firebaseConfig.firestoreDatabaseId || "(default)");
 
 
-// Initialize Gemini Client
-const ai = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
+// Initialize Gemini Client Lazily
+function getAiClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
       },
-    })
-  : null;
+    },
+  });
+}
 
 // Helper to perform Gemini API generation with resilient retries for transient/503/404/quota errors
 async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1000) {
-  if (!ai) {
-    throw new Error("لم يتم تهيئة مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) في الخادم بشكل صحيح.");
+  const aiClient = getAiClient();
+  if (!aiClient) {
+    throw new Error("لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Environment Variables)");
   }
   let attempt = 0;
   // Dynamic fallback models list to stay operational when a model gets 503 high-demand errors or quota limits
@@ -74,7 +77,7 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
       const targetParams = { ...params, model: currentModel };
       
       console.log(`[Gemini API] Requesting ${currentModel} (Attempt ${attempt + 1}/${maxRetries + 1})...`);
-      return await ai.models.generateContent(targetParams);
+      return await aiClient.models.generateContent(targetParams);
     } catch (err: any) {
       const errMsg = err.message || "";
       const isTransient = 
@@ -103,10 +106,12 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
         await new Promise((resolve) => setTimeout(resolve, waitTime));
         delayMs *= 1.5;
       } else {
+        console.error(`[Gemini API] Error requesting ${currentModel}:`, err);
         throw err;
       }
     }
   }
+  throw new Error("فشلت جميع محاولات قراءة الفاتورة عبر الذكاء الاصطناعي");
 }
 
 // Initial default settings
@@ -1442,8 +1447,8 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
-  app.use(express.json({ limit: "25mb" }));
-  app.use(express.urlencoded({ limit: "25mb", extended: true }));
+  app.use(express.json({ limit: "15mb" }));
+  app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
   // HEALTH CHECK ENDPOINT
   app.get("/api/health", (req, res) => {
@@ -2347,9 +2352,10 @@ async function startServer() {
         return res.status(400).json({ error: "No images provided" });
       }
 
-      if (!ai) {
+      const aiClient = getAiClient();
+      if (!aiClient) {
         return res.status(500).json({ 
-          error: "لم يتم تهيئة مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) في الخادم بشكل صحيح." 
+          error: "لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Render/Cloud Run)." 
         });
       }
 

@@ -451,7 +451,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   // Helper to compress images on client-side before sending to server for OCR
-  const compressImage = (file: File, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
+  const compressImage = (file: File, maxWidth = 1200, maxHeight = 1200): Promise<string> => {
     return new Promise((resolve, reject) => {
       // If it's not an image file (e.g. PDF), fall back to standard reader
       if (!file.type.startsWith("image/")) {
@@ -493,8 +493,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as JPEG format with 0.82 quality for ultra-fast upload and sharp OCR legibility
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.82);
+        // Compress as JPEG format with 0.72 quality for ultra-lightweight upload (~80KB) and sharp OCR legibility
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.72);
         resolve(compressedBase64);
       };
       img.onerror = (err) => {
@@ -511,45 +511,76 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
 
     setOcrLoading(true);
+    let successCount = 0;
     try {
-      const base64Promises = files.map((file) => compressImage(file));
-      const base64Images = await Promise.all(base64Promises);
-      
-      const res = await fetch("/api/parse-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images: base64Images }),
-      });
+      // Process files one by one to keep memory footprint minimal and avoid server OOM
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const base64Image = await compressImage(file);
+          const res = await fetch("/api/parse-invoice", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ images: [base64Image] }),
+          });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.results && Array.isArray(data.results)) {
-          const newParsed = data.results.map((r: any, rIdx: number) => ({
-            company: r.company || "",
-            invoice_no: r.invoice_no || "",
-            invoice_date: r.invoice_date || date,
-            amount: r.amount === 0 ? "" : r.amount,
-            tempId: r.tempId || `temp-${Date.now()}-${Math.random()}`,
-            success: r.success !== false,
-            error: r.error,
-            rawImage: base64Images[rIdx],
-            originalObjectUrl: URL.createObjectURL(files[rIdx]),
-            fileType: files[rIdx].type,
-            isRetrying: false,
-            items: r.items || []
-          }));
-          setParsedInvoices((prev) => [...prev, ...newParsed]);
-          onShowToast(`✨ تم مسح وقراءة ${newParsed.length} فواتير ضريبية عبر الذكاء الاصطناعي بنجاح!`);
-        } else {
-          onShowToast("⚠️ حصلت مشكلة أثناء استلام النتيجة من الخادم");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+              const r = data.results[0];
+              const parsed = {
+                company: r.company || "",
+                invoice_no: r.invoice_no || "",
+                invoice_date: r.invoice_date || date,
+                amount: r.amount === 0 ? "" : r.amount,
+                tempId: r.tempId || `temp-${Date.now()}-${Math.random()}`,
+                success: r.success !== false,
+                error: r.error,
+                rawImage: base64Image,
+                originalObjectUrl: URL.createObjectURL(file),
+                fileType: file.type,
+                isRetrying: false,
+                items: r.items || []
+              };
+              setParsedInvoices((prev) => [...prev, parsed]);
+              successCount++;
+            }
+          } else {
+            let errorMsg = "";
+            try {
+              const errData = await res.json();
+              errorMsg = errData.error || "";
+            } catch {
+              const rawText = await res.text().catch(() => "");
+              if (res.status === 413) {
+                errorMsg = "حجم ملف الفاتورة كبير جداً";
+              } else if (res.status === 502 || res.status === 504) {
+                errorMsg = "انتهت مهلة استجابة الخادم أثناء معالجة الصورة";
+              } else if (rawText && rawText.length < 120 && !rawText.includes("<!doctype html")) {
+                errorMsg = rawText;
+              }
+            }
+            if (!errorMsg) {
+              if (res.status === 500) {
+                errorMsg = "يرجى التحقق من ضبط مفتاح GEMINI_API_KEY في إعدادات الاستضافة (Render)";
+              } else {
+                errorMsg = `رمز الاستجابة (${res.status})`;
+              }
+            }
+            onShowToast(`❌ فشل قراءة الفاتورة (${file.name || i + 1}): ${errorMsg}`);
+          }
+        } catch (fileErr: any) {
+          console.error(`Error processing file ${i}:`, fileErr);
+          onShowToast(`❌ خطأ في معالجة المستند: ${fileErr?.message || "تعذر إكمال القراءة"}`);
         }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        onShowToast(`❌ فشل قراءة الفاتورة: ${errData.error || "خطأ غير معروف في الخادم"}`);
       }
-    } catch (err) {
+
+      if (successCount > 0) {
+        onShowToast(`✨ تم مسح وقراءة ${successCount} فاتورة ضريبية عبر الذكاء الاصطناعي بنجاح!`);
+      }
+    } catch (err: any) {
       console.error(err);
-      onShowToast("❌ خطأ بالشبكة أثناء محاولة مسح الفواتير بالذكاء الاصطناعي");
+      onShowToast(`❌ خطأ بالاتصال: ${err?.message || "تعذر الوصول إلى الخادم"}`);
     } finally {
       setOcrLoading(false);
       const fileInput = document.getElementById("ai-invoice-input") as HTMLInputElement;
