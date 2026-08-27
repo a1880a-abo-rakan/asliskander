@@ -63,8 +63,8 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
   // Dynamic fallback models list to stay operational when a model gets 503 high-demand errors or quota limits
   // We alternate models dynamically and filter out duplicates to ensure we always try a different API endpoint
   const modelsToTry = [
-    params.model || "gemini-3.5-flash",
-    "gemini-3.1-flash-lite"
+    params.model || "gemini-2.5-flash",
+    "gemini-2.5-flash-lite"
   ];
 
   while (attempt <= maxRetries) {
@@ -73,7 +73,7 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
       const targetParams = { ...params, model: currentModel };
       
       // Remove thinkingConfig for flash-lite or if requested speed is paramount
-      if (currentModel === "gemini-3.1-flash-lite") {
+      if (currentModel === "gemini-2.5-flash-lite") {
         if (targetParams.config) {
           delete targetParams.config.thinkingConfig;
         }
@@ -1446,6 +1446,11 @@ async function startServer() {
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
+  // HEALTH CHECK ENDPOINT
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // DIAGNOSTICS ENDPOINT
   app.get("/api/diagnostics", async (req, res) => {
     const results: any = {
@@ -2383,7 +2388,7 @@ async function startServer() {
             "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-3.5-flash",
+            model: "gemini-2.5-flash",
             contents: [
               {
                 inlineData: {
