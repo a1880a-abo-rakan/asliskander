@@ -54,37 +54,35 @@ const ai = process.env.GEMINI_API_KEY
     })
   : null;
 
-// Helper to perform Gemini API generation with resilient retries for transient/503 errors
+// Helper to perform Gemini API generation with resilient retries for transient/503/404/quota errors
 async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1000) {
   if (!ai) {
     throw new Error("لم يتم تهيئة مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) في الخادم بشكل صحيح.");
   }
   let attempt = 0;
   // Dynamic fallback models list to stay operational when a model gets 503 high-demand errors or quota limits
-  // We alternate models dynamically and filter out duplicates to ensure we always try a different API endpoint
   const modelsToTry = [
-    params.model || "gemini-2.5-flash",
-    "gemini-2.5-flash-lite"
+    params.model || "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite"
   ];
 
   while (attempt <= maxRetries) {
+    const currentModel = modelsToTry[attempt % modelsToTry.length];
     try {
-      const currentModel = modelsToTry[attempt % modelsToTry.length];
       const targetParams = { ...params, model: currentModel };
       
-      // Remove thinkingConfig for flash-lite or if requested speed is paramount
-      if (currentModel === "gemini-2.5-flash-lite") {
-        if (targetParams.config) {
-          delete targetParams.config.thinkingConfig;
-        }
-      }
-
       console.log(`[Gemini API] Requesting ${currentModel} (Attempt ${attempt + 1}/${maxRetries + 1})...`);
       return await ai.models.generateContent(targetParams);
     } catch (err: any) {
       const errMsg = err.message || "";
       const isTransient = 
         errMsg.includes("503") || 
+        errMsg.includes("404") ||
+        errMsg.includes("not available") ||
+        errMsg.includes("no longer available") ||
+        errMsg.includes("NOT_FOUND") ||
         errMsg.includes("high demand") || 
         errMsg.includes("temporary") || 
         errMsg.includes("UNAVAILABLE") || 
@@ -93,14 +91,15 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
         errMsg.includes("resource exhausted") ||
         errMsg.includes("RESOURCE_EXHAUSTED") ||
         err.status === "UNAVAILABLE" ||
+        err.status === "NOT_FOUND" ||
+        err.status === 404 ||
         err.status === 429 ||
         err.status === 503;
 
       if (isTransient && attempt < maxRetries) {
         attempt++;
-        // On transient/quota error, let's immediately wait a small bit and double back to try the next model
         const waitTime = attempt === 1 ? 200 : delayMs;
-        console.warn(`[Gemini API] Transient error (Attempt ${attempt}/${maxRetries}). Retrying in ${waitTime}ms... Error: ${errMsg}`);
+        console.warn(`[Gemini API] Transient/Model error on ${currentModel} (Attempt ${attempt}/${maxRetries}). Retrying with next model in ${waitTime}ms... Error: ${errMsg}`);
         await new Promise((resolve) => setTimeout(resolve, waitTime));
         delayMs *= 1.5;
       } else {
@@ -2388,7 +2387,7 @@ async function startServer() {
             "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-2.5-flash",
+            model: "gemini-3.7-flash",
             contents: [
               {
                 inlineData: {
@@ -2400,7 +2399,6 @@ async function startServer() {
             ],
             config: {
               temperature: 0.1,
-              thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
               responseMimeType: "application/json",
               responseSchema: {
                 type: Type.OBJECT,
@@ -2441,8 +2439,24 @@ async function startServer() {
             }
           });
 
-          const textStr = response.text || "{}";
-          const parsedObj = JSON.parse(textStr.trim());
+          const textStr = (response.text || "{}").trim();
+          const cleanedText = textStr
+            .replace(/^```json\s*/i, "")
+            .replace(/^```\s*/i, "")
+            .replace(/```\s*$/i, "")
+            .trim();
+          
+          let parsedObj: any = {};
+          try {
+            parsedObj = JSON.parse(cleanedText);
+          } catch (pe) {
+            const match = textStr.match(/\{[\s\S]*\}/);
+            if (match) {
+              parsedObj = JSON.parse(match[0]);
+            } else {
+              throw new Error("تعذر تحليل بيانات الفاتورة المقروءة من الذكاء الاصطناعي");
+            }
+          }
 
           let company = (parsedObj.company || "").trim();
           const companyLower = company.toLowerCase();

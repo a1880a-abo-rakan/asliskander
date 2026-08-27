@@ -451,7 +451,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   // Helper to compress images on client-side before sending to server for OCR
-  const compressImage = (file: File, maxWidth = 1100, maxHeight = 1100): Promise<string> => {
+  const compressImage = (file: File, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
     return new Promise((resolve, reject) => {
       // If it's not an image file (e.g. PDF), fall back to standard reader
       if (!file.type.startsWith("image/")) {
@@ -493,8 +493,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as JPEG format with 0.72 quality for ultra-fast upload and perfect OCR legibility
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.72);
+        // Compress as JPEG format with 0.82 quality for ultra-fast upload and sharp OCR legibility
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.82);
         resolve(compressedBase64);
       };
       img.onerror = (err) => {
@@ -555,6 +555,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const fileInput = document.getElementById("ai-invoice-input") as HTMLInputElement;
       if (fileInput) {
         fileInput.value = "";
+      }
+      const cameraInput = document.getElementById("ai-camera-input") as HTMLInputElement;
+      if (cameraInput) {
+        cameraInput.value = "";
       }
     }
   };
@@ -1668,11 +1672,21 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           onDragLeave={handleDrag}
           onDrop={handleDrop}
         >
+          {/* File Picker Input (Images / PDFs) */}
           <input
             id="ai-invoice-input"
             type="file"
             accept="image/*,application/pdf"
             multiple
+            onChange={handleImageUpload}
+            className="hidden"
+          />
+          {/* Direct Camera Input for Mobile */}
+          <input
+            id="ai-camera-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
             onChange={handleImageUpload}
             className="hidden"
           />
@@ -1685,7 +1699,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             <div className="space-y-1">
               <h3 className="font-extrabold text-sm text-slate-800">المسح التلقائي بالذكاء الاصطناعي للفواتير الضريبية</h3>
               <p className="text-xs text-slate-500 font-medium max-w-md mx-auto leading-relaxed">
-                اسحب وأفلت صورة الفاتورة أو ملف PDF هنا، أو قم بتصويرها من جوالك، وسيتكفل النظام بقراءة البيانات وتعبئتها آلياً وبدقة متناهية. يمكنك رفع مجموعة فواتير أو مستندات معاً!
+                اسحب وأفلت صورة الفاتورة أو ملف PDF هنا، أو قم بتصويرها مباشرة من كاميرا الجوال، وسيتكفل النظام بقراءة البيانات وتعبئتها آلياً وبدقة متناهية.
               </p>
               <div className="inline-block mt-2 px-3 py-1 bg-amber-50 rounded-lg border border-amber-100">
                 <span className="text-[11px] text-amber-700 font-bold">
@@ -1705,14 +1719,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               
               <button
                 type="button"
-                onClick={() => {
-                  const input = document.getElementById("ai-invoice-input");
-                  if (input) {
-                    input.removeAttribute("capture");
-                    input.setAttribute("capture", "environment");
-                    input.click();
-                  }
-                }}
+                onClick={() => document.getElementById("ai-camera-input")?.click()}
                 className="px-5 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-200"
               >
                 <Camera className="w-4 h-4" /> تصوير الفاتورة بالجوال
@@ -1727,7 +1734,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               <div className="space-y-1 text-center px-4">
                 <span className="font-extrabold text-sm text-indigo-900 block">جاري مسح وقراءة الفاتورة بالذكاء الاصطناعي...</span>
                 <span className="text-xs text-indigo-600 block font-semibold">تأخذ ملفات الـ PDF وقتاً أطول في الرفع والتحليل - يتم عمل موازنة سريعة حالياً</span>
-                <span className="text-[11px] text-slate-400 block font-medium">نظام قراءة مستندي ذكي مدعوم بـ Gemini 3.5 Flash</span>
+                <span className="text-[11px] text-slate-400 block font-medium">نظام قراءة مستندي ذكي فائق الدقة مدعوم بـ Gemini Flash AI</span>
               </div>
             </div>
           )}
@@ -1802,7 +1809,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       <div className="space-y-2 mb-2">
                         <div className="flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50/80 px-2.5 py-1 rounded-md">
                           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                          <span>فشلت القراءة الآلية تلقائياً: {pinv.error || "يرجى تعبئة الحقول يدوياً"}</span>
+                          <span>
+                            {pinv.error && pinv.error.includes("404")
+                              ? "تم تحديث محرك القراءة الذكي - يرجى النقر على زر إعادة المحاولة"
+                              : pinv.error && pinv.error.startsWith("{")
+                              ? "فشلت القراءة الآلية تلقائياً - يمكنك تعبئة الحقول يدوياً أو إعادة المحاولة"
+                              : `فشلت القراءة الآلية تلقائياً: ${pinv.error || "يرجى تعبئة الحقول يدوياً"}`}
+                          </span>
                         </div>
                         {pinv.rawImage && (
                           <button
@@ -1812,7 +1825,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             className="w-full py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-xs transition-all disabled:opacity-50"
                           >
                             <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                            <span>إعادة محاولة اللقراءة الذكية 🔄</span>
+                            <span>إعادة محاولة القراءة الذكية 🔄</span>
                           </button>
                         )}
                       </div>
