@@ -63,11 +63,11 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
     throw new Error("لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Environment Variables)");
   }
   let attempt = 0;
-  // Dynamic fallback models list with standard Gemini official aliases
+  // Dynamic fallback models list with standard stable Gemini official aliases
   const modelsToTry = [
-    params.model || "gemini-3.7-flash",
-    "gemini-flash-latest",
-    "gemini-3.1-flash-lite"
+    params.model || "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-latest"
   ];
 
   while (attempt <= maxRetries) {
@@ -2395,7 +2395,7 @@ async function startServer() {
             "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-3.7-flash",
+            model: "gemini-2.5-flash",
             contents: {
               parts: [
                 {
@@ -2410,7 +2410,6 @@ async function startServer() {
               ],
             },
             config: {
-              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
               temperature: 0.1,
               responseMimeType: "application/json",
               responseSchema: {
