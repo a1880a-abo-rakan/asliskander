@@ -65,8 +65,8 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
   let attempt = 0;
   // Dynamic fallback models list with standard stable Gemini official aliases
   const modelsToTry = [
-    params.model || "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
     "gemini-flash-latest"
   ];
 
@@ -2395,7 +2395,7 @@ async function startServer() {
             "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-2.5-flash",
+            model: "gemini-3.6-flash",
             contents: {
               parts: [
                 {

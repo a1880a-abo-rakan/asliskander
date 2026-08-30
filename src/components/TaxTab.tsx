@@ -520,7 +520,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         try {
           const base64Image = await compressImage(file);
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 12000);
+          const timeoutId = setTimeout(() => controller.abort(), 30000);
 
           const res = await fetch("/api/parse-invoice", {
             method: "POST",
