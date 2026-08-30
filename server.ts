@@ -63,9 +63,10 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
     throw new Error("لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Environment Variables)");
   }
   let attempt = 0;
-  // Dynamic fallback models list with standard stable Gemini official aliases
+  // Dynamic fallback models list with standard official supported Gemini models
   const modelsToTry = [
     "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.7-flash",
     "gemini-flash-latest"
   ];
