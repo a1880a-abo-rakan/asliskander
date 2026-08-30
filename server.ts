@@ -2396,7 +2396,7 @@ async function startServer() {
             "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-3.7-flash",
+            model: "gemini-2.5-flash",
             contents: [
               {
                 inlineData: {
@@ -2407,6 +2407,7 @@ async function startServer() {
               promptInstruction
             ],
             config: {
+              thinkingConfig: { thinkingBudget: 0 },
               temperature: 0.1,
               responseMimeType: "application/json",
               responseSchema: {

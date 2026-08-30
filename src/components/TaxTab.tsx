@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { TaxInvoice, TaxInvoiceItem } from "../types";
 import ReorderTimerBanner from "./ReorderTimerBanner";
+import { AiExtractionProgressBar } from "./AiExtractionProgressBar";
 import { 
   Receipt, 
   Calendar, 
@@ -518,11 +519,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         const file = files[i];
         try {
           const base64Image = await compressImage(file);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
+
           const res = await fetch("/api/parse-invoice", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ images: [base64Image] }),
+            signal: controller.signal
           });
+          clearTimeout(timeoutId);
 
           if (res.ok) {
             const data = await res.json();
@@ -1758,18 +1764,22 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </div>
           </div>
 
-          {/* AI Loader Overlay */}
+          {/* AI Loader Overlay with 5-Second Real Countdown */}
           {ocrLoading && (
-            <div className="absolute inset-x-0 inset-y-0 bg-white/95 backdrop-blur-xs flex flex-col items-center justify-center gap-3 rounded-2xl z-10 animate-pulse">
-              <Loader2 className="w-8 h-8 text-indigo-700 animate-spin" />
-              <div className="space-y-1 text-center px-4">
-                <span className="font-extrabold text-sm text-indigo-900 block">جاري مسح وقراءة الفاتورة بالذكاء الاصطناعي...</span>
-                <span className="text-xs text-indigo-600 block font-semibold">تأخذ ملفات الـ PDF وقتاً أطول في الرفع والتحليل - يتم عمل موازنة سريعة حالياً</span>
-                <span className="text-[11px] text-slate-400 block font-medium">نظام قراءة مستندي ذكي فائق الدقة مدعوم بـ Gemini Flash AI</span>
+            <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 rounded-2xl z-20">
+              <div className="w-full max-w-md">
+                <AiExtractionProgressBar isExtracting={ocrLoading} estimatedSeconds={5} />
               </div>
             </div>
           )}
         </div>
+
+        {/* Global Floating/Top Progress Bar when scanning */}
+        {ocrLoading && (
+          <div className="mb-6">
+            <AiExtractionProgressBar isExtracting={ocrLoading} estimatedSeconds={5} />
+          </div>
+        )}
 
         {/* AI Parsed Results Review Dashboard */}
         {parsedInvoices.length > 0 && (
