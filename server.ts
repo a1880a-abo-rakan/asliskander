@@ -1425,7 +1425,7 @@ async function getWhatsAppMessages(): Promise<any[]> {
         list.push(data);
       }
     });
-    const sorted = list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+    const sorted = list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()).slice(0, 100);
     memoryWhatsAppMessages = sorted;
     return sorted;
   } catch (err) {
@@ -1436,6 +1436,9 @@ async function getWhatsAppMessages(): Promise<any[]> {
 
 async function saveWhatsAppMessage(msg: any): Promise<void> {
   memoryWhatsAppMessages.unshift(msg);
+  if (memoryWhatsAppMessages.length > 100) {
+    memoryWhatsAppMessages = memoryWhatsAppMessages.slice(0, 100);
+  }
   try {
     await setDoc(doc(db, "whatsapp_messages", msg.id), cleanObject(msg));
   } catch (err) {
