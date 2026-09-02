@@ -452,7 +452,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   // Helper to compress images on client-side before sending to server for OCR
-  const compressImage = (file: File, maxWidth = 1200, maxHeight = 1200): Promise<string> => {
+  const compressImage = (file: File, maxWidth = 2000, maxHeight = 2000): Promise<string> => {
     return new Promise((resolve, reject) => {
       // If it's not an image file (e.g. PDF), fall back to standard reader
       if (!file.type.startsWith("image/")) {
@@ -485,7 +485,6 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         canvas.height = height;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          // fallback to original file if canvas fails
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = (err) => reject(err);
@@ -493,9 +492,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           return;
         }
 
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as JPEG format with 0.72 quality for ultra-lightweight upload (~80KB) and sharp OCR legibility
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.72);
+        // Compress as JPEG format with 0.85 quality for crystal clear numbers, decimals, and Arabic text
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
         resolve(compressedBase64);
       };
       img.onerror = (err) => {
@@ -514,13 +515,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     setOcrLoading(true);
     let successCount = 0;
     try {
-      // Process files one by one to keep memory footprint minimal and avoid server OOM
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      // Process a single file with AI parsing and stream result into state immediately
+      const processSingleFile = async (file: File, fileIdx: number) => {
         try {
           const base64Image = await compressImage(file);
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 30000);
+          const timeoutId = setTimeout(() => controller.abort(), 40000);
 
           const res = await fetch("/api/parse-invoice", {
             method: "POST",
@@ -549,7 +549,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 items: r.items || []
               };
               setParsedInvoices((prev) => [...prev, parsed]);
-              successCount++;
+              if (r.success !== false) {
+                successCount++;
+              }
             }
           } else {
             let errorMsg = "";
@@ -568,17 +570,24 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             }
             if (!errorMsg) {
               if (res.status === 500) {
-                errorMsg = "يرجى التحقق من ضبط مفتاح GEMINI_API_KEY في إعدادات الاستضافة (Render)";
+                errorMsg = "يرجى التحقق من ضبط مفتاح GEMINI_API_KEY في إعدادات الاستضافة";
               } else {
                 errorMsg = `رمز الاستجابة (${res.status})`;
               }
             }
-            onShowToast(`❌ فشل قراءة الفاتورة (${file.name || i + 1}): ${errorMsg}`);
+            onShowToast(`❌ فشل قراءة الفاتورة (${file.name || fileIdx + 1}): ${errorMsg}`);
           }
         } catch (fileErr: any) {
-          console.error(`Error processing file ${i}:`, fileErr);
+          console.error(`Error processing file ${fileIdx}:`, fileErr);
           onShowToast(`❌ خطأ في معالجة المستند: ${fileErr?.message || "تعذر إكمال القراءة"}`);
         }
+      };
+
+      // Run in parallel batches of 2 to provide blazing fast speed and immediate responsiveness
+      const concurrency = 2;
+      for (let i = 0; i < files.length; i += concurrency) {
+        const batch = files.slice(i, i + concurrency);
+        await Promise.all(batch.map((f, bIdx) => processSingleFile(f, i + bIdx)));
       }
 
       if (successCount > 0) {

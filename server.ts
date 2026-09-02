@@ -65,10 +65,9 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
   let attempt = 0;
   // Dynamic fallback models list with standard official supported Gemini models
   const modelsToTry = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-2.5-flash",
     "gemini-3.7-flash",
-    "gemini-flash-latest"
+    "gemini-2.5-pro"
   ];
 
   while (attempt <= maxRetries) {
@@ -2358,14 +2357,12 @@ async function startServer() {
       const aiClient = getAiClient();
       if (!aiClient) {
         return res.status(500).json({ 
-          error: "لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Render/Cloud Run)." 
+          error: "لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة." 
         });
       }
 
-      // Process images sequentially to avoid triggering concurrent rate limits/exceeding quota limits
-      const parsedResults: any[] = [];
-      for (let idx = 0; idx < images.length; idx++) {
-        const img = images[idx];
+      // Process single image helper function
+      const parseSingleImage = async (img: string, idx: number) => {
         try {
           // Extract mime type and base64 data
           const matches = img.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
@@ -2377,26 +2374,28 @@ async function startServer() {
             base64Data = matches[2];
           }
 
-          const isPdf = mimeType === "application/pdf";
           // Highly precise prompt for absolute accuracy in OCR numbers and details
-          const promptInstruction = "Extract invoice details with extreme high-precision OCR.\n" +
-            "CRITICAL DIRECTIVES FOR NUMBERS & DIGITS ACCURACY:\n" +
-            "1. You must read and double-check every single digit of the total amount and prices with absolute perfection. " +
-            "Never mistake Arabic-Indic numerals (e.g., ٠ ١ ٢ ٣ ٤ ٥ ٦ ٧ ٨ ٩) or misinterpret standard numerals. Convert all numbers to standard English digits and parse decimals accurately.\n" +
-            "2. Decimals represent point values. Do not mistake thousands separator commas (,) as decimal points (.), and do not mistake decimal points (.) as commas (,). E.g., '1,500.00' is 1500, not 1.5. '12.50' is 12.5, not 1250.\n" +
-            "3. Double check the grand total amount 'amount'. Look for labels such as 'الإجمالي شامل ضريبة القيمة المضافة', 'المجموع', 'Total', 'Net Amount', 'الصافي', or similar. Verify that the 'amount' field matches are transcribed character-by-character to avoid reading errors.\n" +
-            "4. Ensure item prices in 'price_with_tax' are extracted with digit-by-digit accuracy. If an item has '10.50', extract exactly 10.5.\n" +
-            "\n" +
-            "FIELD DEFINITIONS:\n" +
-            "- 'company' (Arabic supplier name, e.g., المراعي, or write 'فاتورة' if the supplier name is not clearly visible/readable/identifiable directly).\n" +
-            "- 'invoice_no' (The real actual serial invoice number representing the invoice itself. DO NOT grab the Tax Identification Number / الرقم الضريبي which starts with 3 and has 15 digits, and DO NOT grab the CR 10-digit number. Look specifically for 'رقم الفاتورة', 'رقم الفاتورة الضريبية', 'مسلسل الفاتورة', 'Invoice No', 'INV-#', 'رقم المستند' and separate them distinctly).\n" +
-            "- 'invoice_date' (formatted strictly as YYYY-MM-DD).\n" +
-            "- 'amount' (grand total inclusive of VAT as a decimal).\n" +
-            "- 'items' (JSON array of objects representing items, each containing 'name' [Arabic name of the product], 'qty' [quantity/spec], 'price_with_tax' [total price for this item after tax], and 'category' [Arabic commodity type e.g., 'خضار', 'غاز', 'ديزل', 'بيبسي', 'لحوم', 'منظفات', 'مستلزمات' based on name]).\n" +
-            "If the supplier's name is unclear, set company to 'فاتورة'. Ensure utmost professional precision on numbers.";
+          const promptInstruction = "You are an expert OCR AI system specialized in Saudi Arabian tax invoices (ZATCA / هيئة الزكاة والضريبة والجمارك) and receipt analysis.\n\n" +
+            "CRITICAL EXTRACTION DIRECTIVES:\n" +
+            "1. NUMBERS & AMOUNTS ACCURACY:\n" +
+            "   - Read every number with digit-by-digit precision. Convert all Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩) to standard English numbers (0-9).\n" +
+            "   - Preserve decimal points accurately. Do NOT confuse thousands separators (,) with decimal points (.). For example: '1,250.50' is 1250.5, '15.00' is 15.0, '12.50' is 12.5 (never 1250).\n" +
+            "   - Grand Total ('amount'): Locate the ultimate final payable total (الإجمالي شامل ضريبة القيمة المضافة / المجموع الكلي / Grand Total / Net Total). Extract the exact number.\n\n" +
+            "2. SUPPLIER / COMPANY NAME ('company'):\n" +
+            "   - Extract the Arabic trade name of the supplier/vendor clearly (e.g. المراعي, نادك, اسواق العثيم, شركة الغاز, دواجن الوطنية, الخ).\n" +
+            "   - If the supplier name is completely unrecognizable or missing, output 'فاتورة'.\n\n" +
+            "3. INVOICE SERIAL NUMBER ('invoice_no'):\n" +
+            "   - MUST extract the actual document/receipt serial number (e.g. 'INV-10293', '004921', 'رقم الفاتورة', 'مسلسل', 'Receipt#').\n" +
+            "   - CRITICAL WARNING: NEVER use the 15-digit Tax Identification Number (الرقم الضريبي / TIN starting with 3xxxxxxxxxxxxx) as the invoice_no. NEVER use the 10-digit Commercial Register (السجل التجاري) as invoice_no.\n\n" +
+            "4. INVOICE DATE ('invoice_date'):\n" +
+            "   - Format strictly as YYYY-MM-DD in Gregorian calendar.\n" +
+            "   - If only a Hijri date is printed (e.g., 1445 or 1446 H), accurately convert it to its equivalent Gregorian YYYY-MM-DD date.\n\n" +
+            "5. LINE ITEMS ('items'):\n" +
+            "   - Extract purchased item rows with 'name' (Arabic item title), 'qty' (e.g. '5 كجم', '2 كرتون', '1 حبة'), 'price_with_tax' (the price inclusive of tax), and 'category' (e.g. خضار, غاز, ديزل, بيبسي, لحوم, دواجن, منظفات, مخبوزات, مستلزمات).\n" +
+            "   - If individual line items cannot be determined, provide a single item with the invoice description and total amount.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-3.6-flash",
+            model: "gemini-2.5-flash",
             contents: {
               parts: [
                 {
@@ -2422,11 +2421,11 @@ async function startServer() {
                   },
                   invoice_no: { 
                     type: Type.STRING, 
-                    description: "The actual invoice serial number. CRITICAL: NEVER capture the Tax Identification Number (الرقم الضريبي / TIN / 15-digit code) or Commercial Registration (السجل التجاري / CR) here. Specifically find and separate actual invoice number labels like 'رقم الفاتورة', 'Invoice No', 'رقم المستند', 'F#', or sequential code from any 15-digit Tax Identification number." 
+                    description: "The actual invoice serial number. CRITICAL: NEVER capture the 15-digit Tax ID (الرقم الضريبي) or CR (السجل التجاري) here." 
                   },
                   invoice_date: { 
                     type: Type.STRING, 
-                    description: "Printed invoice date, formatted STRICTLY as YYYY-MM-DD." 
+                    description: "Printed invoice date in Gregorian format strictly as YYYY-MM-DD." 
                   },
                   amount: { 
                     type: Type.NUMBER, 
@@ -2440,7 +2439,7 @@ async function startServer() {
                         name: { type: Type.STRING, description: "Arabic name of the purchased item/product" },
                         qty: { type: Type.STRING, description: "Quantity or specification of the purchased item" },
                         price_with_tax: { type: Type.NUMBER, description: "Total price of this item after VAT/Tax" },
-                        category: { type: Type.STRING, description: "Arabic category/type of the item (e.g. خضار, غاز, ديزل, بيبسي, لحوم, إلخ) based on its identity" }
+                        category: { type: Type.STRING, description: "Arabic category/type of the item (e.g. خضار, غاز, ديزل, بيبسي, لحوم, إلخ)" }
                       },
                       required: ["name", "price_with_tax", "category"]
                     },
@@ -2494,10 +2493,17 @@ async function startServer() {
             company = "فاتورة";
           }
 
-          parsedResults.push({
+          // Clean up invoice_no if model accidentally returned 15-digit Tax ID
+          let invoiceNo = String(parsedObj.invoice_no || "").trim();
+          if (/^3\d{14}$/.test(invoiceNo)) {
+            // It's a 15-digit ZATCA TIN, clear it so user doesn't get misleading invoice number
+            invoiceNo = "";
+          }
+
+          return {
             success: true,
             company: company,
-            invoice_no: parsedObj.invoice_no || "",
+            invoice_no: invoiceNo,
             invoice_date: parsedObj.invoice_date || "",
             amount: typeof parsedObj.amount === "number" ? parsedObj.amount : (parseFloat(parsedObj.amount) || 0),
             items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => ({
@@ -2506,10 +2512,10 @@ async function startServer() {
               price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
             })).filter((it: any) => it.name !== "") : [],
             tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-          });
+          };
         } catch (err: any) {
           console.error(`Error parsing image at index ${idx}:`, err);
-          parsedResults.push({
+          return {
             success: false,
             error: err.message || "فشل قراءة تفاصيل الصورة",
             company: "فاتورة",
@@ -2518,8 +2524,18 @@ async function startServer() {
             amount: 0,
             items: [],
             tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-          });
+          };
         }
+      };
+
+      // Process images concurrently in batches of 3 to optimize speed without exceeding quotas
+      const batchSize = 3;
+      const parsedResults: any[] = [];
+      for (let i = 0; i < images.length; i += batchSize) {
+        const batch = images.slice(i, i + batchSize);
+        const batchPromises = batch.map((img, bIdx) => parseSingleImage(img, i + bIdx));
+        const batchResults = await Promise.all(batchPromises);
+        parsedResults.push(...batchResults);
       }
 
       res.json({ success: true, results: parsedResults });
