@@ -13,15 +13,17 @@ import EmployeesTab from "./components/EmployeesTab";
 import SettingsTab from "./components/SettingsTab";
 import BakeryTab from "./components/BakeryTab";
 import DrinksTab from "./components/DrinksTab";
+import SecondAccountantTab from "./components/SecondAccountantTab";
 import { AslIskanderLogoSymbol, AslIskanderText } from "./components/AslIskanderLogo";
 
-type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings" | "bakery" | "drinks";
-type RoleType = "مدير" | "محاسب" | "مدخل فواتير";
+type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings" | "bakery" | "drinks" | "assistant";
+type RoleType = "مدير" | "محاسب" | "مدخل فواتير" | "محاسب ثان";
 
 const PERMISSIONS: Record<RoleType, Record<TabType, boolean>> = {
-  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true, bakery: true, drinks: true },
-  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: false, drinks: false },
-  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false, bakery: false, drinks: false }
+  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true, bakery: true, drinks: true, assistant: true },
+  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: false, drinks: false, assistant: false },
+  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false, bakery: false, drinks: false, assistant: false },
+  "محاسب ثان": { input: false, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: false, drinks: false, assistant: true }
 };
 
 interface UserSession {
@@ -34,7 +36,17 @@ interface UserSession {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabType>("input");
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    try {
+      const saved = sessionStorage.getItem("alex_user_session");
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u.role === "محاسب ثان") return "assistant";
+        if (u.role === "مدخل فواتير") return "tax";
+      }
+    } catch (e) {}
+    return "input";
+  });
   
   // Clean, persistent User Session state
   const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
@@ -327,6 +339,13 @@ export default function App() {
           sessionStorage.setItem("alex_user_session", JSON.stringify(data.user));
           localStorage.removeItem("alex_user_session"); // strictly clean localStorage copy
           setCurrentUser(data.user);
+          if (data.user.role === "محاسب ثان") {
+            setActiveTab("assistant");
+          } else if (data.user.role === "مدخل فواتير") {
+            setActiveTab("tax");
+          } else {
+            setActiveTab("input");
+          }
           showToast(`🔓 تم تفويض دخول: ${data.user.displayName}`);
         }
       } else {
@@ -401,7 +420,8 @@ export default function App() {
                   placeholder="e.g. admin"
                   value={loginUsername}
                   onChange={(e) => setLoginUsername(e.target.value)}
-                  className="w-full text-left pl-3 pr-10 py-2.5 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono"
+                  className="w-full text-left pl-3 pr-10 py-2.5 text-xs text-black border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono font-bold placeholder:text-slate-400 caret-black"
+                  style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
                 />
                 <User className="w-4 h-4 text-slate-400 absolute right-3 top-3.5" />
               </div>
@@ -419,7 +439,8 @@ export default function App() {
                   placeholder="ادخل رمز الدخول الموحد"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full pl-3 pr-10 py-2.5 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono"
+                  className="w-full pl-3 pr-10 py-2.5 text-xs text-black border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono font-bold placeholder:text-slate-400 caret-black"
+                  style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
                 />
                 <Shield className="w-4 h-4 text-slate-400 absolute right-3 top-3.5" />
               </div>
@@ -609,6 +630,19 @@ export default function App() {
             </button>
           )}
 
+          {isTabAllowed("assistant") && (
+            <button
+              onClick={() => setActiveTab("assistant")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "assistant"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Terminal className="w-4 h-4 text-amber-500" /> بوابة المحاسب الثاني
+            </button>
+          )}
+
           {isTabAllowed("settings") && (
             <button
               onClick={() => setActiveTab("settings")}
@@ -635,6 +669,14 @@ export default function App() {
             >
               {activeTab === "input" && isTabAllowed("input") && (
                 <DailyInputTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "assistant" && isTabAllowed("assistant") && (
+                <SecondAccountantTab 
+                  onShowToast={showToast} 
+                  userRole={userRole} 
+                  userBranch={currentUser?.branch || "الكل"} 
+                  userName={currentUser?.displayName || currentUser?.username}
+                />
               )}
               {activeTab === "purchases" && isTabAllowed("purchases") && (
                 <PurchasesTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />

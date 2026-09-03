@@ -17,7 +17,7 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<'مدير' | 'محاسب' | 'مدخل فواتير'>("محاسب");
+  const [role, setRole] = useState<'مدير' | 'محاسب' | 'مدخل فواتير' | 'محاسب ثان'>("محاسب");
   const [status, setStatus] = useState<'نشط' | 'موقوف'>("نشط");
   const [branch, setBranch] = useState<'الكل' | 'القادسية' | 'المروج'>("الكل");
   const [canEnterInvoices, setCanEnterInvoices] = useState(false);
@@ -270,6 +270,7 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
                 className="w-full px-2.5 py-2 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-bold text-slate-700"
               >
                 <option value="محاسب">👤 المحاسب المعتمد (المبيعات والرسوم فقط)</option>
+                <option value="محاسب ثان">⚖️ محاسب ثان (واجهة إدخال يومي ثنائية اللغة AR/EN)</option>
                 <option value="مدخل فواتير">📥 مدخل فواتير (المشتريات الضريبية فقط)</option>
                 <option value="مدير">🛡️ المدير العام (مدير بصلاحيات كاملة شاملة)</option>
               </select>
@@ -388,9 +389,10 @@ export default function UserManagementSection({ onShowToast }: UserManagementSec
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {users.map((user) => {
-                  const roleColors = {
+                  const roleColors: Record<string, string> = {
                     "مدير": "bg-indigo-50 border border-indigo-200 text-indigo-700",
                     "محاسب": "bg-emerald-50 border border-emerald-200 text-emerald-700",
+                    "محاسب ثان": "bg-sky-50 border border-sky-200 text-sky-700",
                     "مدخل فواتير": "bg-amber-50 border border-amber-200 text-amber-500"
                   };
                   return (

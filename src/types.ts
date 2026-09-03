@@ -99,6 +99,13 @@ export interface DailyEntry {
   sauces_cap?: number;
   diesel_cap?: number;
 
+  // Second Accountant & Delivery Extension
+  delivery_count?: number;
+  delivery_rate?: number;
+  entered_by?: string;
+  review_status?: 'draft' | 'pending_review' | 'approved';
+  extra_pos_devices?: { name?: string; mada: number; visa: number }[];
+
   net_day: number; // computed net profit
 }
 
@@ -153,7 +160,7 @@ export interface UnifiedUser {
   username: string;
   displayName: string;
   password: string;
-  role: 'مدير' | 'محاسب' | 'مدخل فواتير';
+  role: 'مدير' | 'محاسب' | 'مدخل فواتير' | 'محاسب ثان';
   status: 'نشط' | 'موقوف';
   branch?: 'الكل' | 'القادسية' | 'المروج';
   createdAt: string;

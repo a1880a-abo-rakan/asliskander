@@ -4,7 +4,7 @@ import ReorderTimerBanner from "./ReorderTimerBanner";
 import { 
   Building, Calendar, DollarSign, CreditCard, ChevronRight, AlertCircle, 
   Trash, Save, Info, Plus, FileText, ChevronLeft, RefreshCw, TrendingDown,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Check, Clock, Truck
 } from "lucide-react";
 
 interface DailyInputTabProps {
@@ -122,6 +122,10 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   // Permanet/Fixed Deductions
   const [fixedDeduct, setFixedDeduct] = useState<number | "">("");
   const [fixedNote, setFixedNote] = useState("");
+
+  // Delivery Count & Multiplier (for Qadisiyah: count * rate; for Murooj: amount directly)
+  const [deliveryCount, setDeliveryCount] = useState<number | "">("");
+  const [deliveryRate, setDeliveryRate] = useState<number>(6);
 
   // Extra customizable daily expenses items list
   const [others, setOthers] = useState<OtherExpense[]>([
@@ -279,7 +283,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   // Keep form in sync with database records of the selected date & branch
   useEffect(() => {
     const existing = history.find(d => d.date === date && d.branch === branch);
-    if (existing && isLoadedForEdit) {
+    if (existing && (isLoadedForEdit || existing.entered_by === "محاسب ثان" || existing.review_status === "pending_review")) {
       setSarf(existing.sarf ?? 350);
       setCashBox(existing.cash_box || "");
       setPurGas(existing.pur_gas || "");
@@ -301,16 +305,50 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
       setPlasticType(existing.plastic_type || 'payment');
       setSaucesPaid(existing.sauces_paid || "");
       setSaucesType(existing.sauces_type || 'payment');
-      setGasExp(existing.gas || "");
-      setVegExp(existing.vegetables || "");
-      setBreadExp(existing.bread || "");
-      setGroceryExp(existing.grocery || "");
+      setGasExp(existing.gas || existing.pur_gas || "");
+      setVegExp(existing.vegetables || existing.pur_veg || "");
+      setBreadExp(existing.bread || existing.pur_bread || "");
+      setGroceryExp(existing.grocery || existing.pur_groc || "");
       setDieselPaid(existing.diesel_paid || "");
       setDieselType(existing.diesel_type || 'payment');
-      setFixedDeduct(existing.fixed_deduct || "");
-      setFixedNote(existing.fixed_note || "");
-      setOthers(existing.others && existing.others.length > 0 ? existing.others : [{ name: "", amt: 0 }]);
+      setFixedDeduct(existing.fixed_deduct !== undefined && existing.fixed_deduct !== null && existing.fixed_deduct !== 0
+        ? existing.fixed_deduct 
+        : (userRole === "مدير" ? (branch === "القادسية" ? 650 : 575) : ""));
+      setFixedNote(existing.fixed_note || (userRole === "مدير" ? "مصاريف دائمة" : ""));
       setNotes(existing.notes || "");
+
+      // Load delivery count and rate, and compute delivery item for Manager
+      const deliveryItem = (existing.others || []).find(o => o.name === "توصيل");
+      const activeRate = existing.delivery_rate || 6;
+      setDeliveryRate(activeRate);
+
+      let loadedCount: number | "" = "";
+      if (existing.delivery_count !== undefined && existing.delivery_count !== null && existing.delivery_count > 0) {
+        loadedCount = existing.delivery_count;
+        setDeliveryCount(existing.delivery_count);
+      } else if (deliveryItem) {
+        if (branch === "القادسية") {
+          loadedCount = Math.round(deliveryItem.amt / activeRate);
+          setDeliveryCount(loadedCount);
+        } else {
+          loadedCount = deliveryItem.amt;
+          setDeliveryCount(loadedCount);
+        }
+      } else {
+        setDeliveryCount("");
+      }
+
+      // Automatically sync "توصيل" in others for Manager
+      const valCount = typeof loadedCount === "number" ? loadedCount : 0;
+      const computedAmt = branch === "القادسية" ? Number((valCount * activeRate).toFixed(2)) : valCount;
+
+      const baseOthers = existing.others && existing.others.length > 0 ? existing.others : [{ name: "", amt: 0 }];
+      const restOthers = baseOthers.filter(o => o.name !== "توصيل");
+      if (computedAmt > 0) {
+        setOthers([{ name: "توصيل", amt: computedAmt }, ...restOthers.filter(o => o.name)]);
+      } else {
+        setOthers(restOthers.length > 0 ? restOthers : [{ name: "", amt: 0 }]);
+      }
     } else {
       // Warm reset for clean entry of a brand new day
       setCashBox("");
@@ -334,10 +372,13 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
       setBreadExp("");
       setGroceryExp("");
       setDieselPaid("");
-      setFixedDeduct("");
-      setFixedNote("");
+      // User mandate: default fixed deduction in Manager view is 650 for Qadisiyah, 575 for Murooj, and note is "مصاريف دائمة"
+      setFixedDeduct(userRole === "مدير" ? (branch === "القادسية" ? 650 : 575) : "");
+      setFixedNote(userRole === "مدير" ? "مصاريف دائمة" : "");
       setOthers([{ name: "", amt: 0 }]);
       setNotes("");
+      setDeliveryCount("");
+      setDeliveryRate(6);
       setEditingCaps({});
       setPepsiType('payment');
       setPlasticType('payment');
@@ -347,7 +388,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
         setSarf(settings.صرف_افتراضي || 350);
       }
     }
-  }, [date, branch, history, settings, isLoadedForEdit]);
+  }, [date, branch, history, settings, isLoadedForEdit, userRole]);
 
   // Form calculations
   const valCashBox = parseFloat(cashBox as string) || 0;
@@ -567,6 +608,44 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     setOthers(updated);
   };
 
+  const computedDeliveryAmount = branch === "القادسية" 
+    ? (typeof deliveryCount === "number" ? Number((deliveryCount * deliveryRate).toFixed(2)) : 0)
+    : (typeof deliveryCount === "number" ? deliveryCount : 0);
+
+  const handleDeliveryChange = (newCount: number | "", newRate?: number) => {
+    setDeliveryCount(newCount);
+    const activeRate = newRate !== undefined ? newRate : deliveryRate;
+    if (newRate !== undefined) setDeliveryRate(newRate);
+
+    const valCount = typeof newCount === "number" ? newCount : 0;
+    const computedAmt = branch === "القادسية" ? Number((valCount * activeRate).toFixed(2)) : valCount;
+
+    setOthers(prev => {
+      const rest = prev.filter(o => o.name !== "توصيل");
+      if (computedAmt > 0) {
+        return [{ name: "توصيل", amt: computedAmt }, ...rest];
+      }
+      return rest.length > 0 ? rest : [{ name: "", amt: 0 }];
+    });
+  };
+
+  const handlePurGasChange = (val: number | "") => {
+    setPurGas(val);
+    setGasExp(val);
+  };
+  const handlePurBreadChange = (val: number | "") => {
+    setPurBread(val);
+    setBreadExp(val);
+  };
+  const handlePurVegChange = (val: number | "") => {
+    setPurVeg(val);
+    setVegExp(val);
+  };
+  const handlePurGrocChange = (val: number | "") => {
+    setPurGroc(val);
+    setGroceryExp(val);
+  };
+
   const clearForm = () => {
     setCashBox("");
     setPurGas("");
@@ -589,8 +668,10 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     setBreadExp("");
     setGroceryExp("");
     setDieselPaid("");
-    setFixedDeduct("");
-    setFixedNote("");
+    setDeliveryCount("");
+    setDeliveryRate(6);
+    setFixedDeduct(userRole === "مدير" ? (branch === "القادسية" ? 650 : 575) : "");
+    setFixedNote(userRole === "مدير" ? "مصاريف دائمة" : "");
     setOthers([{ name: "", amt: 0 }]);
     setNotes("");
     setEditingCaps({});
@@ -639,18 +720,22 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
         pepsi_type: carryovers.some(c => c.key === "pepsi" && c.carry > 0) ? pepsiType : 'invoice',
         plastic_paid: valPlasticPaid,
         plastic_type: carryovers.some(c => c.key === "plastic" && c.carry > 0) ? plasticType : 'invoice',
-        gas: valGasExp,
-        vegetables: valVegExp,
+        gas: valGasExp || valPurGas,
+        vegetables: valVegExp || valPurVeg,
         sauces_paid: valSaucesPaid,
         sauces_type: carryovers.some(c => c.key === "sauces" && c.carry > 0) ? saucesType : 'invoice',
-        bread: valBreadExp,
-        grocery: valGroceryExp,
+        bread: valBreadExp || valPurBread,
+        grocery: valGroceryExp || valPurGroc,
         diesel_paid: valDieselPaid,
         diesel_type: carryovers.some(c => c.key === "diesel" && c.carry > 0) ? dieselType : 'invoice',
         others: others.filter((o) => o.name && o.amt > 0),
+        delivery_count: typeof deliveryCount === "number" ? deliveryCount : 0,
+        delivery_rate: deliveryRate,
         fixed_deduct: valFixedDeduct,
         fixed_note: fixedNote,
         notes,
+        entered_by: existing?.entered_by || (userRole === "محاسب ثان" ? "محاسب ثان" : "مدير"),
+        review_status: userRole === "مدير" ? "approved" : (existing?.review_status || "pending_review"),
         pepsi_cap: editingCaps.pepsi !== undefined ? editingCaps.pepsi : undefined,
         plastic_cap: editingCaps.plastic !== undefined ? editingCaps.plastic : undefined,
         sauces_cap: editingCaps.sauces !== undefined ? editingCaps.sauces : undefined,
@@ -1020,6 +1105,42 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
             const todayDateStr = getTodayDateStr();
             const isSameDay = date === todayDateStr;
             const canModify = isSameDay || userRole === "مدير";
+            const isPendingReview = existing.review_status === "pending_review" || existing.entered_by === "محاسب ثان";
+
+            if (isPendingReview && userRole === "مدير") {
+              return (
+                <div className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl mt-0.5 animate-pulse">📥</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs font-black text-amber-950">
+                          مدخلات مستلمة من المحاسب الثاني (بانتظار المراجعة والاعتماد) لفرع {branch} بتاريخ {date}
+                        </h4>
+                        <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-2 py-0.5 rounded-md border border-amber-300">
+                          بانتظار المراجعة
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-amber-900 font-medium">
+                        تم تحميل أرقام الصندوق والشبكات والمشتريات والموردين والتوصيل في الحقول أدناه. يمكنك مراجعتها وتعديل أي رقم حسب الصواب، ثم الضغط على زر الاعتماد.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleSaveDay}
+                      disabled={loading}
+                      className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>اعتماد وحفظ اليومية</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div className={`p-4 rounded-xl border ${canModify ? (isLoadedForEdit ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200') : 'bg-slate-50 border-slate-200'} flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300`}>
                 <div className="flex items-start gap-3">
@@ -1189,8 +1310,9 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 type="number"
                 placeholder="0.00"
                 value={purGas}
-                onChange={(e) => setPurGas(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
+                onChange={(e) => handlePurGasChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-black font-bold"
+                style={{ color: "#000000" }}
               />
             </div>
             <div className="space-y-1">
@@ -1199,8 +1321,9 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 type="number"
                 placeholder="0.00"
                 value={purBread}
-                onChange={(e) => setPurBread(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
+                onChange={(e) => handlePurBreadChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-black font-bold"
+                style={{ color: "#000000" }}
               />
             </div>
             <div className="space-y-1">
@@ -1209,8 +1332,9 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 type="number"
                 placeholder="0.00"
                 value={purVeg}
-                onChange={(e) => setPurVeg(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
+                onChange={(e) => handlePurVegChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-black font-bold"
+                style={{ color: "#000000" }}
               />
             </div>
             <div className="space-y-1">
@@ -1219,8 +1343,9 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 type="number"
                 placeholder="0.00"
                 value={purGroc}
-                onChange={(e) => setPurGroc(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg"
+                onChange={(e) => handlePurGrocChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-black font-bold"
+                style={{ color: "#000000" }}
               />
             </div>
           </div>
@@ -1995,6 +2120,90 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
           </div>
         </div>
 
+        {/* Delivery Orders Section */}
+        <div className="space-y-3 pt-4 border-t border-slate-100">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-700 uppercase tracking-widest border-r-2 border-indigo-600 pr-2 flex items-center gap-1.5">
+              <Truck className="w-4 h-4 text-indigo-600" />
+              <span>🚚 بند التوصيل (ينعكس في بنود المصروفات باسم "توصيل"):</span>
+            </h4>
+            <span className="text-xs bg-indigo-50 text-indigo-800 font-bold px-2.5 py-0.5 rounded-lg border border-indigo-150 font-mono">
+              إجمالي مبلغ التوصيل: {computedDeliveryAmount.toFixed(2)} ر
+            </span>
+          </div>
+
+          <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+            {branch === "القادسية" ? (
+              <>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700">عدد التوصيل (فرع القادسية)</label>
+                  <input
+                    type="number"
+                    step="1"
+                    placeholder="0"
+                    value={deliveryCount}
+                    onChange={(e) => handleDeliveryChange(e.target.value === "" ? "" : parseInt(e.target.value, 10), deliveryRate)}
+                    className="w-full px-3 py-1.5 text-xs border border-slate-250 rounded-lg bg-white font-mono font-bold text-black"
+                    style={{ color: "#000000" }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700">معامل الضرب (قابل للتعديل بجوار المبلغ)</label>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-500">×</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="6"
+                      value={deliveryRate}
+                      onChange={(e) => handleDeliveryChange(deliveryCount, e.target.value === "" ? 6 : parseFloat(e.target.value))}
+                      className="w-20 px-3 py-1.5 text-xs border border-slate-250 rounded-lg bg-white font-mono font-bold text-indigo-700 text-center"
+                      style={{ color: "#000000" }}
+                    />
+                    <span className="text-xs font-bold text-slate-500">ريال للطلب</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700">المبلغ المحسوب تلقائياً</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${computedDeliveryAmount.toFixed(2)} ريال`}
+                    className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-indigo-50/50 font-mono font-bold text-indigo-950"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[11px] font-bold text-slate-700">مبلغ التوصيل لفرع المروج (يدخل عدد التوصيل كمبلغ مباشرة)</label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={deliveryCount}
+                      onChange={(e) => handleDeliveryChange(e.target.value === "" ? "" : parseFloat(e.target.value), 1)}
+                      className="w-full px-3 py-1.5 text-xs border border-slate-250 rounded-lg bg-white font-mono font-bold text-black"
+                      style={{ color: "#000000" }}
+                    />
+                    <span className="absolute left-3 top-1.5 text-xs font-bold text-slate-400">ريال</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700">المبلغ النهائي</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${computedDeliveryAmount.toFixed(2)} ريال`}
+                    className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-indigo-50/50 font-mono font-bold text-indigo-950"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* Permanent fixed deductions */}
         <div className="space-y-4 pt-4 border-t border-slate-100">
           <h4 className="text-xs font-bold text-rose-700 uppercase tracking-widest border-r-2 border-rose-700 pr-2">📌 خصوم ثابتة شهرية أو تراكميات مبيعات موحدة:</h4>
@@ -2004,20 +2213,22 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
               <label className="text-xs font-bold text-slate-700">مبلغ التحصيل أو الخصم الثابت</label>
               <input
                 type="number"
-                placeholder="مثال: قطوع رواتب أو إيجار جزئي"
+                placeholder={branch === "القادسية" ? "افتراضي: 650" : "افتراضي: 575"}
                 value={fixedDeduct}
                 onChange={(e) => setFixedDeduct(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg text-black font-bold"
+                style={{ color: "#000000" }}
               />
             </div>
             <div className="space-y-1 col-span-2">
               <label className="text-xs font-bold text-slate-750">ملاحظة البند الثابت</label>
               <input
                 type="text"
-                placeholder="مثال: خصم إيجار للمحل + عهدة راتب المحاسب مضافة"
+                placeholder="مصاريف دائمة"
                 value={fixedNote}
                 onChange={(e) => setFixedNote(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg text-black font-bold"
+                style={{ color: "#000000" }}
               />
             </div>
           </div>
