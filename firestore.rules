@@ -1,78 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 1. Settings Rules
-    match /settings/{docId} {
+    match /abna_system_data/{document=**} {
       allow read, write: if true;
-    }
-    
-    // 2. Daily Entry Rules
-    match /days/{docId} {
-      allow read, write: if true;
-    }
-    
-    // 3. Shared Diesel rules
-    match /diesel/{docId} {
-      allow read, write: if true;
-    }
-    
-    // 4. Tax Invoices rules
-    match /tax_invoices/{docId} {
-      allow read, write: if true;
-    }
-
-    // 5. Users rules
-    match /users/{docId} {
-      allow read, write: if true;
-    }
-    
-    // 6. Purchases rules
-    match /purchases/{docId} {
-      allow read, write: if true;
-    }
-
-    // 7. Employee Management collections (employees, advances, attendance)
-    match /employees/{docId} {
-      allow read, write: if true;
-    }
-    match /employee_advances/{docId} {
-      allow read, write: if true;
-    }
-    match /employee_attendance/{docId} {
-      allow read, write: if true;
-    }
-    match /employee_violations/{docId} {
-      allow read, write: if true;
-    }
-
-    // 8. WhatsApp Gateway settings rules
-    match /whatsapp_settings/{docId} {
-      allow read, write: if true;
-    }
-
-    // 9. WhatsApp Gateway logs rules
-    match /whatsapp_messages/{docId} {
-      allow read, write: if true;
-    }
-
-    // 10. Tax Companies rules
-    match /tax_registered_companies/{docId} {
-      allow read, write: if true;
-    }
-
-    // 11. Bakery entries rules
-    match /bakery_entries/{docId} {
-      allow read, write: if true;
-    }
-
-    // 12. Drinks entries rules
-    match /drinks_entries/{docId} {
-      allow read, write: if true;
-    }
-
-    // Global Safety Net (Default Deny Catch All)
-    match /{document=**} {
-      allow read, write: if false;
     }
   }
 }

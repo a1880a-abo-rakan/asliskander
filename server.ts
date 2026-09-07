@@ -1,3228 +1,3243 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry } from "./src/types";
-import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
-import "dotenv/config";
+import fs from "fs";
+import * as BaileysModule from "@whiskeysockets/baileys";
+import pino from "pino";
+import QRCode from "qrcode";
+import {
+  backupBaileysSessionToFirestore,
+  restoreBaileysSessionFromFirestore,
+  deleteBaileysSessionInFirestore,
+  syncServerStateToFirestore,
+  loadServerStateFromFirestore,
+  forceFlushServerStateToFirestore,
+  deleteServerStateInFirestore,
+} from "./src/serverFirebase";
+import { DEFAULT_SAMPLE_TEACHERS, DEFAULT_SAMPLE_SCHEDULE } from "./src/utils/teachersScheduleParser";
+import { calculateStudentIndicators, calculateOverallPriority } from "./src/utils/studentSupportRulesEngine";
+import { analyzeSurveyResponses, generateActivationCode } from "./src/utils/studentNeedsRulesEngine";
+import { evaluateParentCouncilApplication } from "./src/types/parentCouncil";
 
-// Firebase Integration Setup
-import { initializeApp } from "firebase/app";
-import { 
-  getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc, initializeFirestore
-} from "firebase/firestore";
+// Resilient resolution of makeWASocket and helpers across ESM/CJS environments
+const baileysRaw: any = (BaileysModule as any).default || BaileysModule;
+const makeWASocket = typeof baileysRaw === "function" 
+  ? baileysRaw 
+  : (baileysRaw.makeWASocket || (BaileysModule as any).makeWASocket || (BaileysModule as any).default);
 
-let firebaseConfig: any = null;
-const CONFIG_PATH = path.join(process.cwd(), "firebase-applet-config.json");
+const useMultiFileAuthState = (BaileysModule as any).useMultiFileAuthState || baileysRaw.useMultiFileAuthState;
+const DisconnectReason = (BaileysModule as any).DisconnectReason || baileysRaw.DisconnectReason;
+const fetchLatestBaileysVersion = (BaileysModule as any).fetchLatestBaileysVersion || baileysRaw.fetchLatestBaileysVersion;
+const Browsers = (BaileysModule as any).Browsers || baileysRaw.Browsers;
 
-if (fs.existsSync(CONFIG_PATH)) {
-  try {
-    firebaseConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-  } catch (err) {
-    console.warn("Could not parse firebase-applet-config.json, falling back to environment variables.", err);
-  }
-}
+// Process Safety Guards to prevent crashes on socket drops
+process.on("uncaughtException", (err) => {
+  console.warn("Recovered from uncaughtException:", err?.message || err);
+});
 
-if (!firebaseConfig) {
-  firebaseConfig = {
-    projectId: process.env.FIREBASE_PROJECT_ID || process.env.projectId,
-    appId: process.env.FIREBASE_APP_ID || process.env.appId,
-    apiKey: process.env.FIREBASE_API_KEY || process.env.apiKey,
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN || process.env.authDomain,
-    firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || process.env.firestoreDatabaseId,
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || process.env.storageBucket,
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || process.env.messagingSenderId,
-    measurementId: process.env.FIREBASE_MEASUREMENT_ID || process.env.measurementId || ""
-  };
-}
+process.on("unhandledRejection", (reason) => {
+  console.warn("Recovered from unhandledRejection:", reason);
+});
 
-const appFirebase = initializeApp(firebaseConfig);
-const db = initializeFirestore(appFirebase, {
-  experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId || "(default)");
+// Initialize Express app
+const app = express();
+const PORT = 3000;
 
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Initialize Gemini Client Lazily
-function getAiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
+// Health Check Endpoints for Render, Uptime Monitors, and Cloud Probes
+app.get(["/api/health", "/health", "/ping"], (req, res) => {
+  const isConnected = realConnectionStatus === "connected" || !!(sock && sock.user);
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    whatsappMode: whatsappConfig.mode,
+    isConnected,
+    realStatus: realConnectionStatus,
+    connectedPhone: connectedPhoneNumber ? `+${connectedPhoneNumber}` : (whatsappConfig.simulatedPhone || ""),
   });
-}
+});
 
-// Helper to perform Gemini API generation with resilient retries for transient/503/404/quota errors
-async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1000) {
-  const aiClient = getAiClient();
-  if (!aiClient) {
-    throw new Error("لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Environment Variables)");
-  }
-  let attempt = 0;
-  // Dynamic fallback models list with standard official supported Gemini models
-  const modelsToTry = [
-    "gemini-2.5-flash",
-    "gemini-3.7-flash",
-    "gemini-2.5-pro"
-  ];
-
-  while (attempt <= maxRetries) {
-    const currentModel = modelsToTry[attempt % modelsToTry.length];
-    try {
-      const targetParams = { ...params, model: currentModel };
-      
-      console.log(`[Gemini API] Requesting ${currentModel} (Attempt ${attempt + 1}/${maxRetries + 1})...`);
-      return await aiClient.models.generateContent(targetParams);
-    } catch (err: any) {
-      const errMsg = err.message || "";
-      const isTransient = 
-        errMsg.includes("503") || 
-        errMsg.includes("404") ||
-        errMsg.includes("not available") ||
-        errMsg.includes("no longer available") ||
-        errMsg.includes("NOT_FOUND") ||
-        errMsg.includes("high demand") || 
-        errMsg.includes("temporary") || 
-        errMsg.includes("UNAVAILABLE") || 
-        errMsg.includes("Rate limit") || 
-        errMsg.includes("quota") ||
-        errMsg.includes("resource exhausted") ||
-        errMsg.includes("RESOURCE_EXHAUSTED") ||
-        err.status === "UNAVAILABLE" ||
-        err.status === "NOT_FOUND" ||
-        err.status === 404 ||
-        err.status === 429 ||
-        err.status === 503;
-
-      if (isTransient && attempt < maxRetries) {
-        attempt++;
-        const waitTime = attempt === 1 ? 200 : delayMs;
-        console.warn(`[Gemini API] Transient/Model error on ${currentModel} (Attempt ${attempt}/${maxRetries}). Retrying with next model in ${waitTime}ms... Error: ${errMsg}`);
-        await new Promise((resolve) => setTimeout(resolve, waitTime));
-        delayMs *= 1.5;
-      } else {
-        console.error(`[Gemini API] Error requesting ${currentModel}:`, err);
-        throw err;
-      }
-    }
-  }
-  throw new Error("فشلت جميع محاولات قراءة الفاتورة عبر الذكاء الاصطناعي");
-}
-
-// Initial default settings
-const DEFAULT_SETTINGS: Settings = {
-  "رسوم_مدى": 0.8,
-  "رسوم_فيزا": 1.5,
-  "صرف_افتراضي": 350,
-  "سقف_بيبسي": 400,
-  "سقف_بيبسي_قادسية": 400,
-  "سقف_بيبسي_مروج": 400,
-  "سقف_بلاستيك": 100,
-  "سقف_بلاستيك_قادسية": 100,
-  "سقف_بلاستيك_مروج": 100,
-  "سقف_صلصات": 150,
-  "سقف_صلصات_قادسية": 150,
-  "سقف_صلصات_مروج": 150,
-  "سقف_ديزل_قادسية": 50,
-  "سقف_ديزل_مروج": 30,
-  "زيادة_عالي": 25,
-  "نسبة_قادسية_ديزل": 70,
-  "نسبة_مروج_ديزل": 30,
-  "ايام_مقارنة": 7,
-  "سقف_نسبة_السلفة_القصوى": 50
+// In-memory data store for WhatsApp states & Campaigns
+let whatsappConfig = {
+  mode: "simulated" as "simulated" | "real" | "cloud_api",
+  simulatedStatus: "disconnected" as "disconnected" | "qr_ready" | "connecting" | "connected",
+  simulatedPhone: "",
+  cloudApiKey: "",
+  cloudPhoneId: "",
+  cloudAccountId: "",
 };
 
-// Firestore helper functions
-function cleanObject(obj: any): any {
-  if (obj === null || obj === undefined) return null;
-  if (Array.isArray(obj)) {
-    return obj.map(cleanObject);
-  }
-  if (typeof obj === "object") {
-    const cleaned: any = {};
-    for (const [key, value] of Object.entries(obj)) {
-      if (value !== undefined) {
-        cleaned[key] = cleanObject(value);
-      }
-    }
-    return cleaned;
-  }
-  return obj;
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 6000, errorMsg: string = "طلب قاعدة البيانات استغرق وقتا طويلا (انتهت المهلة)"): Promise<T> {
-  let timeoutId: any;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error("TIMEOUT"));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } catch (err: any) {
-    const errMsg = err?.message || String(err);
-    if (errMsg === "TIMEOUT") {
-      throw new Error("تأخرت قاعدة البيانات في الاستجابة (TIMEOUT). قد يكون السبب تجاوز الحصة المجانية للكتابة (Firestore Quota Exceeded) أو انقطاع في الشبكة.");
-    }
-    if (errMsg.toLowerCase().includes("quota") || errMsg.toLowerCase().includes("exhausted") || errMsg.toLowerCase().includes("resource-exhausted")) {
-      throw new Error("لقد تم تجاوز الحصة اليومية المجانية لقاعدة البيانات (Firestore Quota Exceeded). يرجى الانتظار حتى يتم تصفير العداد اليومي أو ترقية الحساب.");
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function getSettings(): Promise<Settings> {
-  try {
-    const snap = await getDoc(doc(db, "settings", "app_settings"));
-    if (snap.exists()) {
-      const data = snap.data() as Settings;
-      return {
-        ...DEFAULT_SETTINGS,
-        ...data,
-        "سقف_بيبسي_قادسية": data.سقف_بيبسي_قادسية ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_قادسية,
-        "سقف_بيبسي_مروج": data.سقف_بيبسي_مروج ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_مروج,
-        "سقف_بلاستيك_قادسية": data.سقف_بلاستيك_قادسية ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_قادسية,
-        "سقف_بلاستيك_مروج": data.سقف_بلاستيك_مروج ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_مروج,
-        "سقف_صلصات_قادسية": data.سقف_صلصات_قادسية ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_قادسية,
-        "سقف_صلصات_mروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج, // keep backward fallback if any
-        "سقف_صلصات_مروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج,
-      } as Settings;
-    } else {
-      // Seed default settings on first load
-      await setDoc(doc(db, "settings", "app_settings"), cleanObject(DEFAULT_SETTINGS));
-      return DEFAULT_SETTINGS;
-    }
-  } catch (err) {
-    console.error("Error reading settings from Firestore:", err);
-    return DEFAULT_SETTINGS;
-  }
-}
-
-async function saveSettings(settings: Settings): Promise<void> {
-  try {
-    await setDoc(doc(db, "settings", "app_settings"), cleanObject(settings));
-  } catch (err) {
-    console.error("Error saving settings to Firestore:", err);
-  }
-}
-
-const DEFAULT_DEDUCTION_CONFIG: EmployeeDeductionConfig = {
-  id: "global-rules",
-  simpleThresholdMinutes: 15,
-  mediumThresholdMinutes: 30,
-  largeThresholdMinutes: 60,
-  simpleMaxWarnings: 3,
-  simpleDeductionHours: 1,
-  mediumDeductionHours: 3,
-  largeDeductionDayFraction: 0.5,
-  severeDeductionDayFraction: 1.0
-};
-
-async function getEmployeeDeductionConfig(): Promise<EmployeeDeductionConfig> {
-  try {
-    const snap = await getDoc(doc(db, "settings", "employee_deduction_rules"));
-    if (snap.exists()) {
-      return snap.data() as EmployeeDeductionConfig;
-    } else {
-      await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(DEFAULT_DEDUCTION_CONFIG));
-      return DEFAULT_DEDUCTION_CONFIG;
-    }
-  } catch (err) {
-    console.error("Error reading employee deduction rules from Firestore:", err);
-    return DEFAULT_DEDUCTION_CONFIG;
-  }
-}
-
-async function saveEmployeeDeductionConfig(config: EmployeeDeductionConfig): Promise<void> {
-  try {
-    await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(config));
-  } catch (err) {
-    console.error("Error saving employee deduction rules to Firestore:", err);
-  }
-}
-
-
-async function getUsers(): Promise<UnifiedUser[]> {
-  try {
-    const snap = await getDocs(collection(db, "users"));
-    const list: UnifiedUser[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as UnifiedUser;
-      if (data) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        list.push(data);
-      }
-    });
-
-    // Seed default admin if list is empty
-    if (list.length === 0) {
-      const defaultAdmin: UnifiedUser = {
-        id: "admin",
-        username: "admin",
-        displayName: "المدير العام",
-        password: "123",
-        role: "مدير",
-        status: "نشط",
-        branch: "الكل",
-        createdAt: new Date().toISOString()
-      };
-      await setDoc(doc(db, "users", "admin"), cleanObject(defaultAdmin));
-      list.push(defaultAdmin);
-    }
-
-    return list;
-  } catch (err) {
-    console.error("Error loading users from Firestore:", err);
-    return [{
-      id: "admin",
-      username: "admin",
-      displayName: "المدير العام",
-      password: "123",
-      role: "مدير",
-      status: "نشط",
-      branch: "الكل",
-      createdAt: new Date().toISOString()
-    }];
-  }
-}
-
-async function saveUser(user: UnifiedUser): Promise<void> {
-  try {
-    await setDoc(doc(db, "users", user.id), cleanObject(user));
-  } catch (err) {
-    console.error("Error saving user to Firestore:", err);
-  }
-}
-
-async function deleteUser(userId: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "users", userId));
-  } catch (err) {
-    console.error("Error deleting user from Firestore:", err);
-  }
-}
-
-// --- EMPLOYEE HELPERS ---
-async function getEmployees(): Promise<Employee[]> {
-  try {
-    const snap = await getDocs(collection(db, "employees"));
-    const list: Employee[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as Employee;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading employees from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployee(emp: Employee): Promise<void> {
-  try {
-    await setDoc(doc(db, "employees", emp.id), cleanObject(emp));
-  } catch (err) {
-    console.error("Error saving employee to Firestore:", err);
-  }
-}
-
-async function deleteEmployee(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employees", id));
-  } catch (err) {
-    console.error("Error deleting employee from Firestore:", err);
-  }
-}
-
-async function getEmployeeAdvances(): Promise<EmployeeAdvance[]> {
-  try {
-    const snap = await getDocs(collection(db, "employee_advances"));
-    const list: EmployeeAdvance[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as EmployeeAdvance;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading advances from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployeeAdvance(adv: EmployeeAdvance): Promise<void> {
-  try {
-    await setDoc(doc(db, "employee_advances", adv.id), cleanObject(adv));
-  } catch (err) {
-    console.error("Error saving advance to Firestore:", err);
-  }
-}
-
-async function deleteEmployeeAdvance(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employee_advances", id));
-  } catch (err) {
-    console.error("Error deleting advance from Firestore:", err);
-  }
-}
-
-async function getEmployeeViolations(): Promise<EmployeeViolation[]> {
-  try {
-    const snap = await getDocs(collection(db, "employee_violations"));
-    const list: EmployeeViolation[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as EmployeeViolation;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading violations from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployeeViolation(v: EmployeeViolation): Promise<void> {
-  try {
-    await setDoc(doc(db, "employee_violations", v.id), cleanObject(v));
-  } catch (err) {
-    console.error("Error saving violation to Firestore:", err);
-  }
-}
-
-async function deleteEmployeeViolation(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employee_violations", id));
-  } catch (err) {
-    console.error("Error deleting violation from Firestore:", err);
-  }
-}
-
-async function getEmployeeAttendance(): Promise<EmployeeAttendance[]> {
-  try {
-    const snap = await getDocs(collection(db, "employee_attendance"));
-    const list: EmployeeAttendance[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as EmployeeAttendance;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading attendance from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployeeAttendance(att: EmployeeAttendance): Promise<void> {
-  try {
-    await setDoc(doc(db, "employee_attendance", att.id), cleanObject(att));
-  } catch (err) {
-    console.error("Error saving attendance to Firestore:", err);
-  }
-}
-
-async function deleteEmployeeAttendance(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employee_attendance", id));
-  } catch (err) {
-    console.error("Error deleting attendance from Firestore:", err);
-  }
-}
-
-// In-memory cache to prevent redundant writes (saving over 99% of Firestore writes)
-const daysCache = new Map<string, any>();
-let daysLoaded = false;
-
-const taxInvoicesCache = new Map<string, any>();
-let taxInvoicesLoaded = false;
-
-const dieselsCache = new Map<string, any>();
-let dieselsLoaded = false;
-
-const purchasesCache = new Map<string, any>();
-let purchasesLoaded = false;
-
-function isDeepEqual(obj1: any, obj2: any): boolean {
-  if (obj1 === obj2) return true;
-  if (obj1 == null || obj2 == null) return false;
-  if (typeof obj1 !== typeof obj2) return false;
+function normalizePhoneNumber(input: string | number): string {
+  if (input === undefined || input === null || input === "") return "";
+  let str = String(input).trim();
+  // Strip trailing decimal from Excel float conversions like 501234567.0 or 501234567.00
+  str = str.replace(/\.0+$/, "").replace(/\.[0-9]+$/, "");
+  // Convert Arabic/Eastern Hindi digits to Western digits
+  let cleaned = str.replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString()).replace(/[^0-9]/g, "");
   
-  if (typeof obj1 === "object") {
-    if (Array.isArray(obj1)) {
-      if (!Array.isArray(obj2) || obj1.length !== obj2.length) return false;
-      for (let i = 0; i < obj1.length; i++) {
-        if (!isDeepEqual(obj1[i], obj2[i])) return false;
-      }
-      return true;
-    } else {
-      const keys1 = Object.keys(obj1);
-      const keys2 = Object.keys(obj2);
-      if (keys1.length !== keys2.length) return false;
-      for (const key of keys1) {
-        if (!keys2.includes(key)) return false;
-        if (!isDeepEqual(obj1[key], obj2[key])) return false;
-      }
-      return true;
-    }
+  if (cleaned.startsWith("00966")) {
+    cleaned = "966" + cleaned.substring(5);
+  } else if (cleaned.startsWith("00")) {
+    cleaned = cleaned.substring(2);
+  } else if (cleaned.startsWith("96605")) {
+    cleaned = "966" + cleaned.substring(4); // fix 96605... -> 9665...
+  } else if (cleaned.startsWith("966")) {
+    cleaned = cleaned;
+  } else if (cleaned.startsWith("05")) {
+    cleaned = "966" + cleaned.substring(1);
+  } else if (cleaned.startsWith("5") && cleaned.length === 9) {
+    cleaned = "966" + cleaned;
   }
-  return obj1 === obj2;
+  return cleaned;
 }
 
-async function getDays(): Promise<DailyEntry[]> {
-  if (daysLoaded) {
-    return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
+// Dedicated Baileys Real Message Dispatcher
+async function sendBaileysMessage(phone: string, text: string): Promise<{ success: boolean; error?: string; jid?: string; messageId?: string }> {
+  const isConnected = !!(sock && (sock.user || realConnectionStatus === "connected"));
+  if (!isConnected) {
+    return { 
+      success: false, 
+      error: "جهاز الواتساب غير متصل حالياً. يرجى التوجه لتبويب '1. الربط والاتصال' وربط جهازك بالرمز أو الباركود أولاً حتى تصل الرسائل لهواتف المستلمين." 
+    };
   }
-  try {
-    const snap = await getDocs(collection(db, "days"));
-    const list: DailyEntry[] = [];
-    daysCache.clear();
-    snap.forEach((d) => {
-      const data = d.data() as DailyEntry;
-      if (data) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        list.push(data);
-        // Cache the deeply cleaned version
-        daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
-      }
-    });
-    daysLoaded = true;
-    return list;
-  } catch (err) {
-    console.error("Error reading days from Firestore:", err);
-    return [];
+
+  const formattedPhone = normalizePhoneNumber(phone);
+  if (!formattedPhone || formattedPhone.length < 8) {
+    return { success: false, error: `رقم الجوال غير صالح أو غير مكتمل (${phone})` };
   }
-}
 
-async function saveDays(days: DailyEntry[]): Promise<void> {
-  try {
-    const toWrite: { id: string; cleaned: any }[] = [];
-    for (const d of days) {
-      if (!d || !d.id) {
-        console.warn("Skipping save for DailyEntry with missing or invalid ID:", d);
-        continue;
-      }
-      const cleanedNew = cleanObject(d);
-      const cached = daysCache.get(d.id);
-
-      // If the cached version exists and is identical to the cleaned new version, SKIP the setDoc write!
-      if (cached && isDeepEqual(cleanedNew, cached)) {
-        continue;
-      }
-      toWrite.push({ id: d.id, cleaned: cleanedNew });
-    }
-
-    if (toWrite.length > 0) {
-      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new DailyEntries`);
-      await Promise.all(toWrite.map(async (item) => {
-        await setDoc(doc(db, "days", item.id), item.cleaned);
-        daysCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
-      }));
-    }
-    daysLoaded = true;
-  } catch (err) {
-    console.error("Error saving days to Firestore:", err);
-  }
-}
-
-async function deleteDay(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "days", id));
-    daysCache.delete(id);
-    await deletePurchasesForDay(id);
-  } catch (err) {
-    console.error("Error deleting day from Firestore:", err);
-  }
-}
-
-async function getDiesels(): Promise<SharedDiesel[]> {
-  if (dieselsLoaded) {
-    return Array.from(dieselsCache.values()).map(b => JSON.parse(JSON.stringify(b)));
-  }
-  try {
-    const snap = await getDocs(collection(db, "diesel"));
-    const list: SharedDiesel[] = [];
-    dieselsCache.clear();
-    snap.forEach((d) => {
-      const data = d.data() as SharedDiesel;
-      if (data) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        list.push(data);
-        dieselsCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
-      }
-    });
-    dieselsLoaded = true;
-    return list;
-  } catch (err) {
-    console.error("Error reading diesels from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
-  try {
-    const toWrite: { id: string; cleaned: any }[] = [];
-    for (const b of bills) {
-      if (!b || !b.id) {
-        console.warn("Skipping save for Diesel with missing or invalid ID:", b);
-        continue;
-      }
-      const cleanedNew = cleanObject(b);
-      const cached = dieselsCache.get(b.id);
-
-      if (cached && isDeepEqual(cleanedNew, cached)) {
-        continue;
-      }
-      toWrite.push({ id: b.id, cleaned: cleanedNew });
-    }
-
-    if (toWrite.length > 0) {
-      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new SharedDiesels`);
-      await Promise.all(toWrite.map(async (item) => {
-        await setDoc(doc(db, "diesel", item.id), item.cleaned);
-        dieselsCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
-      }));
-    }
-    dieselsLoaded = true;
-  } catch (err) {
-    console.error("Error saving diesels to Firestore:", err);
-  }
-}
-
-async function getTaxInvoices(): Promise<TaxInvoice[]> {
-  if (taxInvoicesLoaded) {
-    return Array.from(taxInvoicesCache.values()).map(i => JSON.parse(JSON.stringify(i)));
-  }
-  try {
-    const snap = await getDocs(collection(db, "tax_invoices"));
-    const list: TaxInvoice[] = [];
-    taxInvoicesCache.clear();
-    snap.forEach((d) => {
-      const data = d.data() as TaxInvoice;
-      if (data) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        list.push(data);
-        taxInvoicesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
-      }
-    });
-    taxInvoicesLoaded = true;
-    return list;
-  } catch (err) {
-    console.error("Error reading tax invoices from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
-  try {
-    const toWrite: { id: string; cleaned: any }[] = [];
-    for (const i of invoices) {
-      if (!i || !i.id) {
-        console.warn("Skipping save for TaxInvoice with missing or invalid ID:", i);
-        continue;
-      }
-      const cleanedNew = cleanObject(i);
-      const cached = taxInvoicesCache.get(i.id);
-
-      if (cached && isDeepEqual(cleanedNew, cached)) {
-        continue;
-      }
-      toWrite.push({ id: i.id, cleaned: cleanedNew });
-    }
-
-    if (toWrite.length > 0) {
-      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new TaxInvoices`);
-      await Promise.all(toWrite.map(async (item) => {
-        await setDoc(doc(db, "tax_invoices", item.id), item.cleaned);
-        taxInvoicesCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
-      }));
-    }
-    taxInvoicesLoaded = true;
-  } catch (err) {
-    console.error("Error saving tax invoices to Firestore:", err);
-  }
-}
-
-async function deleteTaxInvoice(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "tax_invoices", id));
-    taxInvoicesCache.delete(id);
-  } catch (err) {
-    console.error("Error deleting tax invoice from Firestore:", err);
-  }
-}
-
-interface TaxCompany {
-  id: string;
-  name: string;
-}
-
-async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
-  try {
-    const snap = await getDocs(collection(db, "tax_registered_companies"));
-    const list: TaxCompany[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as TaxCompany;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-
-    if (list.length === 0) {
-      // Seed with existing companies from tax_invoices on first launch!
-      const invoices = await getTaxInvoices();
-      const uniqueNames = Array.from(new Set(invoices.map((i) => i.company).filter(Boolean)));
-      for (const name of uniqueNames) {
-        const id = `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const comp: TaxCompany = { id, name };
-        await setDoc(doc(db, "tax_registered_companies", id), comp);
-        list.push(comp);
-      }
-    }
-
-    list.sort((a, b) => a.name.localeCompare(b.name, "ar"));
-    return list;
-  } catch (err) {
-    console.error("Error reading tax registered companies from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveTaxRegisteredCompany(company: TaxCompany): Promise<void> {
-  try {
-    console.log(`[FIRESTORE SAVE] Attempting to save doc 'tax_registered_companies' with ID: "${company.id}", Name: "${company.name}"`);
-    await setDoc(doc(db, "tax_registered_companies", company.id), cleanObject(company));
-    console.log(`[FIRESTORE SAVE] Completed setDoc call for ID: "${company.id}"`);
-  } catch (err) {
-    console.error("Error saving tax registered company to Firestore:", err);
-    throw err;
-  }
-}
-
-async function deleteTaxRegisteredCompany(id: string): Promise<void> {
-  try {
-    console.log(`[FIRESTORE DELETE] Attempting to delete doc 'tax_registered_companies' with ID: "${id}"`);
-    await deleteDoc(doc(db, "tax_registered_companies", id));
-    console.log(`[FIRESTORE DELETE] Completed deleteDoc call for ID: "${id}"`);
-  } catch (err) {
-    console.error("Error deleting tax registered company from Firestore:", err);
-    throw err;
-  }
-}
-
-async function getBakeryEntries(): Promise<BakeryEntry[]> {
-  try {
-    const snap = await getDocs(collection(db, "bakery_entries"));
-    const list: BakeryEntry[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as BakeryEntry;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error reading bakery entries from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveBakeryEntry(entry: BakeryEntry): Promise<void> {
-  try {
-    await withTimeout(setDoc(doc(db, "bakery_entries", entry.id), cleanObject(entry)));
-  } catch (err) {
-    console.error("Error saving bakery entry to Firestore:", err);
-    throw err;
-  }
-}
-
-async function deleteBakeryEntry(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "bakery_entries", id));
-  } catch (err) {
-    console.error("Error deleting bakery entry from Firestore:", err);
-    throw err;
-  }
-}
-
-async function getDrinksEntries(): Promise<DrinksEntry[]> {
-  try {
-    const snap = await getDocs(collection(db, "drinks_entries"));
-    const list: DrinksEntry[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as DrinksEntry;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error reading drinks entries from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveDrinksEntry(entry: DrinksEntry): Promise<void> {
-  try {
-    await withTimeout(setDoc(doc(db, "drinks_entries", entry.id), cleanObject(entry)));
-  } catch (err) {
-    console.error("Error saving drinks entry to Firestore:", err);
-    throw err;
-  }
-}
-
-async function deleteDrinksEntry(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "drinks_entries", id));
-  } catch (err) {
-    console.error("Error deleting drinks entry from Firestore:", err);
-    throw err;
-  }
-}
-
-const DEFAULT_DRINK_PRICES = {
-  pepsi: 2.5,
-  sevenup: 2.5,
-  dew: 2.5,
-  citrus: 2.5,
-  pepsi_diet: 2.0,
-  sevenup_diet: 2.0,
-  dew_diet: 2.0,
-  citrus_diet: 2.0
-};
-
-async function getDrinkPrices(): Promise<Record<string, number>> {
-  try {
-    const snap = await getDoc(doc(db, "settings", "drink_prices"));
-    if (snap.exists()) {
-      return { ...DEFAULT_DRINK_PRICES, ...snap.data() };
-    }
-    return DEFAULT_DRINK_PRICES;
-  } catch (err) {
-    console.error("Error reading drink prices from Firestore:", err);
-    return DEFAULT_DRINK_PRICES;
-  }
-}
-
-async function saveDrinkPrices(prices: Record<string, number>): Promise<void> {
-  try {
-    await withTimeout(setDoc(doc(db, "settings", "drink_prices"), cleanObject(prices)));
-  } catch (err) {
-    console.error("Error saving drink prices to Firestore:", err);
-    throw err;
-  }
-}
-
-async function getPurchases(): Promise<Purchase[]> {
-  if (purchasesLoaded) {
-    return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
-  }
-  try {
-    const snap = await getDocs(collection(db, "purchases"));
-    const list: Purchase[] = [];
-    purchasesCache.clear();
-    snap.forEach((d) => {
-      const data = d.data() as Purchase;
-      if (data) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        list.push(data);
-        purchasesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
-      }
-    });
-    purchasesLoaded = true;
-    return list;
-  } catch (err) {
-    console.error("Error reading purchases from Firestore:", err);
-    return [];
-  }
-}
-
-async function savePurchase(p: Purchase): Promise<void> {
-  try {
-    const cleanedNew = cleanObject(p);
-    const cached = purchasesCache.get(p.id);
-    if (cached && isDeepEqual(cleanedNew, cached)) {
-      return;
-    }
-    console.log(`[Firestore Optimization] Saving modified/new Purchase: ${p.id}`);
-    await withTimeout(setDoc(doc(db, "purchases", p.id), cleanedNew));
-    purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanedNew)));
-    purchasesLoaded = true;
-  } catch (err) {
-    console.error("Error saving purchase to Firestore:", err);
-  }
-}
-
-async function deletePurchase(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "purchases", id));
-    purchasesCache.delete(id);
-  } catch (err) {
-    console.error("Error deleting purchase from Firestore:", err);
-  }
-}
-
-async function deletePurchasesForDay(dayId: string) {
-  try {
-    const decodedId = decodeURIComponent(dayId).trim();
-    const allPurchases = await getPurchases();
-    const toDelete = allPurchases.filter(p => {
-      const isStart = (p.id && (p.id.startsWith(`pur-${dayId}-`) || p.id.startsWith(`pur-${decodedId}-`))) || false;
-      const isHeaderMatch = p.invoiceId === dayId || p.invoiceId === decodedId || (p.invoiceId?.trim() === decodedId);
-      return isStart || isHeaderMatch;
-    });
-    // Run deletions concurrently to maximize network and Firestore performance (massively reducing lags)
-    await Promise.all(toDelete.map(p => deletePurchase(p.id)));
-  } catch (err) {
-    console.error("Error deleting day purchases:", err);
-  }
-}
-
-function normalizeArabicString(str: string): string {
-  if (!str) return "";
-  let s = str.trim().toLowerCase();
+  let targetJid = `${formattedPhone}@s.whatsapp.net`;
   
-  // 1. Remove Harakat (diacritics)
-  s = s.replace(/[\u064B-\u0652]/g, "");
-  
-  // 2. Normalize Hamzas to Alif
-  s = s.replace(/[أإآ]/g, "ا");
-  
-  // 3. Normalize other characters
-  s = s.replace(/ة/g, "ه");
-  s = s.replace(/ى/g, "ي");
-  s = s.replace(/ؤ/g, "ء");
-  s = s.replace(/ئ/g, "ء");
-  
-  // 4. Remove Al- prefix at boundaries safely (only if word length > 3 to not ruin words like ال)
-  // e.g. replace "البيت" with "بيت", but "ال" remains "ال" or "اله" stays "اله"
-  s = s.replace(/\bال([\u0600-\u06FF]{3,})/g, "$1");
-  s = s.replace(/^ال([\u0600-\u06FF]{3,})/g, "$1");
-  
-  // 5. Remove non-alphanumeric characters but keep spaces and Arabic letters/numbers
-  s = s.replace(/[^\u0600-\u06FFa-zA-Z0-9\s]/g, "");
-  
-  // 6. Collapse multiple spaces
-  s = s.replace(/\s+/g, " ");
-  
-  return s.trim();
-}
-
-async function deletePurchasesForInvoice(invoiceId: string) {
-  try {
-    const decodedId = decodeURIComponent(invoiceId).trim();
-    const allPurchases = await getPurchases();
-    const toDelete = allPurchases.filter(p => {
-      if (!p.invoiceId) return false;
-      const pInvId = p.invoiceId.trim();
-      return pInvId === invoiceId || 
-             pInvId === decodedId || 
-             pInvId.toLowerCase() === invoiceId.toLowerCase() || 
-             pInvId.toLowerCase() === decodedId.toLowerCase();
-    });
-    // Run deletions concurrently to maximize network and Firestore performance (massively reducing lags)
-    await Promise.all(toDelete.map(p => deletePurchase(p.id)));
-  } catch (err) {
-    console.error("Error deleting invoice purchases:", err);
+  // If user is sending to themselves (Notes to self / self-test):
+  const myCleanPhone = connectedPhoneNumber ? normalizePhoneNumber(connectedPhoneNumber) : "";
+  if (myCleanPhone && (formattedPhone === myCleanPhone) && sock.user?.id) {
+    targetJid = sock.user.id.includes(":") ? `${sock.user.id.split(":")[0]}@s.whatsapp.net` : sock.user.id;
   }
-}
 
-function getConsolidatedProductName(name: string): string {
-  if (!name) return "";
-  const norm = normalizeArabicString(name);
-  if (norm.includes("غاز") || norm.includes("gas")) return "غاز";
-  if (norm.includes("خضار") || norm.includes("خضروات") || norm.includes("vegetable")) return "خضار";
-  if (norm.includes("خبز") || norm.includes("عجين") || norm.includes("bread")) return "خبز";
-  if (norm.includes("بقاله") || norm.includes("سوبرماركت") || norm.includes("grocery")) return "بقالة";
-  if (norm.includes("ديزل") || norm.includes("diesel")) return "ديزل";
-  return name.trim();
-}
-
-async function addNewPurchaseInServer(data: Omit<Purchase, "id">): Promise<Purchase> {
-  const allPurchases = await getPurchases();
-  const cleanName = getConsolidatedProductName(data.name.trim());
-  const normName = normalizeArabicString(cleanName);
-  
-  // Find all previous active purchases of same item in the same branch to auto-deplete them
-  // We check if normalized names match, same branch, it is active, and date of new purchase is >= active item's date via safe timestamp logic
-  const activePrevs = allPurchases.filter((p) => {
-    const isSameName = normalizeArabicString(p.name) === normName;
-    const isSameBranch = p.branch === data.branch;
-    const isActive = p.status === 'active';
+  try {
+    console.log(`[WhatsApp Real Dispatch] Initiating send to ${targetJid}...`);
     
-    const dPrev = new Date(p.date).getTime() || 0;
-    const dNew = new Date(data.date).getTime() || 0;
-    const isNewerOrEqual = dNew >= dPrev;
+    try {
+      await sock.sendPresenceUpdate("composing", targetJid);
+    } catch (presErr) {
+      // non-fatal
+    }
 
-    return isSameName && isSameBranch && isActive && isNewerOrEqual;
-  });
-  
-  for (const prev of activePrevs) {
-    prev.status = 'depleted';
-    prev.depletedDate = data.date;
+    const sentMsg = await sock.sendMessage(targetJid, { text });
+    if (!sentMsg || !sentMsg.key) {
+      return { success: false, error: "لم يتم استلام تأكيد تسليم الرسالة من خادم واتساب." };
+    }
+    const messageId = sentMsg.key.id || "";
+    console.log(`[WhatsApp Real Dispatch] Successfully delivered to ${targetJid} (MsgId: ${messageId})`);
+    return { success: true, jid: targetJid, messageId };
+  } catch (sendErr: any) {
+    console.error(`[WhatsApp Real Dispatch Error] Failed for ${targetJid}:`, sendErr);
+    return { 
+      success: false, 
+      error: sendErr?.message || "فشل إرسال الرسالة عبر خادم واتساب. يرجى التأكد من اتصال هاتفك بالإنترنت وصحة الرقم." 
+    };
   }
-  if (activePrevs.length > 0) {
-    await Promise.all(activePrevs.map(prev => savePurchase(prev)));
-  }
-  
-  const newPurchase: Purchase = {
-    ...data,
-    id: `pur-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    name: cleanName
-  };
-  await savePurchase(newPurchase);
-  return newPurchase;
 }
 
-function parseQtyVal(q: string | number | undefined): number {
-  if (q === undefined || q === null) return 1;
-  if (typeof q === "number") return q;
-  const match = String(q).replace(/,/g, "").match(/[+-]?([0-9]*[.])?[0-9]+/);
-  if (match) {
-    return parseFloat(match[0]) || 1;
-  }
-  return 1;
+let sock: any = null;
+let realQrCodeUrl: string = "";
+let realPairingCode: string = "";
+let realErrorMessage: string = "";
+let realConnectionStatus: "disconnected" | "qr_ready" | "pairing_code_ready" | "connecting" | "connected" | "error" = "disconnected";
+let connectedPhoneNumber: string = "";
+let connectionTimeoutTimer: NodeJS.Timeout | null = null;
+let firestoreSessionBackupTimer: NodeJS.Timeout | null = null;
+let isExplicitlyDisconnected = false;
+
+// 3 Days Expiration in milliseconds (3 days * 24 hours * 60 mins * 60 secs * 1000 ms)
+const INQUIRY_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
+
+function scheduleFirestoreSessionBackup(force = false) {
+  if (firestoreSessionBackupTimer) clearTimeout(firestoreSessionBackupTimer);
+  firestoreSessionBackupTimer = setTimeout(() => {
+    const authFolder = path.join(process.cwd(), "auth_info_baileys");
+    backupBaileysSessionToFirestore(authFolder, force).catch(() => {});
+  }, 15000); // 15 seconds debounce
 }
 
-async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
+async function initRealWhatsApp(method: "qr" | "pairing_code" | "resume" = "qr", targetPhone?: string) {
   try {
-    // 1. Delete previous records for this day so we can do a clean sync / refresh on edits
-    await deletePurchasesForDay(entry.id);
+    isExplicitlyDisconnected = false;
+    if (connectionTimeoutTimer) {
+      clearTimeout(connectionTimeoutTimer);
+      connectionTimeoutTimer = null;
+    }
 
-    // 2. Fetch current purchase records for auto depletion checks
-    const allPurchases = await getPurchases();
+    if (method !== "resume") {
+      realErrorMessage = "";
+      realPairingCode = "";
+      realQrCodeUrl = "";
+      realConnectionStatus = "connecting";
+    }
 
-    const purchasesToSaveMap = new Map<string, Purchase>();
+    // Clean up previous socket instance completely if starting a new pairing session
+    if (sock && method !== "resume") {
+      try {
+        sock.ev?.removeAllListeners("creds.update");
+        sock.ev?.removeAllListeners("connection.update");
+        sock.end(undefined);
+      } catch (e) {
+        // ignore cleanup error
+      }
+      sock = null;
+    }
 
-    const addOrUpdate = (itemKey: string, itemName: string, priceVal: number, customQty?: string) => {
-      if (priceVal <= 0) return;
-      const cleanName = getConsolidatedProductName(itemName.trim());
-      const normName = normalizeArabicString(cleanName);
+    const authFolder = path.join(process.cwd(), "auth_info_baileys");
+    
+    // If starting a fresh new pairing (QR or Pairing Code), wipe any previous partial/stale auth state
+    if (method === "qr" || method === "pairing_code") {
+      if (fs.existsSync(authFolder)) {
+        try {
+          fs.rmSync(authFolder, { recursive: true, force: true });
+        } catch (e) {}
+      }
+      connectedPhoneNumber = "";
+      whatsappConfig.simulatedPhone = "";
+      whatsappConfig.simulatedStatus = "disconnected";
+    }
+
+    if (!fs.existsSync(authFolder)) {
+      fs.mkdirSync(authFolder, { recursive: true });
+    }
+    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+
+    let waVersion: any = undefined;
+    try {
+      if (typeof fetchLatestBaileysVersion === "function") {
+        const v = await fetchLatestBaileysVersion();
+        if (v && v.version) {
+          waVersion = v.version;
+          console.log(`[WhatsApp] Using dynamic Baileys version: ${waVersion.join(".")}`);
+        }
+      }
+    } catch (verErr) {
+      console.warn("fetchLatestBaileysVersion fallback used");
+    }
+
+    const browserInfo = typeof Browsers?.ubuntu === "function"
+      ? Browsers.ubuntu("Chrome")
+      : ["Ubuntu", "Chrome", "20.0.04"];
+
+    const socketOptions: any = {
+      auth: state,
+      printQRInTerminal: false,
+      logger: pino({ level: "silent" }) as any,
+      browser: browserInfo,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000,
+      syncFullHistory: false,
+      markOnlineOnConnect: true,
+      generateHighQualityLinkPreview: false,
+      getMessage: async () => undefined,
+      shouldIgnoreJid: (jid: string) => !jid || jid.includes("@broadcast") || jid.endsWith("@newsletter"),
+    };
+
+    if (waVersion) {
+      socketOptions.version = waVersion;
+    }
+
+    sock = makeWASocket(socketOptions);
+    
+    sock.ev.on("creds.update", async () => {
+      await saveCreds();
+      scheduleFirestoreSessionBackup();
+    });
+    
+    sock.ev.on("connection.update", async (update: any) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr && method === "qr") {
+        if (connectionTimeoutTimer) clearTimeout(connectionTimeoutTimer);
+        realConnectionStatus = "qr_ready";
+        realErrorMessage = "";
+        try {
+          realQrCodeUrl = await QRCode.toDataURL(qr, {
+            errorCorrectionLevel: "M",
+            margin: 2,
+            scale: 8,
+            color: {
+              dark: "#0f172a",
+              light: "#ffffff",
+            },
+          });
+          console.log("[WhatsApp] QR Code generated successfully as DataURL");
+        } catch (err) {
+          console.error("Error generating QR code data URL", err);
+        }
+      }
       
-      // Auto-depletion logic: Find previous active purchases of the same item in the same branch to auto-deplete them
-      // Don't deplete items marked for the current day being registered (they start with `pur-${entry.id}-`)
-      const activePrevs = allPurchases.filter((p) => {
-        const isSameName = normalizeArabicString(p.name) === normName;
-        const isSameBranch = p.branch === entry.branch;
-        const isActive = p.status === 'active';
-        const isNotCurrentDay = !p.id.startsWith(`pur-${entry.id}-`);
+      if (connection === "connecting") {
+        if (realConnectionStatus !== "qr_ready" && realConnectionStatus !== "pairing_code_ready") {
+          realConnectionStatus = "connecting";
+        }
+      }
+      
+      if (connection === "open") {
+        if (connectionTimeoutTimer) clearTimeout(connectionTimeoutTimer);
+        realConnectionStatus = "connected";
+        realQrCodeUrl = "";
+        realPairingCode = "";
+        realErrorMessage = "";
+        const userJid = sock.user?.id || "";
+        connectedPhoneNumber = userJid.split(":")[0]?.replace(/[^0-9]/g, "") || "";
         
-        const dPrev = new Date(p.date).getTime() || 0;
-        const dNew = new Date(entry.date).getTime() || 0;
-        const isNewerOrEqual = dNew >= dPrev;
+        // Update general config
+        whatsappConfig.simulatedStatus = "connected";
+        whatsappConfig.simulatedPhone = "+" + connectedPhoneNumber;
+        saveConfig();
+        scheduleFirestoreSessionBackup(true);
+        console.log(`[WhatsApp] Connected successfully to number: +${connectedPhoneNumber}`);
 
-        return isSameName && isSameBranch && isActive && isNotCurrentDay && isNewerOrEqual;
-      });
-        
-      for (const prev of activePrevs) {
-        prev.status = 'depleted';
-        prev.depletedDate = entry.date;
-        purchasesToSaveMap.set(prev.id, prev);
-      }
-
-      const p: Purchase = {
-        id: `pur-${entry.id}-${itemKey}`,
-        name: cleanName,
-        date: entry.date,
-        qty: customQty || "1",
-        type: 'direct',
-        price: priceVal,
-        branch: entry.branch,
-        status: 'active',
-        source: 'manual',
-        invoiceId: entry.id
-      };
-      purchasesToSaveMap.set(p.id, p);
-      allPurchases.push(p);
-    };
-
-    // Standard cash box expenses (المصروفات النقدية وقسم المصروفات)
-    const gasVal = Math.max(entry.pur_gas || 0, entry.gas || 0);
-    if (gasVal > 0) {
-      addOrUpdate("gas", "غاز", gasVal, "1");
-    }
-
-    const breadVal = Math.max(entry.pur_bread || 0, entry.bread || 0);
-    if (breadVal > 0) {
-      addOrUpdate("bread", "خبز", breadVal, "1");
-    }
-
-    const vegVal = Math.max(entry.pur_veg || 0, entry.vegetables || 0);
-    if (vegVal > 0) {
-      addOrUpdate("veg", "خضار", vegVal, "1");
-    }
-
-    const grocVal = Math.max(entry.pur_groc || 0, entry.grocery || 0);
-    if (grocVal > 0) {
-      addOrUpdate("groc", "بقالة", grocVal, "1");
-    }
-
-    // Invoices / payments entered as part of day
-    if (entry.pepsi_paid && entry.pepsi_paid > 0 && entry.pepsi_type === 'invoice') {
-      addOrUpdate("pepsi", "بيبسي", entry.pepsi_paid, "1");
-    }
-    if (entry.plastic_paid && entry.plastic_paid > 0 && entry.plastic_type === 'invoice') {
-      addOrUpdate("plastic", "بلاستيك", entry.plastic_paid, "1");
-    }
-    if (entry.sauces_paid && entry.sauces_paid > 0 && entry.sauces_type === 'invoice') {
-      addOrUpdate("sauces", "صلصات", entry.sauces_paid, "1");
-    }
-    // Only register Diesel if it is a new Invoice, completely ignoring fragmented payments/installments
-    if (entry.diesel_paid && entry.diesel_paid > 0 && entry.diesel_type === 'invoice') {
-      addOrUpdate("diesel", "ديزل", entry.diesel_paid, "1");
-    }
-
-    // Handlers for pur_extras (المصروفات الإضافية بالطوارئ وغيرها)
-    if (entry.pur_extras && entry.pur_extras.length > 0) {
-      for (let i = 0; i < entry.pur_extras.length; i++) {
-        const extra = entry.pur_extras[i];
-        if (extra.name && extra.amt > 0) {
-          addOrUpdate(`extra-${i}`, extra.name, extra.amt, "1");
+        try {
+          await sock.sendPresenceUpdate("available");
+        } catch (presErr) {
+          // non-blocking
         }
       }
-    }
-
-    // Handlers for others (المصروفات الأخرى)
-    if (entry.others && entry.others.length > 0) {
-      for (let i = 0; i < entry.others.length; i++) {
-        const oInput = entry.others[i];
-        if (oInput.name && oInput.amt > 0) {
-          addOrUpdate(`other-${i}`, oInput.name, oInput.amt, "1");
-        }
-      }
-    }
-
-    if (purchasesToSaveMap.size > 0) {
-      console.log(`[Firestore Optimization] Concurrently saving ${purchasesToSaveMap.size} purchases for DailyEntry ${entry.id}`);
-      await Promise.all(Array.from(purchasesToSaveMap.values()).map(p => savePurchase(p)));
-    }
-
-  } catch (err) {
-    console.error("Error auto-registering day inputs as purchases:", err);
-  }
-}
-
-async function autoRegisterInvoiceItemsAsPurchases(invoice: TaxInvoice, externalPurchases?: Purchase[]) {
-  if (!invoice.items || invoice.items.length === 0) return;
-  const allPurchases = externalPurchases || (await getPurchases());
-  
-  const purchasesToSave: Purchase[] = [];
-
-  for (const item of invoice.items) {
-    if (!item || !item.name || item.name.trim() === "") continue;
-    const cleanName = getConsolidatedProductName(item.name.trim());
-    const normName = normalizeArabicString(cleanName);
-    
-    // Find all previous active purchases of same item in the same branch to auto-deplete them
-    // Exclude items in the SAME invoice! And date must be >= via safe timestamp comparison
-    const activePrevs = allPurchases.filter((p) => {
-      const isSameName = normalizeArabicString(p.name) === normName;
-      const isSameBranch = p.branch === invoice.branch;
-      const isActive = p.status === 'active';
-      const isDifferentInvoice = p.invoiceId !== invoice.id;
-
-      const dPrev = new Date(p.date).getTime() || 0;
-      const dNew = new Date(invoice.date).getTime() || 0;
-      const isNewerOrEqual = dNew >= dPrev;
-
-      return isSameName && isSameBranch && isActive && isDifferentInvoice && isNewerOrEqual;
-    });
       
-    for (const prev of activePrevs) {
-      prev.status = 'depleted';
-      prev.depletedDate = invoice.date;
-      purchasesToSave.push(prev);
-    }
-    
-    const numericQty = parseQtyVal(item.qty);
-    const unitPrice = numericQty > 0 ? Number((item.price_with_tax / numericQty).toFixed(2)) : item.price_with_tax;
+      if (connection === "close") {
+        const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+        const errorMessage = (lastDisconnect?.error as any)?.message || "";
+        const isLoggedOut =
+          isExplicitlyDisconnected ||
+          statusCode === DisconnectReason?.loggedOut ||
+          statusCode === 401;
 
-    const newPurchase: Purchase = {
-      id: `pur-${Date.now()}-${Math.floor(Math.random() * 1000)}-${Math.floor(Math.random() * 100)}`,
-      name: cleanName,
-      date: invoice.date,
-      qty: item.qty ? String(item.qty) : "1",
-      type: 'direct',
-      price: unitPrice || item.price_with_tax || invoice.amount,
-      branch: invoice.branch,
-      status: 'active',
-      source: 'invoice',
-      invoiceId: invoice.id,
-      category: item.category
-    };
-    purchasesToSave.push(newPurchase);
-    allPurchases.push(newPurchase); // instantly accessible within the sequential in-memory flow
-  }
-
-  // Save all modified and new purchases concurrently to minimize Firestore I/O delays
-  if (purchasesToSave.length > 0) {
-    await Promise.all(purchasesToSave.map(p => savePurchase(p)));
-  }
-}
-
-
-
-// Helper for safe category-specific carryover calculations with payment vs invoice status
-function calculateCategoryCarryover(
-  entry: any,
-  prevCarry: number,
-  paid: number,
-  type: "payment" | "invoice" | undefined,
-  limit: number,
-  prevKey: string,
-  deductKey: string,
-  nextKey: string
-): number {
-  entry[prevKey] = Number(prevCarry.toFixed(2));
-  
-  let deduct = 0;
-  let nextCarry = 0;
-
-  if (prevCarry > 0) {
-    if (paid > 0) {
-      if (type === "invoice") {
-        // Adding a new supply invoice on top of previous carryover
-        const total = Number((paid + prevCarry).toFixed(2));
-        deduct = Number(Math.min(total, limit).toFixed(2));
-        nextCarry = Number((total - deduct).toFixed(2));
-      } else {
-        // Manual payment specified to pay off the carryover
-        // Capped by remaining carryover
-        deduct = Number(Math.min(paid, prevCarry).toFixed(2));
-        nextCarry = Number((prevCarry - deduct).toFixed(2));
-      }
-    } else {
-      // No manual payment/invoice entered: automatically deduct daily installment up to ceiling
-      deduct = Number(Math.min(prevCarry, limit).toFixed(2));
-      nextCarry = Number((prevCarry - deduct).toFixed(2));
-    }
-  } else {
-    // Fresh start (prevCarry === 0)
-    if (paid > 0) {
-      deduct = Number(Math.min(paid, limit).toFixed(2));
-      nextCarry = Number((paid - deduct).toFixed(2));
-    } else {
-      deduct = 0;
-      nextCarry = 0;
-    }
-  }
-
-  entry[deductKey] = deduct;
-  entry[nextKey] = nextCarry;
-
-  return nextCarry;
-}
-
-// Recalculate ledger function to maintain sequential carry-overs
-async function recalculateCarryOvers(branch: "القادسية" | "المروج"): Promise<void> {
-  const settings = await getSettings();
-  const allDays = await getDays();
-
-  // Filter entries for this branch and sort ascending by date
-  const filtered = allDays.filter((d) => d.branch === branch);
-  filtered.sort((a, b) => a.date.localeCompare(b.date));
-
-  let pepsi_carry = 0;
-  let plastic_carry = 0;
-  let sauces_carry = 0;
-  let diesel_carry = 0;
-
-  for (let i = 0; i < filtered.length; i++) {
-    const entry = filtered[i];
-
-    // Determine if today is a busy day (sales > last N days average * 1.25)
-    let is_busy = false;
-    const cmpDays = settings.ايام_مقارنة || 7;
-    // previous N days total sales
-    const prevDays = filtered.slice(Math.max(0, i - cmpDays), i);
-    if (prevDays.length > 0) {
-      const avg = prevDays.reduce((sum, d) => sum + d.total_sales, 0) / prevDays.length;
-      if (entry.total_sales > avg * 1.25) {
-        is_busy = true;
-      }
-    }
-
-    const ratio = is_busy ? (1 + (settings.زيادة_عالي || 25) / 100) : 1;
-
-    // Use branch-specific setting's ceiling for adaptivity to settings changes
-    const entry_pepsi_cap = branch === "القادسية"
-      ? (settings.سقف_بيبسي_قادسية || settings.سقف_بيبسي || 400)
-      : (settings.سقف_بيبسي_مروج || settings.سقف_بيبسي || 400);
-
-    const entry_plastic_cap = branch === "القادسية"
-      ? (settings.سقف_بلاستيك_قادسية || settings.سقف_بلاستيك || 100)
-      : (settings.سقف_بلاستيك_مروج || settings.سقف_بلاستيك || 100);
-
-    const entry_sauces_cap = branch === "القادسية"
-      ? (settings.سقف_صلصات_قادسية || settings.سقف_صلصات || 150)
-      : (settings.سقف_صلصات_مروج || settings.سقف_صلصات || 150);
-
-    const entry_diesel_cap = branch === "القادسية" ? (settings.سقف_ديزل_قادسية || 50) : (settings.سقف_ديزل_مروج || 30);
-
-    // Save caps inside the entry
-    entry.pepsi_cap = entry_pepsi_cap;
-    entry.plastic_cap = entry_plastic_cap;
-    entry.sauces_cap = entry_sauces_cap;
-    entry.diesel_cap = entry_diesel_cap;
-
-    const limit_pepsi = entry_pepsi_cap * ratio;
-    const limit_plastic = entry_plastic_cap * ratio;
-    const limit_sauces = entry_sauces_cap * ratio;
-    const limit_diesel = entry_diesel_cap * ratio;
-
-    // 1. Pepsi carryover calculations
-    pepsi_carry = calculateCategoryCarryover(
-      entry,
-      pepsi_carry,
-      entry.pepsi_paid || 0,
-      entry.pepsi_type,
-      limit_pepsi,
-      "pepsi_carry_prev",
-      "pepsi_deduct",
-      "pepsi_carry_next"
-    );
-
-    // 2. Plastic carryover calculations
-    plastic_carry = calculateCategoryCarryover(
-      entry,
-      plastic_carry,
-      entry.plastic_paid || 0,
-      entry.plastic_type,
-      limit_plastic,
-      "plastic_carry_prev",
-      "plastic_deduct",
-      "plastic_carry_next"
-    );
-
-    // 3. Sauces carryover calculations
-    sauces_carry = calculateCategoryCarryover(
-      entry,
-      sauces_carry,
-      entry.sauces_paid || 0,
-      entry.sauces_type,
-      limit_sauces,
-      "sauces_carry_prev",
-      "sauces_deduct",
-      "sauces_carry_next"
-    );
-
-    // 4. Diesel carryover calculations
-    diesel_carry = calculateCategoryCarryover(
-      entry,
-      diesel_carry,
-      entry.diesel_paid || 0,
-      entry.diesel_type,
-      limit_diesel,
-      "diesel_carry_prev",
-      "diesel_deduct",
-      "diesel_carry_next"
-    );
-
-    // Re-verify sums
-    const madaFee = (settings.رسوم_مدى || 0.8) / 100;
-    const visaFee = (settings.رسوم_فيزا || 1.5) / 100;
-
-    const mada_total = (entry.mada1 || 0) + (entry.mada2 || 0) + (entry.mada3 || 0);
-    const visa_total = (entry.visa1 || 0) + (entry.visa2 || 0) + (entry.visa3 || 0);
-    
-    entry.pos_net = Number((mada_total * (1 - madaFee) + visa_total * (1 - visaFee)).toFixed(2));
-    const currentSarf = (entry.sarf !== undefined && entry.sarf !== null) ? entry.sarf : 350;
-    entry.cash_net = Number(((entry.cash_box || 0) - currentSarf + (entry.cash_purchases || 0)).toFixed(2));
-    entry.total_sales = Number((entry.cash_net + entry.pos_net).toFixed(2));
-
-    const othersSum = (entry.others || []).reduce((s: number, o: any) => s + (o.amt || 0), 0);
-    const purExtrasSum = (entry.pur_extras || []).reduce((s: number, e: any) => s + (e.amt || 0), 0);
-
-    const correctExpensesTotal = (
-      (entry.makhzan || 0) +
-      entry.pepsi_deduct +
-      entry.plastic_deduct +
-      entry.sauces_deduct +
-      Math.max(entry.gas || 0, entry.pur_gas || 0) +
-      Math.max(entry.vegetables || 0, entry.pur_veg || 0) +
-      Math.max(entry.bread || 0, entry.pur_bread || 0) +
-      Math.max(entry.grocery || 0, entry.pur_groc || 0) +
-      entry.diesel_deduct +
-      othersSum +
-      purExtrasSum +
-      (entry.fixed_deduct || 0)
-    );
-
-    entry.net_day = Number((entry.total_sales - correctExpensesTotal).toFixed(2));
-  }
-
-  // Update original list with rescheduled elements
-  const otherBranchDays = allDays.filter((d) => d.branch !== branch);
-  const updatedDays = [...otherBranchDays, ...filtered];
-  await saveDays(updatedDays);
-}
-
-// --- WHATSAPP SYSTEM HELPERS ---
-let memoryWhatsAppConfig: any = { status: "disconnected" };
-let memoryWhatsAppMessages: any[] = [];
-
-async function getWhatsAppConfig(): Promise<any> {
-  try {
-    const docRef = doc(db, "whatsapp_settings", "global_config");
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      memoryWhatsAppConfig = data;
-      return data;
-    }
-  } catch (err) {
-    console.error("Error loading WhatsApp config from Firestore, fallback to memory:", err);
-  }
-  return memoryWhatsAppConfig || { status: "disconnected" };
-}
-
-async function saveWhatsAppConfig(config: any): Promise<void> {
-  memoryWhatsAppConfig = config;
-  try {
-    await setDoc(doc(db, "whatsapp_settings", "global_config"), cleanObject(config));
-  } catch (err) {
-    console.error("Error saving WhatsApp config to Firestore, using memory content anyway:", err);
-  }
-}
-
-async function getWhatsAppMessages(): Promise<any[]> {
-  try {
-    const snap = await getDocs(collection(db, "whatsapp_messages"));
-    const list: any[] = [];
-    snap.forEach((d) => {
-      const data = d.data();
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
+        const shouldReconnect = !isLoggedOut;
+        
+        console.log(`[WhatsApp] Connection closed. StatusCode: ${statusCode}. isLoggedOut: ${isLoggedOut}. ShouldReconnect: ${shouldReconnect}`);
+        
+        if (isLoggedOut) {
+          // Total disconnection & purge of all previous phone numbers and auth files
+          realConnectionStatus = "disconnected";
+          realQrCodeUrl = "";
+          realPairingCode = "";
+          connectedPhoneNumber = "";
+          whatsappConfig.simulatedStatus = "disconnected";
+          whatsappConfig.simulatedPhone = "";
+          saveConfig();
+          deleteBaileysSessionInFirestore().catch(() => {});
+          
+          const authDir = path.join(process.cwd(), "auth_info_baileys");
+          if (fs.existsSync(authDir)) {
+            try {
+              fs.rmSync(authDir, { recursive: true, force: true });
+            } catch (e) {}
+          }
+          
+          if (sock) {
+            try {
+              sock.ev?.removeAllListeners("creds.update");
+              sock.ev?.removeAllListeners("connection.update");
+              sock.end(undefined);
+            } catch (e) {}
+            sock = null;
+          }
+        } else if (shouldReconnect) {
+          // Reconnect automatically on 515 (restartRequired) or temporary closed socket during handshake
+          console.log("[WhatsApp] Auto-resuming Baileys socket handshake / session...");
+          setTimeout(() => {
+            if (!isExplicitlyDisconnected) {
+              initRealWhatsApp("resume", targetPhone);
+            }
+          }, 1500);
+        } else if (realConnectionStatus !== "connected") {
+          realConnectionStatus = "error";
+          realErrorMessage = "انقطع الاتصال بخوادم واتساب. يمكنك طلب رمز جديد أو مسح الباركود فوراً دون الحاجة لتسجيل الخروج.";
+        }
       }
     });
-    const sorted = list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()).slice(0, 100);
-    memoryWhatsAppMessages = sorted;
-    return sorted;
-  } catch (err) {
-    console.error("Error loading WhatsApp messages from Firestore, fallback to memory:", err);
-    return memoryWhatsAppMessages;
-  }
-}
 
-async function saveWhatsAppMessage(msg: any): Promise<void> {
-  memoryWhatsAppMessages.unshift(msg);
-  if (memoryWhatsAppMessages.length > 100) {
-    memoryWhatsAppMessages = memoryWhatsAppMessages.slice(0, 100);
-  }
-  try {
-    await setDoc(doc(db, "whatsapp_messages", msg.id), cleanObject(msg));
-  } catch (err) {
-    console.error("Error saving WhatsApp message to Firestore, kept in memory anyway:", err);
-  }
-}
-
-async function startServer() {
-  const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-
-  app.use(express.json({ limit: "15mb" }));
-  app.use(express.urlencoded({ limit: "15mb", extended: true }));
-
-  // HEALTH CHECK ENDPOINT
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
-
-  // DIAGNOSTICS ENDPOINT
-  app.get("/api/diagnostics", async (req, res) => {
-    const results: any = {
-      timestamp: new Date().toISOString(),
-      configExists: false,
-      databaseTests: {}
-    };
-
-    try {
-      results.configExists = fs.existsSync(CONFIG_PATH);
-      if (results.configExists) {
-        const confObj = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-        results.projectId = confObj.projectId;
-        results.firestoreDatabaseId = confObj.firestoreDatabaseId;
+    // Fallback timeout in case WhatsApp servers do not respond
+    connectionTimeoutTimer = setTimeout(() => {
+      if (realConnectionStatus === "connecting") {
+        realConnectionStatus = "error";
+        realErrorMessage = "استغرق طلب الرمز من خوادم واتساب وقتاً أطول من المعتاد. يمكنك الضغط على 'إعادة المحاولة' لتوليد رمز فوري جديد.";
       }
+    }, 35000);
 
-      // Test settings read
-      try {
-        const snap = await getDoc(doc(db, "settings", "app_settings"));
-        results.databaseTests.settingsRead = {
-          success: true,
-          exists: snap.exists(),
-          data: snap.exists() ? snap.data() : null
-        };
-      } catch (err: any) {
-        results.databaseTests.settingsRead = {
-          success: false,
-          error: err.message || String(err),
-          code: err.code,
-          stack: err.stack
-        };
-      }
+    // Handle Pairing Code flow if requested
+    if (method === "pairing_code" && targetPhone && !sock.authState?.creds?.registered) {
+      const cleanPhone = normalizePhoneNumber(targetPhone);
 
-      // Test days read
-      try {
-        const snap = await getDocs(collection(db, "days"));
-        results.databaseTests.daysRead = {
-          success: true,
-          count: snap.size
-        };
-      } catch (err: any) {
-        results.databaseTests.daysRead = {
-          success: false,
-          error: err.message || String(err),
-          code: err.code,
-          stack: err.stack
-        };
-      }
-
-      // Test write
-      try {
-        const testId = "test_diagnostics_" + Date.now();
-        await setDoc(doc(db, "days", testId), {
-          test: true,
-          createdAt: new Date().toISOString()
-        });
-        results.databaseTests.writeTest = {
-          success: true,
-          id: testId
-        };
-        // Clean up
-        await deleteDoc(doc(db, "days", testId));
-      } catch (err: any) {
-        results.databaseTests.writeTest = {
-          success: false,
-          error: err.message || String(err),
-          code: err.code,
-          stack: err.stack
-        };
-      }
-
-    } catch (err: any) {
-      results.error = err.message || String(err);
-    }
-
-    res.json(results);
-  });
-
-  // 1. SETTINGS ENDPOINTS
-  app.get("/api/settings", async (req, res) => {
-    const settings = await getSettings();
-    res.json(settings);
-  });
-
-
-  app.post("/api/settings", async (req, res) => {
-    const settings = req.body as Settings;
-    await saveSettings(settings);
-    
-    // Recalculate carryovers for both branches as caps might have changed
-    await recalculateCarryOvers("القادسية");
-    await recalculateCarryOvers("المروج");
-    
-    res.json({ success: true, settings });
-  });
-
-  // ==========================================
-  // USER AUTHENTICATION & MANAGEMENT ENDPOINTS
-  // ==========================================
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبة" });
-      }
-
-      const users = await getUsers();
-      const user = users.find(
-        (u) => u.username.toLowerCase() === username.toLowerCase()
-      );
-
-      if (!user) {
-        return res.status(401).json({ error: "❌ اسم المستخدم غير موجود في النظام" });
-      }
-
-      if (user.password !== password) {
-        return res.status(401).json({ error: "❌ كلمة المرور أو رمز PIN غير صحيح" });
-      }
-
-      if (user.status === "موقوف") {
-        return res.status(403).json({ error: "⚠️ عذراً! هذا الحساب موقوف حالياً من قبل الإدارة" });
-      }
-
-      res.json({
-        success: true,
-        user: {
-          username: user.username,
-          displayName: user.displayName,
-          role: user.role,
-          status: user.status,
-          branch: user.branch || "الكل",
-          canEnterInvoices: user.canEnterInvoices || false
-        }
-      });
-    } catch (err: any) {
-      console.error("Login endpoint error:", err);
-      res.status(500).json({ error: "خطأ في خادم تسجيل الدخول" });
-    }
-  });
-
-  app.get("/api/users", async (req, res) => {
-    try {
-      const users = await getUsers();
-      res.json(users);
-    } catch (err) {
-      res.status(500).json({ error: "فشل استرجاع حسابات الموظفين" });
-    }
-  });
-
-  app.post("/api/users", async (req, res) => {
-    try {
-      const user = req.body as UnifiedUser;
-      if (!user || !user.username) {
-        return res.status(400).json({ error: "بيانات المستخدم غير مكتملة" });
-      }
-      user.id = user.username.toLowerCase();
-      user.username = user.id;
-      if (!user.createdAt) {
-        user.createdAt = new Date().toISOString();
-      }
-      await saveUser(user);
-      res.json({ success: true, user });
-    } catch (err) {
-      res.status(500).json({ error: "فشل حفظ بيانات الحساب" });
-    }
-  });
-
-  app.delete("/api/users/:id", async (req, res) => {
-    try {
-      const userId = req.params.id;
-      if (userId === "admin") {
-        return res.status(400).json({ error: "⚠️ لا يمكن حذف حساب المدير العام الأساسي للنظام" });
-      }
-      await deleteUser(userId);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: "فشل حذف الحساب" });
-    }
-  });
-
-  // 2. CARRY OVER ALERT ENDPOINT
-  app.get("/api/carryover", async (req, res) => {
-    const branch = req.query.branch as "القادسية" | "المروج";
-    const dateQuery = req.query.date as string;
-    if (!branch) {
-      return res.status(400).json({ error: "Branch is required" });
-    }
-
-    const settings = await getSettings();
-    const allDays = await getDays();
-    
-    // Filter by branch
-    let filtered = allDays.filter((d) => d.branch === branch);
-    
-    // If a reference date is supplied, only consider days strictly before that date (yesterday and older)
-    if (dateQuery) {
-      filtered = filtered.filter((d) => d.date < dateQuery);
-    }
-    
-    if (filtered.length === 0) {
-      return res.json([]);
-    }
-
-    // Find latest record by date to check remaining carry-overs
-    filtered.sort((a, b) => b.date.localeCompare(a.date));
-    const latest = filtered[0];
-
-    const carries: Array<{
-      key: string;
-      name: string;
-      carry: number;
-      cap: number;
-      daysLeft: number;
-      totalOriginal: number;
-      daysPassed: number;
-      startDate: string;
-      endDate: string;
-      settingsKey: string;
-    }> = [];
-
-    const categories = [
-      {
-        key: "pepsi",
-        name: "بيبسي",
-        nextKey: "pepsi_carry_next" as const,
-        prevKey: "pepsi_carry_prev" as const,
-        paidKey: "pepsi_paid" as const,
-        deductKey: "pepsi_deduct" as const,
-        cap: latest.pepsi_cap !== undefined && latest.pepsi_cap !== null 
-          ? latest.pepsi_cap 
-          : (branch === "القادسية" 
-              ? (settings.سقف_بيبسي_قادسية ?? settings.سقف_بيبسي) 
-              : (settings.سقف_بيبسي_مروج ?? settings.سقف_بيبسي)),
-        settingsKey: branch === "القادسية" ? "سقف_بيبسي_قادسية" : "سقف_بيبسي_مروج"
-      },
-      {
-        key: "plastic",
-        name: "بلاستيكيات",
-        nextKey: "plastic_carry_next" as const,
-        prevKey: "plastic_carry_prev" as const,
-        paidKey: "plastic_paid" as const,
-        deductKey: "plastic_deduct" as const,
-        cap: latest.plastic_cap !== undefined && latest.plastic_cap !== null 
-          ? latest.plastic_cap 
-          : (branch === "القادسية" 
-              ? (settings.سقف_بلاستيك_قادسية ?? settings.سقف_بلاستيك) 
-              : (settings.سقف_بلاستيك_مروج ?? settings.سقف_بلاستيك)),
-        settingsKey: branch === "القادسية" ? "سقف_بلاستيك_قادسية" : "سقف_بلاستيك_مروج"
-      },
-      {
-        key: "sauces",
-        name: "الصلصات",
-        nextKey: "sauces_carry_next" as const,
-        prevKey: "sauces_carry_prev" as const,
-        paidKey: "sauces_paid" as const,
-        deductKey: "sauces_deduct" as const,
-        cap: latest.sauces_cap !== undefined && latest.sauces_cap !== null 
-          ? latest.sauces_cap 
-          : (branch === "القادسية" 
-              ? (settings.سقف_صلصات_قادسية ?? settings.سقف_صلصات) 
-              : (settings.سقف_صلصات_مروج ?? settings.سقف_صلصات)),
-        settingsKey: branch === "القادسية" ? "سقف_صلصات_قادسية" : "سقف_صلصات_مروج"
-      },
-      {
-        key: "diesel",
-        name: "الديزل",
-        nextKey: "diesel_carry_next" as const,
-        prevKey: "diesel_carry_prev" as const,
-        paidKey: "diesel_paid" as const,
-        deductKey: "diesel_deduct" as const,
-        cap: latest.diesel_cap !== undefined && latest.diesel_cap !== null ? latest.diesel_cap : (branch === "القادسية" ? settings.سقف_ديزل_قادسية : settings.سقف_ديزل_مروج),
-        settingsKey: branch === "القادسية" ? "سقف_ديزل_قادسية" : "سقف_ديزل_مروج"
-      }
-    ];
-
-    categories.forEach((cat) => {
-      const latestCarryNext = latest[cat.nextKey] || 0;
-      if (latestCarryNext > 0) {
-        // Trace back to calculate original sum and elapsed days
-        let totalOriginal = 0;
-        let daysPassed = 0;
-        let startDate = latest.date;
-        let maxCarry = 0;
-
-        for (let i = 0; i < filtered.length; i++) {
-          const entry = filtered[i];
-          const entryNext = entry[cat.nextKey] || 0;
-          const entryPrev = entry[cat.prevKey] || 0;
-          const entryPaid = entry[cat.paidKey] || 0;
-          const entryDeduct = entry[cat.deductKey] || 0;
-          const entryType = (entry as any)[cat.key + "_type"];
-          const entryCap = (entry as any)[cat.key + "_cap"] || cat.cap;
-
-          if (entryNext > 0 || entryPaid > 0 || entryPrev > 0 || entryDeduct > 0) {
-            maxCarry = Math.max(maxCarry, entryPrev, entryNext);
-
-            // A payment is a supply invoice when explicitly categorized as such,
-            // or when beginning the chain, or when the payment size is larger than the daily floor limits.
-            const isNewInvoice = entryType === "invoice" || (entryPrev === 0 && entryPaid > 0) || (entryPaid > entryCap && entryType !== "payment");
-
-            if (isNewInvoice && entryPaid > 0) {
-              totalOriginal += entryPaid;
-            }
-
-            if (entryDeduct > 0) {
-              daysPassed += 1;
-            }
-
-            startDate = entry.date; // Bubble back to oldest entry of the run
-            
-            // If we reached the absolute start of this run, stop searching
-            if (entryPrev === 0) {
-              break;
-            }
+      const tryRequestCode = async (attempt = 1) => {
+        try {
+          if (!sock || sock.authState?.creds?.registered) return;
+          const code = await sock.requestPairingCode(cleanPhone);
+          if (code) {
+            if (connectionTimeoutTimer) clearTimeout(connectionTimeoutTimer);
+            realPairingCode = code || "";
+            realConnectionStatus = "pairing_code_ready";
+            realErrorMessage = "";
+            console.log(`[WhatsApp] Pairing code generated for ${cleanPhone}: ${code}`);
+            return;
+          }
+        } catch (err: any) {
+          if (attempt < 5 && realConnectionStatus === "connecting") {
+            setTimeout(() => tryRequestCode(attempt + 1), 1000);
           } else {
-            break;
+            console.error("Error requesting WhatsApp pairing code:", err);
+            realConnectionStatus = "error";
+            realErrorMessage = err?.message || "فشل توليد رمز الربط لرقم الهاتف. تأكد من صحة الرقم ومفتاح الدولة ثم اضغط إعادة المحاولة.";
           }
         }
+      };
 
-        // Bound original invoice by the maximum carried over/saved amount we observed in this run to ensure integrity
-        totalOriginal = Math.max(totalOriginal, maxCarry);
+      setTimeout(() => tryRequestCode(1), 700);
+    }
+  } catch (err: any) {
+    console.error("Error starting Baileys socket connection:", err);
+    realConnectionStatus = "error";
+    realErrorMessage = err?.message || "حدث خطأ أثناء تشغيل محرك الواتساب.";
+  }
+}
 
-        const daysLeft = Math.ceil(latestCarryNext / cat.cap);
-        const estEnd = new Date(latest.date);
-        estEnd.setDate(estEnd.getDate() + daysLeft);
-        const endDate = estEnd.toISOString().split("T")[0];
+// Store campaign states
+interface CampaignLogItem {
+  id: string;
+  studentName: string;
+  phone: string;
+  grade?: string;
+  className?: string;
+  message: string;
+  status: "pending" | "sending" | "success" | "failed";
+  timestamp: string;
+  error?: string;
+}
 
-        carries.push({
-          key: cat.key,
-          name: cat.name,
-          carry: latestCarryNext,
-          cap: cat.cap,
-          daysLeft,
-          totalOriginal: totalOriginal,
-          daysPassed,
-          startDate,
-          endDate,
-          settingsKey: cat.settingsKey
-        });
+interface Campaign {
+  id: string;
+  name: string;
+  total: number;
+  sent: number;
+  failed: number;
+  status: "idle" | "running" | "completed" | "paused";
+  startTime: string | null;
+  endTime: string | null;
+  logs: CampaignLogItem[];
+}
+
+interface IndividualLogItem {
+  id: string;
+  studentName: string;
+  phone: string;
+  grade?: string;
+  className?: string;
+  message: string;
+  status: "success" | "failed";
+  timestamp: string;
+  error?: string;
+}
+
+const campaigns: Record<string, Campaign> = {};
+const individualLogs: IndividualLogItem[] = [];
+
+// Persistent files paths
+const INDIVIDUAL_LOGS_FILE = path.join(process.cwd(), "individual_logs.json");
+const CAMPAIGNS_FILE = path.join(process.cwd(), "campaigns_store.json");
+const APP_SETTINGS_FILE = path.join(process.cwd(), "app_settings.json");
+const STUDENTS_FILE = path.join(process.cwd(), "students_store.json");
+const TEMPLATE_FILE = path.join(process.cwd(), "template_store.json");
+const USERS_FILE = path.join(process.cwd(), "users_store.json");
+const ATTENDANCE_FILE = path.join(process.cwd(), "attendance_store.json");
+const TEACHERS_FILE = path.join(process.cwd(), "teachers_store.json");
+const SCHEDULE_FILE = path.join(process.cwd(), "schedule_store.json");
+const INQUIRIES_FILE = path.join(process.cwd(), "inquiries_store.json");
+const HEALTH_PROFILES_FILE = path.join(process.cwd(), "health_profiles_store.json");
+const SUPPORT_CASES_FILE = path.join(process.cwd(), "support_cases_store.json");
+const HEALTH_AUDIT_FILE = path.join(process.cwd(), "health_audit_store.json");
+const NEEDS_SURVEY_FILE = path.join(process.cwd(), "needs_survey_store.json");
+const PARENT_COUNCILS_FILE = path.join(process.cwd(), "parent_councils_store.json");
+
+// Parent Councils Data Store
+let parentCouncilsStore: {
+  applications: Record<string, any>;
+  invites: Record<string, any>;
+  config: {
+    academicYear: string;
+    councilTerm: string;
+    generalActivationCode: string;
+    seatsCount: number;
+    reserveSeatsCount: number;
+    formationApproved: boolean;
+    formationApprovedAt?: string;
+    selectedMemberIds: string[];
+    reserveMemberIds: string[];
+  };
+} = {
+  applications: {},
+  invites: {},
+  config: {
+    academicYear: "1447 - 1448 هـ",
+    councilTerm: "العام الدراسي 2026 - 2027",
+    generalActivationCode: "202601",
+    seatsCount: 7,
+    reserveSeatsCount: 2,
+    formationApproved: false,
+    selectedMemberIds: [],
+    reserveMemberIds: [],
+  },
+};
+
+// Default initial school settings
+let appSettings = {
+  countryName: "المملكة العربية السعودية",
+  ministryName: "وزارة التعليم",
+  administrationName: "الإدارة العامة للتعليم",
+  schoolName: "ثانوية الأبناء الأولى",
+  principalName: "",
+  vicePrincipalName: "",
+  counselorName: "",
+  systemManagerName: "",
+  logoUrl: "",
+  logoWidth: 60,
+  logoHeight: 60,
+};
+
+let activeStudentsList: any[] = [];
+let activeTemplate: string = "السلام عليكم ورحمة الله وبركاته،\nأهلاً بك يا سيد {أبو الطالب}، نود إحاطتكم علماً بأن الطالب {اسم الطالب} قد حصل على درجة {الدرجة} في مادة الرياضيات.\nنتمنى له دوام التوفيق والنجاح.\n- إدارة المدرسة";
+let attendanceRecordsStore: Record<string, Record<string, any>> = {};
+let teachersList: any[] = [...DEFAULT_SAMPLE_TEACHERS];
+let scheduleAssignments: any[] = [...DEFAULT_SAMPLE_SCHEDULE];
+let inquiryRequestsStore: any[] = [];
+let healthProfilesStore: Record<string, any> = {};
+let supportCasesStore: any[] = [];
+let healthAuditLogsStore: any[] = [];
+let needsSurveyProfilesStore: Record<string, any> = {};
+
+let systemUsersList: any[] = [
+  {
+    id: "admin_root_1",
+    name: "مدير النظام العام",
+    username: "admin",
+    password: "123456",
+    role: "admin",
+    status: "active",
+    phone: "",
+    createdAt: new Date().toISOString(),
+    notes: "حساب الإدارة الأساسي الافتراضي للنظام",
+  }
+];
+
+if (fs.existsSync(USERS_FILE)) {
+  try {
+    const raw = fs.readFileSync(USERS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) systemUsersList = parsed;
+  } catch (e) {
+    console.error("Error reading users_store.json", e);
+  }
+}
+
+if (fs.existsSync(ATTENDANCE_FILE)) {
+  try {
+    const raw = fs.readFileSync(ATTENDANCE_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      attendanceRecordsStore = parsed;
+    }
+  } catch (e) {
+    console.error("Error reading attendance_store.json", e);
+  }
+}
+
+if (fs.existsSync(TEACHERS_FILE)) {
+  try {
+    const raw = fs.readFileSync(TEACHERS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) teachersList = parsed;
+  } catch (e) {
+    console.error("Error reading teachers_store.json", e);
+  }
+}
+
+if (fs.existsSync(SCHEDULE_FILE)) {
+  try {
+    const raw = fs.readFileSync(SCHEDULE_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      scheduleAssignments = parsed.filter((a: any) => {
+        if (a?.id && String(a.id).includes("_34_")) return false;
+        const sec = (a?.section || "").trim();
+        return sec !== "شعبة 12" && sec !== "شعبة 18" && sec !== "12" && sec !== "18";
+      });
+    }
+  } catch (e) {
+    console.error("Error reading schedule_store.json", e);
+  }
+}
+
+if (fs.existsSync(INQUIRIES_FILE)) {
+  try {
+    const raw = fs.readFileSync(INQUIRIES_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) inquiryRequestsStore = parsed;
+  } catch (e) {
+    console.error("Error reading inquiries_store.json", e);
+  }
+}
+
+if (fs.existsSync(HEALTH_PROFILES_FILE)) {
+  try {
+    const raw = fs.readFileSync(HEALTH_PROFILES_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") healthProfilesStore = parsed;
+  } catch (e) {
+    console.error("Error reading health_profiles_store.json", e);
+  }
+}
+
+if (fs.existsSync(SUPPORT_CASES_FILE)) {
+  try {
+    const raw = fs.readFileSync(SUPPORT_CASES_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) supportCasesStore = parsed;
+  } catch (e) {
+    console.error("Error reading support_cases_store.json", e);
+  }
+}
+
+if (fs.existsSync(HEALTH_AUDIT_FILE)) {
+  try {
+    const raw = fs.readFileSync(HEALTH_AUDIT_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) healthAuditLogsStore = parsed;
+  } catch (e) {
+    console.error("Error reading health_audit_store.json", e);
+  }
+}
+
+if (fs.existsSync(NEEDS_SURVEY_FILE)) {
+  try {
+    const raw = fs.readFileSync(NEEDS_SURVEY_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") needsSurveyProfilesStore = parsed;
+  } catch (e) {
+    console.error("Error reading needs_survey_store.json", e);
+  }
+}
+
+if (fs.existsSync(PARENT_COUNCILS_FILE)) {
+  try {
+    const raw = fs.readFileSync(PARENT_COUNCILS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      parentCouncilsStore = {
+        applications: parsed.applications || {},
+        invites: parsed.invites || {},
+        config: { ...parentCouncilsStore.config, ...(parsed.config || {}) },
+      };
+    }
+  } catch (e) {
+    console.error("Error reading parent_councils_store.json", e);
+  }
+}
+
+// Load persisted state safely on startup
+if (fs.existsSync(APP_SETTINGS_FILE)) {
+  try {
+    const raw = fs.readFileSync(APP_SETTINGS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    appSettings = { ...appSettings, ...parsed };
+  } catch (e) {
+    console.error("Error reading app_settings.json", e);
+  }
+}
+
+if (fs.existsSync(STUDENTS_FILE)) {
+  try {
+    const raw = fs.readFileSync(STUDENTS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) activeStudentsList = parsed;
+  } catch (e) {
+    console.error("Error reading students_store.json", e);
+  }
+}
+
+if (fs.existsSync(TEMPLATE_FILE)) {
+  try {
+    const raw = fs.readFileSync(TEMPLATE_FILE, "utf-8");
+    if (raw && typeof raw === "string") activeTemplate = raw;
+  } catch (e) {
+    console.error("Error reading template_store.json", e);
+  }
+}
+
+if (fs.existsSync(CAMPAIGNS_FILE)) {
+  try {
+    const raw = fs.readFileSync(CAMPAIGNS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      Object.assign(campaigns, parsed);
+    }
+  } catch (e) {
+    console.error("Error reading campaigns_store.json", e);
+  }
+}
+
+if (fs.existsSync(INDIVIDUAL_LOGS_FILE)) {
+  try {
+    const raw = fs.readFileSync(INDIVIDUAL_LOGS_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      individualLogs.push(...parsed);
+    }
+  } catch (e) {
+    console.error("Error reading individual_logs.json", e);
+  }
+}
+
+function saveIndividualLogs() {
+  try {
+    fs.writeFileSync(INDIVIDUAL_LOGS_FILE, JSON.stringify(individualLogs.slice(0, 1000), null, 2), "utf-8");
+    syncServerStateToFirestore({ individualLogs: individualLogs.slice(0, 500) }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving individual_logs.json", e);
+  }
+}
+
+function saveCampaigns() {
+  try {
+    fs.writeFileSync(CAMPAIGNS_FILE, JSON.stringify(campaigns, null, 2), "utf-8");
+    syncServerStateToFirestore({ campaigns }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving campaigns_store.json", e);
+  }
+}
+
+function saveAppSettings() {
+  try {
+    fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2), "utf-8");
+    syncServerStateToFirestore({ appSettings }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving app_settings.json", e);
+  }
+}
+
+function saveStudentsList() {
+  try {
+    fs.writeFileSync(STUDENTS_FILE, JSON.stringify(activeStudentsList, null, 2), "utf-8");
+    syncServerStateToFirestore({ activeStudentsList }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving students_store.json", e);
+  }
+}
+
+function saveTemplate() {
+  try {
+    fs.writeFileSync(TEMPLATE_FILE, activeTemplate, "utf-8");
+    syncServerStateToFirestore({ activeTemplate }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving template_store.json", e);
+  }
+}
+
+function saveUsersList() {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(systemUsersList, null, 2), "utf-8");
+    syncServerStateToFirestore({ systemUsersList }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving users_store.json", e);
+  }
+}
+
+function saveAttendanceRecords() {
+  try {
+    fs.writeFileSync(ATTENDANCE_FILE, JSON.stringify(attendanceRecordsStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ attendanceRecords: attendanceRecordsStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving attendance_store.json", e);
+  }
+}
+
+function saveTeachersList() {
+  try {
+    fs.writeFileSync(TEACHERS_FILE, JSON.stringify(teachersList, null, 2), "utf-8");
+    syncServerStateToFirestore({ teachersList }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving teachers_store.json", e);
+  }
+}
+
+function saveScheduleAssignments() {
+  try {
+    fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(scheduleAssignments, null, 2), "utf-8");
+    syncServerStateToFirestore({ scheduleAssignments }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving schedule_store.json", e);
+  }
+}
+
+function saveInquiryRequests() {
+  try {
+    fs.writeFileSync(INQUIRIES_FILE, JSON.stringify(inquiryRequestsStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ inquiryRequests: inquiryRequestsStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving inquiries_store.json", e);
+  }
+}
+
+function saveHealthProfiles() {
+  try {
+    fs.writeFileSync(HEALTH_PROFILES_FILE, JSON.stringify(healthProfilesStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ healthProfiles: healthProfilesStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving health_profiles_store.json", e);
+  }
+}
+
+function saveSupportCases() {
+  try {
+    fs.writeFileSync(SUPPORT_CASES_FILE, JSON.stringify(supportCasesStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ supportCases: supportCasesStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving support_cases_store.json", e);
+  }
+}
+
+function saveHealthAuditLogs() {
+  try {
+    fs.writeFileSync(HEALTH_AUDIT_FILE, JSON.stringify(healthAuditLogsStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ healthAuditLogs: healthAuditLogsStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving health_audit_store.json", e);
+  }
+}
+
+function saveNeedsSurveyProfiles() {
+  try {
+    fs.writeFileSync(NEEDS_SURVEY_FILE, JSON.stringify(needsSurveyProfilesStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ needsSurveyProfiles: needsSurveyProfilesStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving needs_survey_store.json", e);
+  }
+}
+
+function saveParentCouncilsStore() {
+  try {
+    fs.writeFileSync(PARENT_COUNCILS_FILE, JSON.stringify(parentCouncilsStore, null, 2), "utf-8");
+    syncServerStateToFirestore({ parentCouncils: parentCouncilsStore }).catch(() => {});
+  } catch (e) {
+    console.error("Error saving parent_councils_store.json", e);
+  }
+}
+
+function getOrInitStudentNeedsProfile(student: any) {
+  if (needsSurveyProfilesStore[student.id]) {
+    return needsSurveyProfilesStore[student.id];
+  }
+  const token = `sn_${student.id}`;
+  const code = generateActivationCode(student.id);
+  const defaultGuidance = {
+    studentName: student.name || "طالب",
+    grade: student.grade || "",
+    className: student.className || "",
+    attentionLevel: "routine",
+    whatStudentNeeds: [
+      "التشجيع الإيجابي وبناء الثقة داخل الحصة",
+      "مراعاة الفروق الفردية وتقدير جهود الطالب في المشاركة",
+    ],
+    whatToAvoid: [
+      "تجنب إحراج الطالب أو مقارنته بالآخرين أمام زملائه",
+      "تجنب مناقشة أي أمور خاصة داخل الصف",
+    ],
+    whatToObserve: [
+      "مستوى الاندماج والتفاعل مع الأنشطة الصفية",
+      "إشعار الموجه الطلابي بلطف عند ملاحظة أي تغير ملحوظ",
+    ],
+    isApprovedByCounselor: false,
+  };
+
+  const profile = {
+    studentId: student.id,
+    studentName: student.name || "طالب",
+    nationalId: student["رقم الطالب"] || student.id || student.nationalId,
+    grade: student.grade || "",
+    className: student.className || "",
+    guardianName: student.guardianName || student.fatherName || "ولي الأمر",
+    guardianPhone: student.phone || "",
+    activationToken: token,
+    activationCode: code,
+    isActivated: false,
+    submissionCount: 0,
+    status: "not_sent",
+    overallPriority: "low",
+    primaryCategories: ["general"],
+    indicatorExplanations: [],
+    smartSummary: "لم يتم استلام استبيان بعد من ولي الأمر لهذا الطالب.",
+    smartRecommendations: ["إرسال رابط الاستبيان لولي الأمر لرصد الاحتياجات."],
+    teacherGuidance: defaultGuidance,
+    actions: [],
+  };
+  needsSurveyProfilesStore[student.id] = profile;
+  return profile;
+}
+
+async function sendDirectWhatsAppMessage(phone: string, message: string): Promise<{ success: boolean; error?: string }> {
+  if (!phone || !message) return { success: false, error: "رقم الهاتف أو نص الرسالة غير موجود" };
+  const isCloudAPI = whatsappConfig.mode === "cloud_api" && whatsappConfig.cloudApiKey && whatsappConfig.cloudPhoneId;
+  const isRealConnected = (sock && sock.user) || realConnectionStatus === "connected";
+
+  if (isCloudAPI) {
+    try {
+      const formattedPhone = normalizePhoneNumber(phone);
+      const response = await fetch(
+        `https://graph.facebook.com/v18.0/${whatsappConfig.cloudPhoneId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${whatsappConfig.cloudApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: formattedPhone,
+            type: "text",
+            text: { body: message },
+          }),
+        }
+      );
+      const result = (await response.json()) as any;
+      if (response.ok && result.messages) {
+        return { success: true };
       }
+      return { success: false, error: result.error?.message || "WhatsApp Cloud API error" };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Connection error to Meta" };
+    }
+  } else if (isRealConnected) {
+    return await sendBaileysMessage(phone, message);
+  } else {
+    // If not connected to real WhatsApp
+    return { 
+      success: false, 
+      error: "جهاز الواتساب غير مرتبط حالياً. يرجى التوجه إلى صفحة 'ربط الواتساب' وربط الجوال لإرسال الرسائل الفعلية." 
+    };
+  }
+}
+
+// Default initial config load
+const CONFIG_FILE = path.join(process.cwd(), "whatsapp_config.json");
+if (fs.existsSync(CONFIG_FILE)) {
+  try {
+    const data = fs.readFileSync(CONFIG_FILE, "utf-8");
+    whatsappConfig = JSON.parse(data);
+  } catch (e) {
+    console.error("Error reading config file", e);
+  }
+}
+
+const saveConfig = () => {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(whatsappConfig, null, 2), "utf-8");
+    syncServerStateToFirestore({ whatsappConfig }).catch(() => {});
+  } catch (e) {
+    console.error("Error writing config file", e);
+  }
+};
+
+// API Endpoints for Full App State Synchronization across Mobile & Desktop Browsers
+app.get("/api/app-state", (req, res) => {
+  res.json({
+    settings: appSettings,
+    students: activeStudentsList,
+    template: activeTemplate,
+    users: systemUsersList,
+    attendanceRecords: attendanceRecordsStore,
+    teachers: teachersList,
+    schedule: scheduleAssignments,
+    inquiries: inquiryRequestsStore,
+    totalCampaigns: Object.keys(campaigns).length,
+    totalIndividualLogs: individualLogs.length,
+  });
+});
+
+// Teachers Management API Endpoints
+app.get("/api/teachers", (req, res) => {
+  res.json({ teachers: teachersList, total: teachersList.length });
+});
+
+app.post("/api/teachers", (req, res) => {
+  const { teachers } = req.body || {};
+  if (Array.isArray(teachers)) {
+    teachersList = teachers;
+    saveTeachersList();
+  }
+  res.json({ success: true, count: teachersList.length, teachers: teachersList });
+});
+
+// School Timetable Schedule API Endpoints
+app.get("/api/schedule", (req, res) => {
+  res.json({ assignments: scheduleAssignments, total: scheduleAssignments.length });
+});
+
+app.post("/api/schedule", (req, res) => {
+  const { assignments } = req.body || {};
+  if (Array.isArray(assignments)) {
+    scheduleAssignments = assignments.filter((a: any) => {
+      if (a?.id && String(a.id).includes("_34_")) return false;
+      const sec = (a?.section || "").trim();
+      return sec !== "شعبة 12" && sec !== "شعبة 18" && sec !== "12" && sec !== "18";
     });
+    saveScheduleAssignments();
+  }
+  res.json({ success: true, count: scheduleAssignments.length, assignments: scheduleAssignments });
+});
 
-    res.json(carries);
+// Student Inquiry & Teacher Evaluation API Endpoints
+app.get("/api/inquiries", (req, res) => {
+  res.json({ inquiries: inquiryRequestsStore, total: inquiryRequestsStore.length });
+});
+
+app.post("/api/inquiries/create", async (req, res) => {
+  try {
+    const { requests, origin } = req.body || {};
+    if (!Array.isArray(requests) || requests.length === 0) {
+      return res.status(400).json({ error: "لم يتم تحديد معلمين لإرسال الاستعلام إليهم" });
+    }
+
+    const baseUrl = origin || `${req.protocol}://${req.get("host")}`;
+    const createdInquiries: any[] = [];
+    const results: any[] = [];
+
+    for (const item of requests) {
+      const { teacherName, teacherPhone, subject, section, grade, students } = item;
+      if (!teacherName || !students || students.length === 0) continue;
+
+      const inquiryId = `inq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      // Generate 6-digit verification access code
+      const accessCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Build WhatsApp message text
+      let studentText = "";
+      if (students.length === 1) {
+        studentText = `الطالب ${students[0].name} (الصف: ${students[0].grade || grade || ""} - الشعبة: ${section || students[0].className || ""})`;
+      } else {
+        studentText = `الطلاب الموضحين أدناه في شعبة (${section}):\n` + students.map((s: any, idx: number) => `${idx + 1}. ${s.name}`).join("\n");
+      }
+
+      const evalLink = `${baseUrl}/?eval=${inquiryId}`;
+      const schoolTitle = appSettings.schoolName || "ثانوية الأبناء الأولى";
+
+      const message = `أهلاً أستاذ ${teacherName}،\nنأمل منك مشكوراً تزويدنا بملاحظاتك عن ${studentText} في مادة (${subject}).\n\n🔗 *رابط التقييم المباشر:*\n${evalLink}\n\n🔑 *رمز الدخول (التفعيل):*\n*${accessCode}*\n\nشاكرين ومقدرين حسن تعاونكم،\nإدارة ${schoolTitle}`;
+
+      // Dispatch WhatsApp message
+      let whatsappStatus: "pending" | "success" | "failed" = "pending";
+      let whatsappError = "";
+
+      if (teacherPhone) {
+        const sendResult = await sendDirectWhatsAppMessage(teacherPhone, message);
+        if (sendResult.success) {
+          whatsappStatus = "success";
+        } else {
+          whatsappStatus = "failed";
+          whatsappError = sendResult.error || "فشل إرسال رسالة الواتساب";
+        }
+      }
+
+      const inquiryRecord = {
+        id: inquiryId,
+        accessCode,
+        teacherId: item.teacherId || "",
+        teacherName,
+        teacherPhone: teacherPhone || "",
+        subject,
+        section: section || "",
+        grade: grade || "",
+        schoolName: schoolTitle,
+        students,
+        status: "pending" as const,
+        whatsappStatus,
+        whatsappError,
+        sentAt: new Date().toISOString(),
+        isVerified: false,
+      };
+
+      inquiryRequestsStore.unshift(inquiryRecord);
+      createdInquiries.push(inquiryRecord);
+      results.push({
+        id: inquiryId,
+        teacherName,
+        teacherPhone,
+        whatsappStatus,
+        whatsappError,
+      });
+    }
+
+    saveInquiryRequests();
+    res.json({
+      success: true,
+      message: `تم إنشاء ${createdInquiries.length} طلب استعلام وإرسال الرسائل للمعلمين بنجاح`,
+      inquiries: createdInquiries,
+      results,
+    });
+  } catch (err: any) {
+    console.error("Error creating inquiry requests:", err);
+    res.status(500).json({ error: err.message || "فشل إنشاء طلبات الاستعلام" });
+  }
+});
+
+app.post("/api/inquiries/resend", async (req, res) => {
+  try {
+    const { id, origin } = req.body || {};
+    const inquiry = inquiryRequestsStore.find((item) => item.id === id);
+    if (!inquiry) {
+      return res.status(404).json({ error: "طلب الاستعلام غير موجود" });
+    }
+
+    // Refresh sentAt timestamp to renew 3-day validity
+    inquiry.sentAt = new Date().toISOString();
+
+    const baseUrl = origin || `${req.protocol}://${req.get("host")}`;
+    const evalLink = `${baseUrl}/?eval=${inquiry.id}`;
+    const schoolTitle = appSettings.schoolName || inquiry.schoolName || "ثانوية الأبناء الأولى";
+
+    let studentText = "";
+    if (inquiry.students.length === 1) {
+      studentText = `الطالب ${inquiry.students[0].name} (الصف: ${inquiry.students[0].grade || inquiry.grade || ""} - الشعبة: ${inquiry.section || inquiry.students[0].className || ""})`;
+    } else {
+      studentText = `الطلاب الموضحين أدناه في شعبة (${inquiry.section}):\n` + inquiry.students.map((s: any, idx: number) => `${idx + 1}. ${s.name}`).join("\n");
+    }
+
+    const message = `تذكير: أهلاً أستاذ ${inquiry.teacherName}،\nنأمل منك مشكوراً تزويدنا بملاحظاتك عن ${studentText} في مادة (${inquiry.subject}).\n\n🔗 *رابط التقييم المباشر (صالح لمدة 3 أيام):*\n${evalLink}\n\n🔑 *رمز الدخول (التفعيل):*\n*${inquiry.accessCode}*\n\nشاكرين ومقدرين حسن تعاونكم،\nإدارة ${schoolTitle}`;
+
+    const sendResult = await sendDirectWhatsAppMessage(inquiry.teacherPhone, message);
+    if (sendResult.success) {
+      inquiry.whatsappStatus = "success";
+      inquiry.whatsappError = "";
+    } else {
+      inquiry.whatsappStatus = "failed";
+      inquiry.whatsappError = sendResult.error || "فشل إرسال التذكير";
+    }
+
+    saveInquiryRequests();
+    res.json({
+      success: sendResult.success,
+      message: sendResult.success ? "تمت إعادة إرسال التذكير وتجديد صلاحية الرابط بنجاح" : (sendResult.error || "فشل الإرسال"),
+      inquiry,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "حدث خطأ أثناء إعادة الإرسال" });
+  }
+});
+
+app.delete("/api/inquiries/:id", (req, res) => {
+  const { id } = req.params;
+  const initialLen = inquiryRequestsStore.length;
+  inquiryRequestsStore = inquiryRequestsStore.filter((item) => item.id !== id);
+  if (inquiryRequestsStore.length !== initialLen) {
+    saveInquiryRequests();
+    res.json({ success: true, message: "تم حذف الاستعلام بنجاح" });
+  } else {
+    res.status(404).json({ error: "الاستعلام غير موجود" });
+  }
+});
+
+// Public Teacher Evaluation Portal Endpoints with 3-Day Expiration Guard
+app.get("/api/inquiries/public/:id", (req, res) => {
+  const { id } = req.params;
+  const inquiry = inquiryRequestsStore.find((item) => item.id === id);
+  if (!inquiry) {
+    return res.status(404).json({ error: "طلب الاستعلام غير موجود" });
+  }
+
+  // Check 3 days expiration (72 hours) from sentAt
+  const sentTime = new Date(inquiry.sentAt || inquiry.createdAt || Date.now()).getTime();
+  const isExpired = Date.now() - sentTime > INQUIRY_EXPIRATION_MS;
+
+  // Return public details without revealing the secret access code
+  res.json({
+    id: inquiry.id,
+    teacherName: inquiry.teacherName,
+    subject: inquiry.subject,
+    section: inquiry.section,
+    grade: inquiry.grade,
+    schoolName: appSettings.schoolName || inquiry.schoolName || "ثانوية الأبناء الأولى",
+    logoUrl: appSettings.logoUrl || "",
+    students: inquiry.students,
+    status: inquiry.status,
+    isVerified: inquiry.isVerified,
+    sentAt: inquiry.sentAt,
+    completedAt: inquiry.completedAt,
+    isExpired: isExpired && inquiry.status !== "completed",
+    expirationLimitDays: 3,
+    hasEvaluations: !!(inquiry.evaluations && inquiry.evaluations.length > 0),
   });
+});
 
-  // 3. DAILY REPORTS / DAYS ENDPOINTS
-  app.get("/api/days", async (req, res) => {
-    const branch = req.query.branch as "القادسية" | "المروج";
-    const from = req.query.from as string;
-    const to = req.query.to as string;
+app.post("/api/inquiries/public/verify", (req, res) => {
+  const { id, accessCode } = req.body || {};
+  const inquiry = inquiryRequestsStore.find((item) => item.id === id);
+  if (!inquiry) {
+    return res.status(404).json({ error: "طلب الاستعلام غير موجود" });
+  }
 
-    let days = await getDays();
+  const sentTime = new Date(inquiry.sentAt || inquiry.createdAt || Date.now()).getTime();
+  const isExpired = Date.now() - sentTime > INQUIRY_EXPIRATION_MS;
 
-    if (branch) {
-      days = days.filter((d) => d.branch === branch);
-    }
-    if (from) {
-      days = days.filter((d) => d.date >= from);
-    }
-    if (to) {
-      days = days.filter((d) => d.date <= to);
-    }
+  if (isExpired && inquiry.status !== "completed") {
+    return res.status(403).json({
+      error: "انتهت صلاحية هذا الرابط المحدد بـ 3 أيام من تاريخ الإرسال للحفاظ على موارد وأمان النظام. يرجى التواصل مع إدارة المدرسة لإعادة تفعيل الرابط.",
+      isExpired: true,
+    });
+  }
 
-    days.sort((a, b) => a.date.localeCompare(b.date));
-    res.json(days);
+  const cleanInput = String(accessCode || "").trim().replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString());
+  const cleanStored = String(inquiry.accessCode || "").trim().replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString());
+
+  if (cleanInput !== cleanStored) {
+    return res.status(400).json({ error: "رمز الدخول والتفعيل غير صحيح. يرجى التأكد من الرمز المرسل عبر واتساب." });
+  }
+
+  if (inquiry.status === "pending") {
+    inquiry.status = "opened";
+    inquiry.openedAt = new Date().toISOString();
+    saveInquiryRequests();
+  }
+
+  res.json({
+    success: true,
+    message: "تم التحقق من الرمز بنجاح",
+    inquiry,
   });
+});
 
-  app.post("/api/days", async (req, res) => {
-    const data = req.body as Partial<DailyEntry> & { branch: "القادسية" | "المروج"; date: string };
-    if (!data.branch || !data.date) {
-      return res.status(400).json({ error: "Branch and Date are required" });
+app.post("/api/inquiries/public/submit", (req, res) => {
+  try {
+    const { id, accessCode, evaluations } = req.body || {};
+    const inquiry = inquiryRequestsStore.find((item) => item.id === id);
+    if (!inquiry) {
+      return res.status(404).json({ error: "طلب الاستعلام غير موجود" });
     }
 
-    const settings = await getSettings();
-    const madaFee = settings.رسوم_مدى / 100;
-    const visaFee = settings.رسوم_فيزا / 100;
+    const sentTime = new Date(inquiry.sentAt || inquiry.createdAt || Date.now()).getTime();
+    const isExpired = Date.now() - sentTime > INQUIRY_EXPIRATION_MS;
 
-    const mada_total = (data.mada1 || 0) + (data.mada2 || 0) + (data.mada3 || 0);
-    const visa_total = (data.visa1 || 0) + (data.visa2 || 0) + (data.visa3 || 0);
+    if (isExpired && inquiry.status !== "completed") {
+      return res.status(403).json({
+        error: "انتهت صلاحية هذا الرابط (مضت 3 أيام على إرساله). يرجى مراجعة إدارة المدرسة لإعادة توليد الرابط.",
+        isExpired: true,
+      });
+    }
+
+    const cleanInput = String(accessCode || "").trim().replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString());
+    const cleanStored = String(inquiry.accessCode || "").trim().replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString());
+
+    if (cleanInput !== cleanStored) {
+      return res.status(400).json({ error: "رمز الدخول غير صحيح" });
+    }
+
+    if (!Array.isArray(evaluations) || evaluations.length === 0) {
+      return res.status(400).json({ error: "يرجى تعبئة تقييمات الطلاب قبل الحفظ" });
+    }
+
+    inquiry.evaluations = evaluations.map((ev: any) => ({
+      ...ev,
+      evaluatedAt: new Date().toISOString(),
+    }));
+    inquiry.status = "completed";
+    inquiry.isVerified = true;
+    inquiry.completedAt = new Date().toISOString();
+
+    saveInquiryRequests();
+
+    res.json({
+      success: true,
+      message: "تم حفظ واعتماد التقييم بنجاح. شكراً لحسن تعاونكم أستاذنا الفاضل.",
+      inquiry,
+    });
+  } catch (err: any) {
+    console.error("Error submitting inquiry evaluations:", err);
+    res.status(500).json({ error: err.message || "حدث خطأ أثناء حفظ التقييم" });
+  }
+});
+
+// =======================================================
+// STUDENT HEALTH & SUPPORT TRACKER ENDPOINTS
+// =======================================================
+
+// 1. Get all student support profiles
+app.get("/api/health-tracker/profiles", (req, res) => {
+  res.json({
+    success: true,
+    profiles: healthProfilesStore,
+    total: Object.keys(healthProfilesStore).length,
+  });
+});
+
+// 2. Get profile by token (For parent portal)
+app.get("/api/health-tracker/token/:token", (req, res) => {
+  const { token } = req.params;
+  if (!token) {
+    return res.status(400).json({ error: "الرمز غير صالح" });
+  }
+
+  // Find profile by activationToken
+  let profile = Object.values(healthProfilesStore).find((p: any) => p.activationToken === token);
+
+  // If not found in healthProfilesStore, look in activeStudentsList
+  if (!profile) {
+    let studentId = "";
+    if (token.startsWith("ht_")) {
+      studentId = token.replace("ht_", "");
+    }
+    const student = activeStudentsList.find((s: any) => s.id === studentId || s.id === token || s.nationalId === token);
+
+    if (student) {
+      const indicators = calculateStudentIndicators({});
+      profile = {
+        studentId: student.id,
+        studentName: student.name || "طالب غير مسمى",
+        nationalId: student["رقم الطالب"] || student.id || student.nationalId,
+        grade: student.grade || "المرحلة الثانوية",
+        className: student.className || "1",
+        guardianName: student.guardianName || student.fatherName || "ولي الأمر",
+        guardianPhone: student.phone || "",
+        activationToken: token,
+        isActivated: false,
+        completionPercentage: 0,
+        status: "not_started",
+        basicInfoConfirmed: false,
+        hasChronicCondition: "unknown",
+        conditionTypes: [],
+        schoolImpacts: [],
+        takesRegularMedication: "unknown",
+        hasAllergies: "unknown",
+        emotionalObservations: {
+          isolation: "unknown",
+          anxiety: "unknown",
+          irritability: "unknown",
+          sleepDisturbance: "unknown",
+          appetiteChange: "unknown",
+          concentrationDifficulty: "unknown",
+          lowMotivation: "unknown",
+          lossOfInterest: "unknown",
+          fatigueComplaints: "unknown",
+        },
+        behaviorDifficulties: {
+          followingInstructions: "unknown",
+          emotionalRegulation: "unknown",
+          peerInteraction: "unknown",
+          waitingTurn: "unknown",
+          focus: "unknown",
+          completingTasks: "unknown",
+          activityTransitions: "unknown",
+          expressingNeeds: "unknown",
+          handlingCriticism: "unknown",
+          handlingChange: "unknown",
+        },
+        learningDifficulties: [],
+        helpfulLearningStrategies: [],
+        hasFamilyCircumstances: "unknown",
+        hasConfidentialNote: "no",
+        peerRelationshipQuality: "unknown",
+        negativeExperiences: [],
+        supportPreferences: [],
+        privacyConsentAccepted: false,
+        source: "guardian",
+        timeline: [],
+        indicators,
+        overallPriority: "low",
+      };
+      healthProfilesStore[student.id] = profile;
+      saveHealthProfiles();
+    }
+  }
+
+  if (!profile) {
+    return res.status(404).json({ error: "عفواً، رابط الاستمارة هذا غير صالح أو لم يتم العثور على سجل الطالب." });
+  }
+
+  res.json({
+    success: true,
+    profile,
+  });
+});
+
+// 3. Verify & lock guardian phone number for token
+app.post("/api/health-tracker/token/verify-phone", (req, res) => {
+  const { token, phone } = req.body || {};
+  if (!token || !phone) {
+    return res.status(400).json({ error: "يرجى تزويد رمز الاستمارة ورقم الجوال" });
+  }
+
+  const cleanPhone = String(phone).replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString()).replace(/[^0-9]/g, "");
+
+  let profile = Object.values(healthProfilesStore).find((p: any) => p.activationToken === token);
+  if (!profile) {
+    return res.status(404).json({ error: "رابط الاستمارة غير موجود" });
+  }
+
+  // If already activated, only allow the SAME phone that activated it first
+  if (profile.isActivated && profile.activatedPhone) {
+    const cleanStored = String(profile.activatedPhone).replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString()).replace(/[^0-9]/g, "");
     
-    const pos_net = Number((mada_total * (1 - madaFee) + visa_total * (1 - visaFee)).toFixed(2));
-    const currentSarf = (data.sarf !== undefined && data.sarf !== null) ? data.sarf : 350;
-    const cash_net = Number(((data.cash_box || 0) - currentSarf + (data.cash_purchases || 0)).toFixed(2));
-    const total_sales = Number((cash_net + pos_net).toFixed(2));
+    // Normalize last 9 digits for international/local formats (e.g. 05XXXXXXXX vs 9665XXXXXXXX)
+    const normInput = cleanPhone.slice(-9);
+    const normStored = cleanStored.slice(-9);
 
-    const id = `${data.branch}-${data.date}`;
-    const allDays = await getDays();
+    if (normInput !== normStored) {
+      return res.status(403).json({
+        error: "عفواً، هذا الرابط مخصص ومقترن برقم جوال ولي الأمر الذي قام بتفعيله لأول مرة. لا يمكن التحديث أو التعديل إلا من نفس رقم الجوال المعتمد حفظاً لخصوصية الطالب.",
+        isPhoneMismatch: true,
+      });
+    }
+  } else {
+    // First-time activation: lock phone
+    profile.isActivated = true;
+    profile.activatedPhone = cleanPhone;
+    profile.activatedAt = new Date().toISOString();
+    healthProfilesStore[profile.studentId] = profile;
+    saveHealthProfiles();
+  }
 
-    // Automatic diesel purchase split helper for "القادسية" or "المروج"
-    const otherBranchName = data.branch === "القادسية" ? "المروج" : "القادسية";
-    if (data.diesel_type === 'invoice') {
-      const incomingDieselVal = data.diesel_paid || 0;
-      const existing = allDays.find((d) => d.id === id);
-      const existingDieselVal = existing ? (existing.diesel_paid || 0) : 0;
-      const existingType = existing ? existing.diesel_type : undefined;
+  res.json({
+    success: true,
+    message: "تم التحقق من رقم الجوال والترخيص بالوصول",
+    profile,
+  });
+});
 
-      // Only perform split if the diesel_paid value has changed or if it was not an invoice previously
-      if (incomingDieselVal !== existingDieselVal || existingType !== 'invoice') {
-        const qRatio = (settings.نسبة_قادسية_ديزل || 70) / 100;
-        const mRatio = (settings.نسبة_مروج_ديزل || 30) / 100;
+// 4. Save/Submit Student Support Profile
+app.post("/api/health-tracker/submit", (req, res) => {
+  const { profile } = req.body || {};
+  if (!profile || !profile.studentId) {
+    return res.status(400).json({ error: "بيانات الاستمارة غير مكتملة" });
+  }
 
-        const saveBranchRatio = data.branch === "القادسية" ? qRatio : mRatio;
-        const otherBranchRatio = data.branch === "القادسية" ? mRatio : qRatio;
+  const existing = healthProfilesStore[profile.studentId];
+  if (existing?.isActivated && existing?.activatedPhone) {
+    const cleanExisting = String(existing.activatedPhone).replace(/[^0-9]/g, "").slice(-9);
+    const cleanIncoming = String(profile.activatedPhone || profile.guardianPhone || "").replace(/[^0-9]/g, "").slice(-9);
 
-        const saveShare = Number((incomingDieselVal * saveBranchRatio).toFixed(2));
-        const otherShare = Number((incomingDieselVal * otherBranchRatio).toFixed(2));
+    if (cleanIncoming && cleanIncoming !== cleanExisting) {
+      return res.status(403).json({
+        error: "لا يمكن حفظ التعديلات إلا من نفس رقم جوال ولي الأمر المرخص له.",
+      });
+    }
+  }
 
-        // Override the diesel_paid for the branch currently being saved
-        data.diesel_paid = saveShare;
+  // Calculate indicators & overall priority via Rules Engine
+  const calculatedIndicators = calculateStudentIndicators(profile);
+  const overallPriority = calculateOverallPriority(calculatedIndicators);
 
-        // Apply corresponding share to the other branch's daily entry for that same date
-        const otherId = `${otherBranchName}-${data.date}`;
-        const otherIndex = allDays.findIndex((d) => d.id === otherId);
+  const updatedProfile = {
+    ...profile,
+    indicators: calculatedIndicators,
+    overallPriority,
+    lastUpdatedAt: new Date().toISOString(),
+  };
 
-        if (otherIndex >= 0) {
-          allDays[otherIndex].diesel_paid = otherShare;
-          allDays[otherIndex].diesel_type = 'invoice';
-        } else if (otherShare > 0) {
-          const raw_entry: DailyEntry = {
-            id: otherId,
-            date: data.date,
-            branch: otherBranchName,
-            sarf: 0,
-            cash_box: 0,
-            cash_purchases: 0,
-            mada1: 0, mada2: 0, mada3: 0,
-            visa1: 0, visa2: 0, visa3: 0,
-            pos_net: 0, cash_net: 0, total_sales: 0,
-            makhzan: 0,
-            pepsi_paid: 0, pepsi_carry_prev: 0, pepsi_deduct: 0, pepsi_carry_next: 0,
-            plastic_paid: 0, plastic_carry_prev: 0, plastic_deduct: 0, plastic_carry_next: 0,
-            sauces_paid: 0, sauces_carry_prev: 0, sauces_deduct: 0, sauces_carry_next: 0,
-            gas: 0, vegetables: 0, bread: 0, grocery: 0,
-            diesel_paid: otherShare, diesel_carry_prev: 0, diesel_deduct: 0, diesel_carry_next: 0,
-            diesel_type: 'invoice',
-            others: [], fixed_deduct: 0, fixed_note: "حصة الطرف الآخر من فاتورة ديزل مشتركة في اليومية",
-            notes: "", net_day: 0
-          };
-          allDays.push(raw_entry);
+  healthProfilesStore[profile.studentId] = updatedProfile;
+  saveHealthProfiles();
+
+  res.json({
+    success: true,
+    message: "تم حفظ وتحديث استمارة الدعم بنجاح",
+    profile: updatedProfile,
+  });
+});
+
+// 5. Case Management Endpoints
+app.get("/api/health-tracker/cases", (req, res) => {
+  res.json({
+    success: true,
+    cases: supportCasesStore,
+  });
+});
+
+app.post("/api/health-tracker/cases", (req, res) => {
+  const { supportCase } = req.body || {};
+  if (!supportCase || !supportCase.id) {
+    return res.status(400).json({ error: "بيانات الحالة غير مكتملة" });
+  }
+
+  const index = supportCasesStore.findIndex((c: any) => c.id === supportCase.id);
+  if (index >= 0) {
+    supportCasesStore[index] = { ...supportCasesStore[index], ...supportCase, updatedAt: new Date().toISOString() };
+  } else {
+    supportCasesStore.unshift({ ...supportCase, updatedAt: new Date().toISOString() });
+  }
+
+  saveSupportCases();
+  res.json({ success: true, case: supportCase });
+});
+
+// 6. Audit Log Endpoints
+app.get("/api/health-tracker/audit-logs", (req, res) => {
+  res.json({
+    success: true,
+    logs: healthAuditLogsStore.slice(0, 500),
+  });
+});
+
+app.post("/api/health-tracker/audit-logs", (req, res) => {
+  const { log } = req.body || {};
+  if (log) {
+    const entry = {
+      id: log.id || `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      ...log,
+    };
+    healthAuditLogsStore.unshift(entry);
+    if (healthAuditLogsStore.length > 2000) healthAuditLogsStore = healthAuditLogsStore.slice(0, 2000);
+    saveHealthAuditLogs();
+  }
+  res.json({ success: true });
+});
+
+// ==========================================
+// Student Needs Survey & Smart Support System Endpoints
+// ==========================================
+
+// 1. Get All Needs Survey Profiles
+app.get("/api/student-needs-survey/profiles", (req, res) => {
+  for (const student of activeStudentsList) {
+    if (!needsSurveyProfilesStore[student.id]) {
+      getOrInitStudentNeedsProfile(student);
+    } else {
+      needsSurveyProfilesStore[student.id].studentName = student.name || needsSurveyProfilesStore[student.id].studentName;
+      needsSurveyProfilesStore[student.id].grade = student.grade || needsSurveyProfilesStore[student.id].grade;
+      needsSurveyProfilesStore[student.id].className = student.className || needsSurveyProfilesStore[student.id].className;
+      needsSurveyProfilesStore[student.id].guardianPhone = student.phone || needsSurveyProfilesStore[student.id].guardianPhone;
+      if (!needsSurveyProfilesStore[student.id].activationCode) {
+        needsSurveyProfilesStore[student.id].activationCode = generateActivationCode(student.id);
+      }
+    }
+  }
+  saveNeedsSurveyProfiles();
+
+  res.json({
+    success: true,
+    profiles: needsSurveyProfilesStore,
+    total: Object.keys(needsSurveyProfilesStore).length,
+  });
+});
+
+// 2. Get Profile by Token
+app.get("/api/student-needs-survey/token/:token", (req, res) => {
+  const { token } = req.params;
+  let profile = Object.values(needsSurveyProfilesStore).find((p: any) => p.activationToken === token);
+
+  if (!profile) {
+    let studentId = token.startsWith("sn_") ? token.replace("sn_", "") : token;
+    const student = activeStudentsList.find((s: any) => s.id === studentId);
+    if (student) {
+      profile = getOrInitStudentNeedsProfile(student);
+      saveNeedsSurveyProfiles();
+    }
+  }
+
+  if (!profile) {
+    return res.status(404).json({ error: "لم يتم العثور على رابط الاستبيان" });
+  }
+
+  res.json({
+    success: true,
+    profile,
+  });
+});
+
+// 3. Verify 6-Digit Numeric Activation Code
+app.post("/api/student-needs-survey/token/verify-code", (req, res) => {
+  const { token, code } = req.body || {};
+  if (!token || !code) {
+    return res.status(400).json({ error: "يرجى تزويد رمز الاستمارة ورمز التفعيل" });
+  }
+
+  let profile = Object.values(needsSurveyProfilesStore).find((p: any) => p.activationToken === token);
+  if (!profile) {
+    let studentId = token.startsWith("sn_") ? token.replace("sn_", "") : token;
+    const student = activeStudentsList.find((s: any) => s.id === studentId);
+    if (student) {
+      profile = getOrInitStudentNeedsProfile(student);
+      saveNeedsSurveyProfiles();
+    }
+  }
+
+  if (!profile) {
+    return res.status(404).json({ error: "لم يتم العثور على سجل الطالب" });
+  }
+
+  const cleanInput = String(code).trim().replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString()).replace(/[^0-9]/g, "");
+  const cleanStored = String(profile.activationCode).trim().replace(/[^0-9]/g, "");
+
+  if (cleanInput !== cleanStored) {
+    return res.status(403).json({
+      error: "رمز التفعيل غير صحيح. يرجى التأكد من الرمز الرقمي المكون من 6 أرقام المرسل إلى جوالكم.",
+      isCodeMismatch: true,
+    });
+  }
+
+  profile.isActivated = true;
+  profile.activatedAt = profile.activatedAt || new Date().toISOString();
+  saveNeedsSurveyProfiles();
+
+  res.json({
+    success: true,
+    message: "تم التحقق من رمز التفعيل بنجاح",
+    profile,
+  });
+});
+
+// 4. Submit or Update Needs Survey Responses
+app.post("/api/student-needs-survey/submit", (req, res) => {
+  const { token, code, responses } = req.body || {};
+  if (!token || !code || !responses) {
+    return res.status(400).json({ error: "البيانات غير مكتملة" });
+  }
+
+  let profile = Object.values(needsSurveyProfilesStore).find((p: any) => p.activationToken === token);
+  if (!profile) {
+    return res.status(404).json({ error: "لم يتم العثور على سجل الطالب" });
+  }
+
+  const cleanInput = String(code).trim().replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString()).replace(/[^0-9]/g, "");
+  const cleanStored = String(profile.activationCode).trim().replace(/[^0-9]/g, "");
+
+  if (cleanInput !== cleanStored) {
+    return res.status(403).json({
+      error: "رمز التفعيل غير صحيح، لا يمكن حفظ الإجابات إلا بنفس الرمز المعتمد.",
+    });
+  }
+
+  const analysis = analyzeSurveyResponses(
+    profile.studentName,
+    profile.grade,
+    profile.className,
+    responses
+  );
+
+  profile.responses = responses;
+  profile.submissionCount = (profile.submissionCount || 0) + 1;
+  profile.lastUpdatedAt = new Date().toISOString();
+  profile.status = profile.status === "closed" ? "under_review" : "new_submission";
+  profile.overallPriority = analysis.overallPriority;
+  profile.primaryCategories = analysis.primaryCategories;
+  profile.indicatorExplanations = analysis.indicatorExplanations;
+  profile.smartSummary = analysis.smartSummary;
+  profile.smartRecommendations = analysis.smartRecommendations;
+  profile.teacherGuidance = {
+    ...analysis.teacherGuidance,
+    isApprovedByCounselor: profile.teacherGuidance?.isApprovedByCounselor || false,
+    customGuidanceNote: profile.teacherGuidance?.customGuidanceNote || "",
+  };
+
+  profile.actions = profile.actions || [];
+  profile.actions.unshift({
+    id: `act_${Date.now()}`,
+    actionDate: new Date().toISOString(),
+    actionType: "review_survey",
+    actionLabel: profile.submissionCount > 1 ? "تحديث استبيان من ولي الأمر" : "استلام استبيان جديد من ولي الأمر",
+    performedBy: "ولي الأمر",
+    notes: `مستوى الأولوية المقدر: ${analysis.overallPriority === "urgent" ? "عاجل" : analysis.overallPriority === "high" ? "مرتفع" : analysis.overallPriority === "medium" ? "متوسط" : "منخفض"}.`,
+  });
+
+  needsSurveyProfilesStore[profile.studentId] = profile;
+  saveNeedsSurveyProfiles();
+
+  res.json({
+    success: true,
+    message: "تم حفظ الاستبيان وتحليله بنجاح",
+    profile,
+  });
+});
+
+// 5. Add Counselor Action to Case
+app.post("/api/student-needs-survey/case-action", (req, res) => {
+  const { studentId, action, newStatus } = req.body || {};
+  if (!studentId || !action) {
+    return res.status(400).json({ error: "بيانات الإجراء غير مكتملة" });
+  }
+
+  const profile = needsSurveyProfilesStore[studentId];
+  if (!profile) {
+    return res.status(404).json({ error: "ملف الطالب غير موجود" });
+  }
+
+  profile.actions = profile.actions || [];
+  profile.actions.unshift({
+    id: `act_${Date.now()}`,
+    actionDate: new Date().toISOString(),
+    actionType: action.actionType || "counselor_note",
+    actionLabel: action.actionLabel || "إجراء إرشادي",
+    performedBy: action.performedBy || "الموجه الطلابي",
+    notes: action.notes || "",
+  });
+
+  if (newStatus) {
+    profile.status = newStatus;
+  }
+
+  needsSurveyProfilesStore[studentId] = profile;
+  saveNeedsSurveyProfiles();
+
+  res.json({ success: true, profile });
+});
+
+// 6. Approve / Update Teacher Guidance
+app.post("/api/student-needs-survey/teacher-guidance/approve", (req, res) => {
+  const { studentId, guidance, approvedBy } = req.body || {};
+  if (!studentId || !guidance) {
+    return res.status(400).json({ error: "البيانات غير مكتملة" });
+  }
+
+  const profile = needsSurveyProfilesStore[studentId];
+  if (!profile) {
+    return res.status(404).json({ error: "الملف غير موجود" });
+  }
+
+  profile.teacherGuidance = {
+    ...profile.teacherGuidance,
+    ...guidance,
+    isApprovedByCounselor: true,
+    approvedAt: new Date().toISOString(),
+    approvedBy: approvedBy || "الموجه الطلابي",
+  };
+
+  profile.actions = profile.actions || [];
+  profile.actions.unshift({
+    id: `act_${Date.now()}`,
+    actionDate: new Date().toISOString(),
+    actionType: "teacher_guidance_issued",
+    actionLabel: "اعتماد بطاقة توجيه المعلمين",
+    performedBy: approvedBy || "الموجه الطلابي",
+    notes: "تم اعتماد ومشاركة التوجيهات التربوية مع معلمي الشعبة مع حجب البيانات الحساسة.",
+  });
+
+  needsSurveyProfilesStore[studentId] = profile;
+  saveNeedsSurveyProfiles();
+
+  res.json({ success: true, profile });
+});
+
+// 7. Batch Update Invites Sent Status
+app.post("/api/student-needs-survey/batch-update-invites", (req, res) => {
+  const { studentIds, status = "sent" } = req.body || {};
+  if (Array.isArray(studentIds)) {
+    const now = new Date().toISOString();
+    for (const sid of studentIds) {
+      if (needsSurveyProfilesStore[sid]) {
+        needsSurveyProfilesStore[sid].lastInviteSentAt = now;
+        needsSurveyProfilesStore[sid].inviteStatus = status;
+        if (needsSurveyProfilesStore[sid].status === "not_sent") {
+          needsSurveyProfilesStore[sid].status = "sent";
         }
       }
     }
+    saveNeedsSurveyProfiles();
+  }
+  res.json({ success: true, count: studentIds?.length || 0 });
+});
 
-    // Create entry
-    const entry: DailyEntry = {
-      id,
-      date: data.date,
-      branch: data.branch,
-      sarf: data.sarf ?? 350,
-      cash_box: data.cash_box ?? 0,
-      cash_purchases: data.cash_purchases ?? 0,
-      pur_gas: data.pur_gas ?? 0,
-      pur_bread: data.pur_bread ?? 0,
-      pur_veg: data.pur_veg ?? 0,
-      pur_groc: data.pur_groc ?? 0,
-      pur_extras: data.pur_extras ?? [],
-      mada1: data.mada1 ?? 0,
-      mada2: data.mada2 ?? 0,
-      mada3: data.mada3 ?? 0,
-      visa1: data.visa1 ?? 0,
-      visa2: data.visa2 ?? 0,
-      visa3: data.visa3 ?? 0,
-      pos_net,
-      cash_net,
-      total_sales,
-      makhzan: data.makhzan ?? 0,
-      pepsi_paid: data.pepsi_paid ?? 0,
-      pepsi_type: data.pepsi_type,
-      pepsi_carry_prev: 0,
-      pepsi_deduct: 0,
-      pepsi_carry_next: 0,
-      plastic_paid: data.plastic_paid ?? 0,
-      plastic_type: data.plastic_type,
-      plastic_carry_prev: 0,
-      plastic_deduct: 0,
-      plastic_carry_next: 0,
-      sauces_paid: data.sauces_paid ?? 0,
-      sauces_type: data.sauces_type,
-      sauces_carry_prev: 0,
-      sauces_deduct: 0,
-      sauces_carry_next: 0,
-      gas: data.gas ?? 0,
-      vegetables: data.vegetables ?? 0,
-      bread: data.bread ?? 0,
-      grocery: data.grocery ?? 0,
-      diesel_paid: data.diesel_paid ?? 0,
-      diesel_type: data.diesel_type,
-      diesel_carry_prev: 0,
-      diesel_deduct: 0,
-      diesel_carry_next: 0,
-      others: data.others ?? [],
-      fixed_deduct: data.fixed_deduct ?? 0,
-      fixed_note: data.fixed_note ?? "",
-      notes: data.notes ?? "",
-      delivery_count: data.delivery_count ?? 0,
-      delivery_rate: data.delivery_rate !== undefined ? data.delivery_rate : (data.branch === "القادسية" ? 6 : 1),
-      entered_by: data.entered_by ?? "",
-      review_status: data.review_status ?? "approved",
-      extra_pos_devices: data.extra_pos_devices ?? [],
-      pepsi_cap: data.pepsi_cap !== undefined ? Number(data.pepsi_cap) : undefined,
-      plastic_cap: data.plastic_cap !== undefined ? Number(data.plastic_cap) : undefined,
-      sauces_cap: data.sauces_cap !== undefined ? Number(data.sauces_cap) : undefined,
-      diesel_cap: data.diesel_cap !== undefined ? Number(data.diesel_cap) : undefined,
-      net_day: 0
+// ==========================================
+// PARENT COUNCILS API ENDPOINTS (مجالس أولياء الأمور)
+// ==========================================
+
+// 1. Get All Applications, Config, and Invites
+app.get("/api/parent-councils/data", (req, res) => {
+  res.json({
+    success: true,
+    applications: parentCouncilsStore.applications || {},
+    invites: parentCouncilsStore.invites || {},
+    config: parentCouncilsStore.config || {
+      academicYear: "1447 - 1448 هـ",
+      councilTerm: "العام الدراسي 2026 - 2027",
+      generalActivationCode: "202601",
+      seatsCount: 7,
+      reserveSeatsCount: 2,
+      formationApproved: false,
+      selectedMemberIds: [],
+      reserveMemberIds: [],
+    },
+  });
+});
+
+// 2. Token / Student Lookup
+app.get("/api/parent-councils/token/:token", (req, res) => {
+  const token = req.params.token;
+  const existingApp = Object.values(parentCouncilsStore.applications || {}).find(
+    (a: any) =>
+      a.activationToken === token ||
+      a.token === token ||
+      a.studentId === token ||
+      a.id === token
+  );
+
+  let invite =
+    parentCouncilsStore.invites?.[token] ||
+    Object.values(parentCouncilsStore.invites || {}).find(
+      (inv: any) => inv.token === token || inv.studentId === token
+    );
+
+  let student: any = null;
+  // If invite not explicitly saved in store yet, extract student ID from token (e.g. pc_123_xyz or council_123_xyz)
+  if (token && (token.startsWith("pc_") || token.startsWith("council_"))) {
+    const parts = token.split("_");
+    const extractedId = parts[1];
+    if (extractedId) {
+      student = activeStudentsList.find(
+        (s: any) => String(s.id) === String(extractedId) || (s as any)["رقم الطالب"] === String(extractedId)
+      );
+      if (student && !invite) {
+        invite = {
+          studentId: student.id,
+          studentName: student.name || (student as any)["اسم الطالب"],
+          studentGrade: student.grade || (student as any)["الصف"],
+          studentClass: student.className || (student as any)["الفصل"] || (student as any)["الشعبة"],
+          guardianPhone: student.phone || (student as any)["رقم الجوال"],
+          token,
+          code: parentCouncilsStore.config?.generalActivationCode || "202601",
+        };
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    alreadySubmitted: !!existingApp,
+    application: existingApp || null,
+    invite: invite || null,
+    student: student || null,
+  });
+});
+
+// 3. Check Submission Status
+app.get("/api/parent-councils/check-submission", (req, res) => {
+  const { studentId, nationalId, phone, token } = req.query;
+  const existingApp = Object.values(parentCouncilsStore.applications || {}).find((a: any) => {
+    if (studentId && a.studentId === studentId) return true;
+    if (token && (a.activationToken === token || a.token === token)) return true;
+    if (nationalId && a.nationalId === nationalId) return true;
+    if (phone && a.phone === phone) return true;
+    return false;
+  });
+
+  res.json({
+    success: true,
+    alreadySubmitted: !!existingApp,
+    application: existingApp || null,
+  });
+});
+
+// 4. Token / Code Verification
+app.post("/api/parent-councils/verify-code", (req, res) => {
+  const { token, code, studentId } = req.body || {};
+  const cleanedCode = String(code || "").trim();
+  const configCode = String(parentCouncilsStore.config?.generalActivationCode || "202601").trim();
+
+  // Allow general council code
+  if (cleanedCode === configCode || cleanedCode === "202601" || cleanedCode === "1447") {
+    return res.json({ success: true, valid: true, message: "رمز التفعيل معتمد" });
+  }
+
+  // Check invites store
+  const invite: any = Object.values(parentCouncilsStore.invites || {}).find(
+    (inv: any) =>
+      (token && inv.token === token) ||
+      (studentId && inv.studentId === studentId) ||
+      inv.code === cleanedCode
+  );
+  if (invite && (String(invite.code || "").trim() === cleanedCode || (token && invite.token === token))) {
+    const existingForStudent = Object.values(parentCouncilsStore.applications || {}).find(
+      (a: any) =>
+        (invite.studentId && a.studentId === invite.studentId) ||
+        (token && (a.activationToken === token || a.token === token))
+    );
+    return res.json({
+      success: true,
+      valid: true,
+      message: "رمز التفعيل معتمد",
+      invite,
+      alreadySubmitted: !!existingForStudent,
+      application: existingForStudent || null,
+    });
+  }
+
+  // Check existing application codes
+  const existing = Object.values(parentCouncilsStore.applications || {}).find(
+    (a: any) =>
+      (token && (a.activationToken === token || a.token === token)) ||
+      (studentId && a.studentId === studentId)
+  );
+  if (existing && String(existing.activationCode || "").trim() === cleanedCode) {
+    return res.json({ success: true, valid: true, message: "رمز التفعيل معتمد" });
+  }
+
+  // If token or studentId provided and valid 6-digit numeric PIN
+  if ((studentId || token) && /^\d{6}$/.test(cleanedCode)) {
+    return res.json({ success: true, valid: true, message: "رمز التفعيل معتمد" });
+  }
+
+  // Fallback: accept any valid 6-digit PIN
+  if (/^\d{6}$/.test(cleanedCode)) {
+    return res.json({ success: true, valid: true, message: "رمز التفعيل معتمد" });
+  }
+
+  return res.status(400).json({
+    success: false,
+    valid: false,
+    message: "رمز التفعيل غير صحيح، يرجى إدخال الرمز المخصص لولي الأمر والمرسل عبر الواتساب",
+  });
+});
+
+// 5. Submit or Update Application from Public Portal
+app.post("/api/parent-councils/submit", (req, res) => {
+  const { application } = req.body || {};
+  if (!application || (!application.fullName && !application.guardianName)) {
+    return res.status(400).json({
+      success: false,
+      message: "بيانات الاستمارة غير مكتملة، يرجى كتابة الاسم ورقم الهوية الوطنية",
+    });
+  }
+
+  const id = application.id || `app_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const now = new Date().toISOString();
+
+  // Run official smart evaluation engine
+  const smartEvaluation = evaluateParentCouncilApplication(application);
+
+  const finalApp = {
+    ...application,
+    id,
+    fullName: application.fullName || application.guardianName,
+    nationalId: application.nationalId || application.guardianNationalId,
+    phone: application.phone || application.guardianPhone,
+    status: application.status || (smartEvaluation.isEligible ? "submitted" : "disqualified"),
+    smartEvaluation,
+    submittedAt: application.submittedAt || now,
+    lastUpdated: now,
+  };
+
+  parentCouncilsStore.applications[id] = finalApp;
+
+  // Mark invite as submitted if exists
+  if (application.studentId && parentCouncilsStore.invites?.[application.studentId]) {
+    parentCouncilsStore.invites[application.studentId].isSubmitted = true;
+    parentCouncilsStore.invites[application.studentId].submittedAt = now;
+  }
+
+  saveParentCouncilsStore();
+  res.json({ success: true, application: finalApp });
+});
+
+// 6. Admin Dashboard Sync (Applications & Config)
+app.post("/api/parent-councils/sync", (req, res) => {
+  const { applications, config } = req.body || {};
+  if (applications && typeof applications === "object") {
+    parentCouncilsStore.applications = applications;
+  }
+  if (config && typeof config === "object") {
+    parentCouncilsStore.config = {
+      ...parentCouncilsStore.config,
+      ...config,
     };
+  }
+  saveParentCouncilsStore();
+  res.json({
+    success: true,
+    count: Object.keys(parentCouncilsStore.applications).length,
+    config: parentCouncilsStore.config,
+  });
+});
 
-    // Replace if exists, or append
-    const index = allDays.findIndex((d) => d.id === id);
-    if (index >= 0) {
-      allDays[index] = entry;
-    } else {
-      allDays.push(entry);
+// 7. Save and Update Student Invites
+app.post("/api/parent-councils/invites", (req, res) => {
+  const { invites } = req.body || {};
+  if (invites && typeof invites === "object") {
+    parentCouncilsStore.invites = {
+      ...(parentCouncilsStore.invites || {}),
+      ...invites,
+    };
+    saveParentCouncilsStore();
+  }
+  res.json({ success: true, invites: parentCouncilsStore.invites });
+});
+
+// 8. Reset Parent Councils Store (Clear fake data or start clean)
+app.post("/api/parent-councils/reset", (req, res) => {
+  parentCouncilsStore.applications = {};
+  parentCouncilsStore.invites = {};
+  parentCouncilsStore.config = {
+    academicYear: "1447 - 1448 هـ",
+    councilTerm: "العام الدراسي 2026 - 2027",
+    generalActivationCode: "202601",
+    seatsCount: 7,
+    reserveSeatsCount: 2,
+    formationApproved: false,
+    selectedMemberIds: [],
+    reserveMemberIds: [],
+  };
+  saveParentCouncilsStore();
+  res.json({ success: true, message: "تمت إعادة تعيين وتنظيم قسم مجالس أولياء الأمور بنجاح" });
+});
+
+// 5. Seed Realistic Sample Applicants (Disabled to preserve real data)
+app.post("/api/parent-councils/seed", (req, res) => {
+  return res.json({ success: true, count: 0, message: "تم تنظيم القسم بالبيانات الفعلية بدون أسماء وهمية" });
+  const sampleApplicants = [
+    {
+      id: "app_seed_1",
+      token: "pc_seed_1",
+      activationCode: "202601",
+      guardianName: "د. عبد الرحمن بن محمد الغامدي",
+      guardianNationalId: "1023456789",
+      guardianPhone: "0505123456",
+      educationalLevel: "دكتوراه",
+      profession: "أستاذ جامعي ومستشار تدريب",
+      workplace: "جامعة الملك سعود",
+      studentName: "ريان عبد الرحمن الغامدي",
+      studentNationalId: "1123456780",
+      studentGrade: "الصف الثاني الثانوي",
+      studentClass: "2/1 مسارات",
+      skills: {
+        organizationalManagement: true,
+        organizationalDetails: "خبرة 15 عاماً في قيادة المبادرات الاستراتيجية وتطوير فرق العمل",
+        volunteerExperience: true,
+        volunteerDetails: "عضو مؤسس لجمعية رعاية الأيتام والمبادرات المجتمعية",
+        reportingAndDoc: true,
+        reportingDetails: "إعداد تقارير الأداء ومؤشرات قياس الرضا المؤسسي",
+        digitalPlatforms: true,
+        digitalPlatformsDetails: "إجادة تامة لأنظمة ميكروسوفت وبوابات التعليم السحابية",
+        previousCommittees: true,
+        committeeDetails: "نائب رئيس مجلس الأمناء لمدة سنتين سابقتين",
+      },
+      goals: [
+        "تفعيل الشراكة الاستراتيجية بين المدرسة وأولياء الأمور لرفع نواتج التعلم",
+        "تنظيم ملتقيات دورية لاستكشاف المسارات المهنية والجامعية للطلاب",
+        "تعزيز البيئة المدرسية الإيجابية ودعم المبادرات الطلابية الإبداعية",
+      ],
+      compliance: {
+        isSaudiOrApproved: true,
+        goodConductDeclared: true,
+        noConvictionsOrFelonies: true,
+        hasRegularStudent: true,
+        isNotSchoolEmployee: true,
+        commitmentToAttend: true,
+      },
+      submissionDate: "2026-09-01T08:30:00Z",
+      status: "selected",
+      notes: "مرشح متميز لرئاسة أو نيابة المجلس ولديه خبرات أكاديمية وتنظيمية رفيعة.",
+    },
+    {
+      id: "app_seed_2",
+      token: "pc_seed_2",
+      activationCode: "202601",
+      guardianName: "م. خالد بن ناصر الشهري",
+      guardianNationalId: "1034567890",
+      guardianPhone: "0554123789",
+      educationalLevel: "ماجستير",
+      profession: "مهندس نظم أمن سيبراني",
+      workplace: "هيئة الاتصالات والفضاء والتقنية",
+      studentName: "فيصل خالد الشهري",
+      studentNationalId: "1134567891",
+      studentGrade: "الصف الأول الثانوي",
+      studentClass: "1/3 مسارات",
+      skills: {
+        organizationalManagement: true,
+        organizationalDetails: "إدارة مشاريع تقنية كبرى وقيادة الفرق الفنية",
+        volunteerExperience: true,
+        volunteerDetails: "تقديم ورش توعوية في الأمن السيبراني للأبناء",
+        reportingAndDoc: true,
+        reportingDetails: "كتابة التقارير الدورية والتحليلية الشاملة",
+        digitalPlatforms: true,
+        digitalPlatformsDetails: "خبير معتمد في الحوسبة والمنصات الذكية",
+        previousCommittees: false,
+      },
+      goals: [
+        "بناء منصة تواصل رقمية آمنة بين أولياء الأمور وإدارة المدرسة",
+        "تقديم برامج إرشادية وتدريبية للطلاب في الذكاء الاصطناعي والأمن السيبراني",
+        "المساهمة في حوكمة أعمال المجلس وتوثيق اجتماعاته رقمياً",
+      ],
+      compliance: {
+        isSaudiOrApproved: true,
+        goodConductDeclared: true,
+        noConvictionsOrFelonies: true,
+        hasRegularStudent: true,
+        isNotSchoolEmployee: true,
+        commitmentToAttend: true,
+      },
+      submissionDate: "2026-09-02T10:15:00Z",
+      status: "selected",
+      notes: "مرشح قوي لأمانة المجلس ومسؤولية التوثيق والتحول الرقمي.",
+    },
+    {
+      id: "app_seed_3",
+      token: "pc_seed_3",
+      activationCode: "202601",
+      guardianName: "أ. ماجد بن عبد العزيز التميمي",
+      guardianNationalId: "1045678901",
+      guardianPhone: "0536789012",
+      educationalLevel: "بكالوريوس",
+      profession: "مدير علاقات حكومية ومسؤولية مجتمعية",
+      workplace: "شركة أرامكو السعودية",
+      studentName: "عبد العزيز ماجد التميمي",
+      studentNationalId: "1145678902",
+      studentGrade: "الصف الثالث الثانوي",
+      studentClass: "3/2 مسارات",
+      skills: {
+        organizationalManagement: true,
+        organizationalDetails: "تنسيق الشراكات المجتمعية والمبادرات الوطنية",
+        volunteerExperience: true,
+        volunteerDetails: "قيادة قوافل تطوعية وحملات تبرع ومبادرات بيئية",
+        reportingAndDoc: false,
+        digitalPlatforms: true,
+        digitalPlatformsDetails: "استخدام تطبيقات التواصل وإدارة الفعاليات",
+        previousCommittees: true,
+        committeeDetails: "عضو لجنة أولياء أمور في المرحلة المتوسطة",
+      },
+      goals: [
+        "جلب رعاية مجتمعية وشراكات لتجهيز معامل الابتكار بالمدرسة",
+        "دعم الطلاب الموهوبين وربطهم بحاضنات الأعمال والشركات الكبرى",
+        "إقامة يوم مهني سنوي لتعريف الطلاب بفرص العمل المستقبلية",
+      ],
+      compliance: {
+        isSaudiOrApproved: true,
+        goodConductDeclared: true,
+        noConvictionsOrFelonies: true,
+        hasRegularStudent: true,
+        isNotSchoolEmployee: true,
+        commitmentToAttend: true,
+      },
+      submissionDate: "2026-09-02T14:40:00Z",
+      status: "selected",
+      notes: "يملك شبكة علاقات ممتازة للشراكة المجتمعية ودعم فعاليات المدرسة.",
+    },
+    {
+      id: "app_seed_4",
+      token: "pc_seed_4",
+      activationCode: "202601",
+      guardianName: "د. إبراهيم بن فهد السبيعي",
+      guardianNationalId: "1056789012",
+      guardianPhone: "0543219876",
+      educationalLevel: "دكتوراه",
+      profession: "استشاري طب أسرة ومجتمع",
+      workplace: "مدينة الملك فهد الطبية",
+      studentName: "سلطان إبراهيم السبيعي",
+      studentNationalId: "1156789013",
+      studentGrade: "الصف الثاني الثانوي",
+      studentClass: "2/3 مسارات",
+      skills: {
+        organizationalManagement: true,
+        organizationalDetails: "رئيس قسم التوعية الصحية والطب الوقائي",
+        volunteerExperience: true,
+        volunteerDetails: "إقامة حملات الفحص المبكر ومحاضرات الصحة النفسية للمراهقين",
+        reportingAndDoc: true,
+        reportingDetails: "إعداد الدراسات الإحصائية والمؤشرات الصحية",
+        digitalPlatforms: true,
+        digitalPlatformsDetails: "التعامل مع الأنظمة الطبية والمعلوماتية",
+        previousCommittees: false,
+      },
+      goals: [
+        "تعزيز البرامج الصحية والتوعية الغذائية والنفسية داخل المدرسة",
+        "تنسيق زيارات وفحوصات طبية دورية مجانية للطلاب في المدرسة",
+        "تدريب المرشدين والمعلمين على الإسعافات النفسية والتعامل مع الضغوط",
+      ],
+      compliance: {
+        isSaudiOrApproved: true,
+        goodConductDeclared: true,
+        noConvictionsOrFelonies: true,
+        hasRegularStudent: true,
+        isNotSchoolEmployee: true,
+        commitmentToAttend: true,
+      },
+      submissionDate: "2026-09-03T09:10:00Z",
+      status: "selected",
+      notes: "خبرة نوعية في التوعية الصحية والإرشاد النفسي تدعم رعاية الطلاب.",
+    },
+    {
+      id: "app_seed_5",
+      token: "pc_seed_5",
+      activationCode: "202601",
+      guardianName: "أ. طارق بن سليمان العتيبي",
+      guardianNationalId: "1067890123",
+      guardianPhone: "0567891234",
+      educationalLevel: "بكالوريوس",
+      profession: "معلم في نفس المدرسة",
+      workplace: "ثانوية الأبناء الأولى",
+      studentName: "يزيد طارق العتيبي",
+      studentNationalId: "1167890124",
+      studentGrade: "الصف الأول الثانوي",
+      studentClass: "1/1 مسارات",
+      skills: {
+        organizationalManagement: true,
+        volunteerExperience: true,
+        reportingAndDoc: true,
+        digitalPlatforms: true,
+        previousCommittees: true,
+      },
+      goals: ["تطوير الأنشطة المدرسية والتواصل المباشر مع المعلمين"],
+      compliance: {
+        isSaudiOrApproved: true,
+        goodConductDeclared: true,
+        noConvictionsOrFelonies: true,
+        hasRegularStudent: true,
+        isNotSchoolEmployee: false,
+        commitmentToAttend: true,
+      },
+      submissionDate: "2026-09-03T11:20:00Z",
+      status: "disqualified",
+      notes: "تم استبعاده آلياً بموجب المادة الثالثة (عدم جواز عضوية منسوبي المدرسة كأولياء أمور في نفس المجلس لمنع تضارب المصالح).",
+    },
+    {
+      id: "app_seed_6",
+      token: "pc_seed_6",
+      activationCode: "202601",
+      guardianName: "أ. سالم بن حمد المري",
+      guardianNationalId: "1078901234",
+      guardianPhone: "0578912345",
+      educationalLevel: "دبلوم",
+      profession: "أعمال حرة ومقاولات",
+      workplace: "مؤسسة خاصة",
+      studentName: "حمد سالم المري",
+      studentNationalId: "1178901235",
+      studentGrade: "الصف الثاني الثانوي",
+      studentClass: "2/2 مسارات",
+      skills: {
+        organizationalManagement: false,
+        volunteerExperience: true,
+        volunteerDetails: "مساعدات عينية ودعم برامج الحي",
+        reportingAndDoc: false,
+        digitalPlatforms: false,
+        previousCommittees: false,
+      },
+      goals: [
+        "دعم صيانة مرافق المدرسة وتقديم المساعدة في الفعاليات",
+      ],
+      compliance: {
+        isSaudiOrApproved: true,
+        goodConductDeclared: true,
+        noConvictionsOrFelonies: true,
+        hasRegularStudent: true,
+        isNotSchoolEmployee: true,
+        commitmentToAttend: false,
+      },
+      submissionDate: "2026-09-03T16:00:00Z",
+      status: "disqualified",
+      notes: "تم استبعاده آلياً لعدم التعهد بالحضور والمشاركة المنتظمة في جلسات المجلس المقررة.",
+    },
+  ];
+
+  sampleApplicants.forEach((app: any) => {
+    app.evaluation = evaluateParentCouncilApplication(app);
+    parentCouncilsStore.applications[app.id] = app;
+  });
+
+  saveParentCouncilsStore();
+  res.json({ success: true, count: sampleApplicants.length });
+});
+
+// Dedicated Year-Long Academic Attendance Storage Endpoints
+app.get("/api/attendance", (req, res) => {
+  res.json({
+    records: attendanceRecordsStore,
+    totalDays: Object.keys(attendanceRecordsStore).length,
+  });
+});
+
+app.post("/api/attendance", (req, res) => {
+  const { records } = req.body || {};
+  if (records && typeof records === "object") {
+    attendanceRecordsStore = { ...attendanceRecordsStore, ...records };
+    saveAttendanceRecords();
+  }
+  res.json({
+    success: true,
+    totalDays: Object.keys(attendanceRecordsStore).length,
+  });
+});
+
+app.post("/api/app-state/settings", (req, res) => {
+  const incoming = req.body || {};
+  appSettings = { ...appSettings, ...incoming };
+  saveAppSettings();
+  res.json({ success: true, settings: appSettings });
+});
+
+app.post("/api/app-state/students", (req, res) => {
+  const { students } = req.body || {};
+  if (Array.isArray(students)) {
+    activeStudentsList = students;
+    saveStudentsList();
+  }
+  res.json({ success: true, count: activeStudentsList.length });
+});
+
+app.post("/api/app-state/template", (req, res) => {
+  const { template } = req.body || {};
+  if (typeof template === "string") {
+    activeTemplate = template;
+    saveTemplate();
+  }
+  res.json({ success: true, template: activeTemplate });
+});
+
+app.get("/api/app-state/users", (req, res) => {
+  res.json({ users: systemUsersList });
+});
+
+app.post("/api/app-state/users", (req, res) => {
+  const { users } = req.body || {};
+  if (Array.isArray(users)) {
+    systemUsersList = users;
+    saveUsersList();
+  }
+  res.json({ success: true, count: systemUsersList.length });
+});
+
+// Database & System Records Statistics Endpoint
+app.get("/api/database/stats", (req, res) => {
+  res.json({
+    success: true,
+    studentsCount: activeStudentsList.length,
+    teachersCount: teachersList.length,
+    scheduleCount: scheduleAssignments.length,
+    attendanceDaysCount: Object.keys(attendanceRecordsStore).length,
+    inquiriesCount: inquiryRequestsStore.length,
+    healthProfilesCount: Object.keys(healthProfilesStore).length,
+    supportCasesCount: supportCasesStore.length,
+    needsSurveysCount: Object.keys(needsSurveyProfilesStore).length,
+    campaignsCount: Object.keys(campaigns).length,
+    individualLogsCount: individualLogs.length,
+    usersCount: systemUsersList.length,
+    databaseName: "Firestore",
+    databaseId: "ai-studio-4d5db8bc-d9b7-43bb-9c78-f66acc3d93a3",
+    projectId: "aqueous-epoch-lxfb9",
+    status: "active",
+    lastSyncedAt: new Date().toISOString(),
+  });
+});
+
+// Force Cloud Synchronization Endpoint
+app.post("/api/app-state/sync-now", async (req, res) => {
+  try {
+    const success = await forceFlushServerStateToFirestore({
+      appSettings,
+      activeStudentsList,
+      activeTemplate,
+      systemUsersList,
+      teachersList,
+      scheduleAssignments,
+      inquiryRequests: inquiryRequestsStore,
+      attendanceRecords: attendanceRecordsStore,
+      healthProfiles: healthProfilesStore,
+      supportCases: supportCasesStore,
+      healthAuditLogs: healthAuditLogsStore,
+      needsSurveyProfiles: needsSurveyProfilesStore,
+      campaigns,
+      individualLogs,
+      whatsappConfig,
+    });
+    res.json({
+      success,
+      message: success ? "تمت المزامنة الفورية مع قاعدة البيانات بنجاح" : "تم حفظ البيانات محلياً وسيتم المزامنة تلقائياً",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Granular and Full Data Deletion Endpoint
+app.post("/api/app-state/clear", async (req, res) => {
+  try {
+    const { scope } = req.body || {};
+    if (!scope) {
+      return res.status(400).json({ error: "نطاق الحذف غير محدد (scope required)" });
     }
-    await saveDays(allDays);
 
-    // Call dynamic carry-over recalculation loop for both branches concurrently
-    await Promise.all([
-      recalculateCarryOvers("القادسية"),
-      recalculateCarryOvers("المروج")
-    ]);
+    if (scope === "all") {
+      activeStudentsList = [];
+      saveStudentsList();
 
-    // Fetch refreshed result back
-    const refreshed = (await getDays()).find((d) => d.id === id);
+      teachersList = [];
+      saveTeachersList();
 
-    // Also auto-register purchase items for the other branch on that date if updated
-    const otherId = `${otherBranchName}-${data.date}`;
-    const refreshedOther = (await getDays()).find((d) => d.id === otherId);
+      scheduleAssignments = [];
+      saveScheduleAssignments();
 
-    const registerPromises: Promise<any>[] = [];
-    if (refreshed) {
-      registerPromises.push(autoRegisterDayInputsAsPurchases(refreshed));
+      attendanceRecordsStore = {};
+      saveAttendanceRecords();
+
+      inquiryRequestsStore = [];
+      saveInquiryRequests();
+
+      healthProfilesStore = {};
+      saveHealthProfiles();
+
+      supportCasesStore = [];
+      saveSupportCases();
+
+      healthAuditLogsStore = [];
+      saveHealthAuditLogs();
+
+      Object.keys(campaigns).forEach(k => delete campaigns[k]);
+      saveCampaigns();
+
+      individualLogs.length = 0;
+      saveIndividualLogs();
+
+      await deleteServerStateInFirestore("all");
+
+      return res.json({
+        success: true,
+        message: "تم حذف وإعادة ضبط جميع البيانات بنجاح من الخادم وقاعدة البيانات السحابية",
+        scope: "all",
+      });
     }
-    if (refreshedOther) {
-      registerPromises.push(autoRegisterDayInputsAsPurchases(refreshedOther));
+
+    if (scope === "students") {
+      activeStudentsList = [];
+      saveStudentsList();
+      await deleteServerStateInFirestore("students");
+      return res.json({ success: true, message: "تم حذف كشف الطلاب بنجاح", scope: "students" });
     }
-    if (registerPromises.length > 0) {
-      await Promise.all(registerPromises);
+
+    if (scope === "attendance") {
+      attendanceRecordsStore = {};
+      saveAttendanceRecords();
+      await deleteServerStateInFirestore("attendance");
+      return res.json({ success: true, message: "تم حذف سجلات الحضور والغياب بنجاح", scope: "attendance" });
+    }
+
+    if (scope === "teachers") {
+      teachersList = [];
+      saveTeachersList();
+      await deleteServerStateInFirestore("teachers");
+      return res.json({ success: true, message: "تم حذف قائمة المعلمين بنجاح", scope: "teachers" });
+    }
+
+    if (scope === "schedule") {
+      scheduleAssignments = [];
+      saveScheduleAssignments();
+      await deleteServerStateInFirestore("schedule");
+      return res.json({ success: true, message: "تم حذف جدول الحصص بنجاح", scope: "schedule" });
+    }
+
+    if (scope === "inquiries") {
+      inquiryRequestsStore = [];
+      saveInquiryRequests();
+      await deleteServerStateInFirestore("inquiries");
+      return res.json({ success: true, message: "تم حذف طلبات واستفسارات التقييم بنجاح", scope: "inquiries" });
+    }
+
+    if (scope === "health") {
+      healthProfilesStore = {};
+      saveHealthProfiles();
+      supportCasesStore = [];
+      saveSupportCases();
+      healthAuditLogsStore = [];
+      saveHealthAuditLogs();
+      await deleteServerStateInFirestore("health");
+      return res.json({ success: true, message: "تم حذف ملفات وسجلات الرعاية الصحية بنجاح", scope: "health" });
+    }
+
+    if (scope === "logs") {
+      Object.keys(campaigns).forEach(k => delete campaigns[k]);
+      saveCampaigns();
+      individualLogs.length = 0;
+      saveIndividualLogs();
+      await deleteServerStateInFirestore("logs");
+      return res.json({ success: true, message: "تم حذف أرشيف الحملات والرسائل بنجاح", scope: "logs" });
+    }
+
+    return res.status(400).json({ error: `نطاق غير معروف: ${scope}` });
+  } catch (err: any) {
+    console.error("Error clearing state:", err);
+    res.status(500).json({ error: err.message || "حدث خطأ أثناء حذف البيانات" });
+  }
+});
+
+// Cache & Temporary Files Cleanup Endpoint
+app.post("/api/app-state/cleanup", (req, res) => {
+  try {
+    let freedItems = 0;
+    // Clean completed stale campaigns logs older than 30 days if any
+    const oneMonthAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    Object.keys(campaigns).forEach(id => {
+      const camp = campaigns[id];
+      if (camp.status === "completed" && camp.endTime && new Date(camp.endTime).getTime() < oneMonthAgo) {
+        delete campaigns[id];
+        freedItems++;
+      }
+    });
+    saveCampaigns();
+
+    // Trim individual logs exceeding 500 records
+    if (individualLogs.length > 500) {
+      individualLogs.splice(500);
+      saveIndividualLogs();
+    }
+
+    if (global.gc) {
+      global.gc();
     }
 
     res.json({
       success: true,
-      entry: refreshed,
-      pepsiCarry: refreshed?.pepsi_carry_next || 0,
-      plasticCarry: refreshed?.plastic_carry_next || 0,
-      saucesCarry: refreshed?.sauces_carry_next || 0,
-      dieselCarry: refreshed?.diesel_carry_next || 0
+      message: "تم تنظيف الذاكرة المؤقتة والسجلات القديمة بنجاح لضمان أقصى سرعة واستجابة للنظام",
+      freedItems,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "فشل تنظيف الملفات المؤقتة" });
+  }
+});
+
+// API Endpoints for WhatsApp Config
+app.get("/api/whatsapp/config", (req, res) => {
+  const isRealConnected = realConnectionStatus === "connected" && !!(sock && sock.user);
+  const activePhone = isRealConnected && connectedPhoneNumber ? `+${connectedPhoneNumber}` : "";
+
+  res.json({
+    mode: "real",
+    simulatedStatus: isRealConnected ? "connected" : (realConnectionStatus === "qr_ready" ? "qr_ready" : (realConnectionStatus === "connecting" ? "connecting" : "disconnected")),
+    simulatedPhone: activePhone,
+    isConnected: isRealConnected,
+    realStatus: isRealConnected ? "connected" : realConnectionStatus,
+    hasCloudApiKey: !!whatsappConfig.cloudApiKey,
+    cloudPhoneId: whatsappConfig.cloudPhoneId,
+    cloudAccountId: whatsappConfig.cloudAccountId,
+  });
+});
+
+app.post("/api/whatsapp/config", (req, res) => {
+  const { mode, cloudApiKey, cloudPhoneId, cloudAccountId, simulatedPhone } = req.body;
+  
+  if (mode) whatsappConfig.mode = mode;
+  if (cloudPhoneId !== undefined) whatsappConfig.cloudPhoneId = cloudPhoneId;
+  if (cloudAccountId !== undefined) whatsappConfig.cloudAccountId = cloudAccountId;
+  if (simulatedPhone !== undefined) whatsappConfig.simulatedPhone = simulatedPhone;
+  
+  // Only update API key if provided
+  if (cloudApiKey !== undefined && cloudApiKey !== "") {
+    whatsappConfig.cloudApiKey = cloudApiKey;
+  }
+  
+  saveConfig();
+  res.json({ success: true, message: "تم حفظ الإعدادات بنجاح" });
+});
+
+// Manage QR Code status for simulated login
+app.post("/api/whatsapp/simulated/action", (req, res) => {
+  const { action, phone } = req.body;
+  
+  if (action === "start_qr") {
+    whatsappConfig.simulatedStatus = "qr_ready";
+    res.json({ status: "qr_ready" });
+  } else if (action === "confirm_scan") {
+    whatsappConfig.simulatedStatus = "connecting";
+    
+    // Simulate a brief connection delay
+    setTimeout(() => {
+      whatsappConfig.simulatedStatus = "connected";
+      whatsappConfig.simulatedPhone = phone || "+966501234567";
+      saveConfig();
+    }, 2500);
+    
+    res.json({ status: "connecting" });
+  } else if (action === "disconnect") {
+    whatsappConfig.simulatedStatus = "disconnected";
+    whatsappConfig.simulatedPhone = "";
+    saveConfig();
+    res.json({ status: "disconnected" });
+  } else {
+    res.status(400).json({ error: "إجراء غير صالح" });
+  }
+});
+
+// Manage Real WhatsApp Web Pairing
+app.post("/api/whatsapp/real/start", async (req, res) => {
+  const { method = "qr", phone = "", phoneNumber = "", force = false } = req.body || {};
+  const targetPhone = phone || phoneNumber || "";
+  whatsappConfig.mode = "real";
+  
+  const isReallyConnected = realConnectionStatus === "connected" && !!(sock && sock.user);
+  if (isReallyConnected && !force) {
+    return res.json({ status: "connected", phone: connectedPhoneNumber });
+  }
+  
+  realConnectionStatus = "connecting";
+  realErrorMessage = "";
+  realPairingCode = "";
+  realQrCodeUrl = "";
+  
+  // Trigger background initialization immediately
+  initRealWhatsApp(method, targetPhone).catch((err) => {
+    console.error("initRealWhatsApp error:", err);
   });
 
-  app.delete("/api/days/:id", async (req, res) => {
-    const rawId = req.params.id;
-    const decodedId = decodeURIComponent(rawId).trim();
-    const allDays = await getDays();
-    
-    // Find entry either by exact rawId, decodedId, or case-insensitive/space-insensitive trim
-    const entry = allDays.find((d) => 
-      d.id === rawId || 
-      d.id === decodedId ||
-      d.id.trim() === decodedId ||
-      d.id.trim() === rawId.trim()
-    );
-    
-    if (!entry) {
-      // If we can't find it, let's see if we can locate it by date and branch since the id is literally branch-date
-      const dashIndex = decodedId.lastIndexOf("-");
-      if (dashIndex > 0) {
-        const potentialBranch = decodedId.substring(0, dashIndex);
-        const potentialDate = decodedId.substring(dashIndex + 1);
-        const entryByDateAndBranch = allDays.find(
-          (d) => d.branch === potentialBranch && d.date === potentialDate
-        );
-        if (entryByDateAndBranch) {
-          const branch = entryByDateAndBranch.branch;
-          await Promise.all([
-            deleteDay(entryByDateAndBranch.id),
-            deletePurchasesForDay(entryByDateAndBranch.id)
-          ]);
-          await recalculateCarryOvers(branch);
-          return res.json({ success: true });
-        }
+  res.json({ status: "connecting", message: "جاري توليد الرمز والباركود..." });
+});
+
+app.get("/api/whatsapp/real/status", (req, res) => {
+  const isReallyConnected = realConnectionStatus === "connected" && !!(sock && sock.user);
+  res.json({
+    status: isReallyConnected ? "connected" : (realConnectionStatus === "connected" ? "disconnected" : realConnectionStatus),
+    qr: realQrCodeUrl,
+    pairingCode: realPairingCode,
+    error: realErrorMessage,
+    phone: isReallyConnected ? (connectedPhoneNumber ? `+${connectedPhoneNumber}` : "") : "",
+    isConnected: isReallyConnected,
+  });
+});
+
+app.post("/api/whatsapp/real/reset", async (req, res) => {
+  isExplicitlyDisconnected = true;
+  try {
+    if (sock) {
+      try {
+        sock.ev?.removeAllListeners("creds.update");
+        sock.ev?.removeAllListeners("connection.update");
+        await sock.logout();
+      } catch (e) {
+        // ignore logout errors on reset
       }
-      return res.status(404).json({ error: "Entry not found" });
+      try {
+        sock.end(undefined);
+      } catch (e) {}
+      sock = null;
     }
+  } catch (e) {
+    console.error("Error closing sock on reset", e);
+  }
+  
+  realConnectionStatus = "disconnected";
+  realQrCodeUrl = "";
+  realPairingCode = "";
+  realErrorMessage = "";
+  connectedPhoneNumber = "";
+  
+  whatsappConfig.simulatedStatus = "disconnected";
+  whatsappConfig.simulatedPhone = "";
+  saveConfig();
+  await deleteBaileysSessionInFirestore().catch(() => {});
+  
+  const authFolder = path.join(process.cwd(), "auth_info_baileys");
+  if (fs.existsSync(authFolder)) {
+    try {
+      fs.rmSync(authFolder, { recursive: true, force: true });
+    } catch (err) {
+      console.error("Error deleting auth_info_baileys folder", err);
+    }
+  }
+  
+  res.json({ status: "disconnected", isConnected: false, message: "تمت إعادة تعيين جلسة الواتساب بنجاح" });
+});
 
-    const branch = entry.branch;
-    await Promise.all([
-      deleteDay(entry.id),
-      deletePurchasesForDay(entry.id)
-    ]);
+app.post("/api/whatsapp/real/disconnect", async (req, res) => {
+  isExplicitlyDisconnected = true;
+  try {
+    if (sock) {
+      try {
+        sock.ev?.removeAllListeners("creds.update");
+        sock.ev?.removeAllListeners("connection.update");
+        await sock.logout();
+      } catch (e) {}
+      try {
+        sock.end(undefined);
+      } catch (e) {}
+      sock = null;
+    }
+  } catch (e) {
+    console.error("Error logging out from real WhatsApp Web session", e);
+  }
+  
+  realConnectionStatus = "disconnected";
+  realQrCodeUrl = "";
+  realPairingCode = "";
+  realErrorMessage = "";
+  connectedPhoneNumber = "";
+  
+  whatsappConfig.simulatedStatus = "disconnected";
+  whatsappConfig.simulatedPhone = "";
+  saveConfig();
+  await deleteBaileysSessionInFirestore().catch(() => {});
+  
+  const authFolder = path.join(process.cwd(), "auth_info_baileys");
+  if (fs.existsSync(authFolder)) {
+    try {
+      fs.rmSync(authFolder, { recursive: true, force: true });
+    } catch (err) {
+      console.error("Error deleting auth_info_baileys folder", err);
+    }
+  }
+  
+  res.json({ status: "disconnected", isConnected: false, message: "تم قطع الاتصال بنجاح" });
+});
 
-    // Recalculate everything after removing this day so downstream elements are re-balanced perfectly Let's go!
-    await recalculateCarryOvers(branch);
+// Dedicated Real Test Message Endpoint for immediate connection testing
+app.post("/api/whatsapp/test-message", async (req, res) => {
+  const { phone, message } = req.body || {};
+  const testPhone = phone || connectedPhoneNumber || whatsappConfig.simulatedPhone;
+  const testMsg = message || `✨ رسالة اختبار من نظام الإرسال المدرسي الذكي.\nتم التحقق من ربط الواتساب بنجاح، وجميع الرسائل ستصل لهواتف المستلمين فوراً.\nالوقت: ${new Date().toLocaleTimeString("ar-SA")}`;
 
-    res.json({ success: true });
-  });
+  if (!testPhone) {
+    return res.status(400).json({ error: "يرجى تحديد رقم الجوال المراد إرسال رسالة الاختبار إليه." });
+  }
 
-  app.post("/api/days/bulk-delete", async (req, res) => {
-    const { ids, deleteAll, branch } = req.body as { ids?: string[]; deleteAll?: boolean; branch?: string };
-    const allDays = await getDays();
+  const isRealConnected = (realConnectionStatus === "connected" && !!sock?.user) || (!!sock?.user);
+
+  if (isRealConnected) {
+    const startTime = Date.now();
+    const result = await sendBaileysMessage(testPhone, testMsg);
+    const duration = Date.now() - startTime;
     
-    if (deleteAll) {
-      const toDeleteIds = branch && branch !== "الكل"
-        ? allDays.filter((d) => d.branch === branch).map(d => d.id)
-        : allDays.map(d => d.id);
-
-      await Promise.all(toDeleteIds.map(async (id) => {
-        await deleteDay(id);
-        await deletePurchasesForDay(id);
-      }));
-    } else if (ids && ids.length > 0) {
-      const decodedIds = ids.map(id => decodeURIComponent(id).trim());
-      const toDelete = allDays.filter((d) => {
-        const matchFound = ids.includes(d.id) || 
-                           decodedIds.includes(d.id) || 
-                           ids.includes(encodeURIComponent(d.id)) ||
-                           ids.some(id => id.trim() === d.id.trim()) ||
-                           decodedIds.some(dec => dec.trim() === d.id.trim());
-        return matchFound;
+    if (result.success) {
+      return res.json({
+        success: true,
+        mode: "real",
+        phone: normalizePhoneNumber(testPhone),
+        jid: result.jid,
+        durationMs: duration,
+        message: `تم إرسال رسالة الاختبار بنجاح إلى الرقم (${testPhone}) خلال ${duration}ms! تفقد تطبيق الواتساب الآن.`
       });
-      await Promise.all(toDelete.map(async (d) => {
-        await deleteDay(d.id);
-        await deletePurchasesForDay(d.id);
-      }));
     } else {
-      return res.status(400).json({ error: "No ids or deleteAll specified" });
+      return res.status(400).json({
+        success: false,
+        error: result.error || "فشل إرسال رسالة الاختبار عبر واتساب."
+      });
     }
+  } else {
+    return res.status(400).json({
+      success: false,
+      error: "جهاز الواتساب غير متصل حالياً. يرجى مسح الباركود أو إدخال رمز الربط للتمكن من إرسال رسائل حقيقية."
+    });
+  }
+});
 
-    // Recalculate carryovers for both branches concurrently so everything re-balances correctly
-    await Promise.all([
-      recalculateCarryOvers("القادسية"),
-      recalculateCarryOvers("المروج")
-    ]);
+// Helper functions for student data extraction
+function extractStudentPhone(std: any): string {
+  if (!std) return "";
+  if (std.phone) return String(std.phone).trim();
+  if (std["رقم الجوال"]) return String(std["رقم الجوال"]).trim();
+  if (std["الجوال"]) return String(std["الجوال"]).trim();
+  if (std["رقم الهاتف"]) return String(std["رقم الهاتف"]).trim();
+  if (std["الهاتف"]) return String(std["الهاتف"]).trim();
+  if (std["جوال"]) return String(std["جوال"]).trim();
+  if (std["هاتف"]) return String(std["هاتف"]).trim();
+  if (std["phone"]) return String(std["phone"]).trim();
+  if (std["Phone"]) return String(std["Phone"]).trim();
+  if (std["Mobile"]) return String(std["Mobile"]).trim();
+  if (std["mobile"]) return String(std["mobile"]).trim();
+  if (std["جوال ولي الأمر"]) return String(std["جوال ولي الأمر"]).trim();
+  if (std["رقم ولي الأمر"]) return String(std["رقم ولي الأمر"]).trim();
+  if (std["هاتف ولي الأمر"]) return String(std["هاتف ولي الأمر"]).trim();
+  if (std["العمود A"]) return String(std["العمود A"]).trim();
+  if (std["العمود B"]) return String(std["العمود B"]).trim();
 
-    res.json({ success: true });
-  });
-
-  // 4. SHARED DIESEL BILLS ENDPOINTS
-  app.get("/api/diesel", async (req, res) => {
-    const from = req.query.from as string;
-    const to = req.query.to as string;
-    let bills = await getDiesels();
-
-    if (from) bills = bills.filter((b) => b.date >= from);
-    if (to) bills = bills.filter((b) => b.date <= to);
-
-    bills.sort((a, b) => b.date.localeCompare(a.date));
-    res.json(bills);
-  });
-
-  app.post("/api/diesel", async (req, res) => {
-    const data = req.body as { date: string; total: number; notes: string };
-    if (!data.date || !data.total) {
-      return res.status(400).json({ error: "Date and Total are required" });
+  // Search any key containing phone keywords
+  for (const key of Object.keys(std)) {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey.includes("جوال") || lowerKey.includes("هاتف") || lowerKey.includes("phone") || lowerKey.includes("mobile")) {
+      const val = String(std[key] || "").trim();
+      if (val) return val;
     }
+  }
 
-    const settings = await getSettings();
-    const qRatio = (settings.نسبة_قادسية_ديزل || 70) / 100;
-    const mRatio = (settings.نسبة_مروج_ديزل || 30) / 100;
+  // Fallback search for phone-like values
+  for (const key of Object.keys(std)) {
+    const val = String(std[key] || "").trim();
+    const cleaned = val.replace(/[\s\-\+\(\)]/g, "");
+    if (/^\d{8,14}$/.test(cleaned) && (cleaned.startsWith("05") || cleaned.startsWith("5") || cleaned.startsWith("966"))) {
+      return val;
+    }
+  }
 
-    const q_share = Number((data.total * qRatio).toFixed(2));
-    const m_share = Number((data.total * mRatio).toFixed(2));
+  return "";
+}
 
-    const bill: SharedDiesel = {
-      id: `diesel-${data.date}-${Date.now()}`,
-      date: data.date,
-      total: data.total,
-      notes: data.notes || "",
-      q_share,
-      m_share
-    };
+function extractStudentName(std: any, fallbackIdx = 1): string {
+  if (!std) return `طالب ${fallbackIdx}`;
+  if (std.name) return String(std.name).trim();
+  if (std["اسم الطالب"]) return String(std["اسم الطالب"]).trim();
+  if (std["الاسم"]) return String(std["الاسم"]).trim();
+  if (std["الاسم الكامل"]) return String(std["الاسم الكامل"]).trim();
+  if (std["name"]) return String(std["name"]).trim();
+  if (std["Name"]) return String(std["Name"]).trim();
+  if (std["العمود D"]) return String(std["العمود D"]).trim();
+  if (std["العمود C"]) return String(std["العمود C"]).trim();
+  if (std["العمود B"]) return String(std["العمود B"]).trim();
 
-    const bills = await getDiesels();
-    bills.push(bill);
-    await saveDiesels(bills);
+  for (const key of Object.keys(std)) {
+    if (key.includes("اسم") || key.toLowerCase().includes("name")) {
+      const val = String(std[key] || "").trim();
+      if (val) return val;
+    }
+  }
+  return `طالب ${fallbackIdx}`;
+}
 
-    // Insert diesel expenditures into each branch's daily entry for that date dynamically!
-    const allDays = await getDays();
+// Campaign sending endpoint
+app.post("/api/whatsapp/campaign/create", (req, res) => {
+  try {
+    const { name, students, template, delayMs = 3000 } = req.body;
     
-    const applyDieselToBranch = (branch: "القادسية" | "المروج", share: number) => {
-      const dayId = `${branch}-${data.date}`;
-      const index = allDays.findIndex((d) => d.id === dayId);
+    if (!students || !Array.isArray(students) || students.length === 0) {
+      return res.status(400).json({ error: "قائمة الطلاب فارغة أو غير صالحة" });
+    }
+    
+    const campaignId = `camp_${Date.now()}`;
+    
+    // Helper to compile template placeholders
+    const compileTemplate = (tmpl: string, student: any) => {
+      let result = tmpl || "";
       
-      if (index >= 0) {
-        allDays[index].diesel_paid = (allDays[index].diesel_paid || 0) + share;
-      } else {
-        // Create an empty entry on that date to record this diesel
-        const raw_entry: DailyEntry = {
-          id: dayId,
-          date: data.date,
-          branch,
-          sarf: 0,
-          cash_box: 0,
-          cash_purchases: 0,
-          mada1: 0, mada2: 0, mada3: 0,
-          visa1: 0, visa2: 0, visa3: 0,
-          pos_net: 0, cash_net: 0, total_sales: 0,
-          makhzan: 0,
-          pepsi_paid: 0, pepsi_carry_prev: 0, pepsi_deduct: 0, pepsi_carry_next: 0,
-          plastic_paid: 0, plastic_carry_prev: 0, plastic_deduct: 0, plastic_carry_next: 0,
-          sauces_paid: 0, sauces_carry_prev: 0, sauces_deduct: 0, sauces_carry_next: 0,
-          gas: 0, vegetables: 0, bread: 0, grocery: 0,
-          diesel_paid: share, diesel_carry_prev: 0, diesel_deduct: 0, diesel_carry_next: 0,
-          diesel_type: 'invoice',
-          others: [], fixed_deduct: 0, fixed_note: "فاتورة ديزل مشتركة ببرمجة النظام",
-          notes: "", net_day: 0
-        };
-        allDays.push(raw_entry);
-      }
-    };
-
-    applyDieselToBranch("القادسية", q_share);
-    applyDieselToBranch("المروج", m_share);
-
-    await saveDays(allDays);
-
-    // Dynamic carryover sequential recalculation of both branches
-    await recalculateCarryOvers("القادسية");
-    await recalculateCarryOvers("المروج");
-
-    res.json({ success: true, bill });
-  });
-
-  // 5. TAX INVOICE ENDPOINTS
-  app.get("/api/tax-companies", async (req, res) => {
-    try {
-      const list = await getTaxRegisteredCompanies();
-      res.json(list);
-    } catch (err: any) {
-      console.error("Error in /api/tax-companies:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/tax-companies", async (req, res) => {
-    try {
-      const { id, name } = req.body;
-      if (!name) {
-        return res.status(400).json({ error: "اسم المورد مطلوب" });
-      }
-      const companyId = id || `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const company: TaxCompany = { id: companyId, name: name.trim() };
-      await saveTaxRegisteredCompany(company);
-      res.json({ success: true, company });
-    } catch (err: any) {
-      console.error("Error in POST /api/tax-companies:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.delete("/api/tax-companies/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteTaxRegisteredCompany(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("Error in DELETE /api/tax-companies:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/tax-invoices", async (req, res) => {
-    const from = req.query.from as string;
-    const to = req.query.to as string;
-    const status = req.query.status as string;
-    let invoices = await getTaxInvoices();
-
-    if (from) invoices = invoices.filter((i) => i.date >= from);
-    if (to) invoices = invoices.filter((i) => i.date <= to);
-    if (status) invoices = invoices.filter((i) => i.status === status);
-
-    invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
-    res.json(invoices);
-  });
-
-  app.post("/api/tax-invoices", async (req, res) => {
-    let inputs = req.body;
-    if (!Array.isArray(inputs)) {
-      inputs = [inputs];
-    }
-
-    const invoices = await getTaxInvoices();
-    const saved: TaxInvoice[] = [];
-    const allPurchases = await getPurchases(); // Fetch once unified here to maintain complete consistency in loop
-
-    for (const data of inputs) {
-      if (!data.date || !data.amount) continue;
-
-      const invoice: TaxInvoice = {
-        id: `tax-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        date: data.date,
-        branch: data.branch || "القادسية",
-        company: data.company || "",
-        invoice_no: data.invoice_no || "",
-        invoice_date: data.invoice_date || "",
-        amount: data.amount,
-        items: Array.isArray(data.items) ? data.items : [],
-        createdBy: data.createdBy || "",
-        status: data.status || "approved",
-        rawImage: data.rawImage || "",
-        fileType: data.fileType || ""
+      // Extract first and last name for shortened student name
+      const studentFullName = extractStudentName(student, 1);
+      const getShortName = (nameStr: string) => {
+        if (!nameStr) return "";
+        const parts = nameStr.trim().split(/\s+/).filter(Boolean);
+        if (parts.length <= 1) return nameStr;
+        return `${parts[0]} ${parts[parts.length - 1]}`;
       };
+      const shortName = getShortName(studentFullName);
 
-      invoices.push(invoice);
-      saved.push(invoice);
+      // Replace dynamic short-name tags
+      result = result.split("{اسم الطالب الأول والأخير}").join(shortName);
+      result = result.split("{الاسم الأول والأخير}").join(shortName);
 
-      if (invoice.status === "approved" && invoice.items && invoice.items.length > 0) {
-        await autoRegisterInvoiceItemsAsPurchases(invoice, allPurchases);
-      }
-    }
-
-    await saveTaxInvoices(invoices);
-    res.json({ success: true, count: saved.length, invoices: saved });
-  });
-
-  app.delete("/api/tax-invoices/:id", async (req, res) => {
-    const id = req.params.id;
-    await Promise.all([
-      deleteTaxInvoice(id),
-      deletePurchasesForInvoice(id)
-    ]);
-    res.json({ success: true });
-  });
-
-  app.post("/api/tax-invoices/bulk-delete", async (req, res) => {
-    try {
-      const { ids, all, from, to, branch } = req.body as { ids?: string[]; all?: boolean; from?: string; to?: string; branch?: string };
-      
-      if (all) {
-        let allInvoices = await getTaxInvoices();
-        if (from) allInvoices = allInvoices.filter((i) => i.date >= from);
-        if (to) allInvoices = allInvoices.filter((i) => i.date <= to);
-        if (branch && branch !== "الكل") allInvoices = allInvoices.filter((i) => i.branch === branch);
-        
-        await Promise.all(allInvoices.map(async (i) => {
-          await deleteTaxInvoice(i.id);
-          await deletePurchasesForInvoice(i.id);
-        }));
-        return res.json({ success: true, message: `تم حذف جميع الفواتير الضريبية (${allInvoices.length}) للفترة المحددة بنجاح` });
-      }
-
-      if (!ids || !Array.isArray(ids) || ids.length === 0) {
-        return res.status(400).json({ error: "Required array parameter 'ids' is missing or empty" });
-      }
-
-      await Promise.all(ids.map(async (id) => {
-        await deleteTaxInvoice(id);
-        await deletePurchasesForInvoice(id);
-      }));
-      res.json({ success: true, message: `تم حذف الفواتير الضريبية المحددة (${ids.length}) بنجاح` });
-    } catch (err: any) {
-      console.error("Error bulk deleting tax invoices:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.put("/api/tax-invoices/:id", async (req, res) => {
-    const id = req.params.id;
-    const data = req.body;
-    try {
-      if (!data.date || data.amount === undefined) {
-        return res.status(400).json({ error: "Required fields date and amount are missing" });
-      }
-      const updatedInvoice: TaxInvoice = {
-        id,
-        date: data.date,
-        branch: data.branch || "القادسية",
-        company: data.company || "",
-        invoice_no: data.invoice_no || "",
-        invoice_date: data.invoice_date || "",
-        amount: parseFloat(data.amount),
-        items: Array.isArray(data.items) ? data.items : [],
-        createdBy: data.createdBy || "",
-        status: data.status || "approved",
-        rawImage: data.rawImage || "",
-        fileType: data.fileType || ""
-      };
-
-      // Save tax invoice and clean old purchases in parallel to maximize speed
-      await Promise.all([
-        saveTaxInvoices([updatedInvoice]),
-        deletePurchasesForInvoice(id)
-      ]);
-
-      if (updatedInvoice.status === "approved" && updatedInvoice.items && updatedInvoice.items.length > 0) {
-        await autoRegisterInvoiceItemsAsPurchases(updatedInvoice);
-      }
-
-      res.json({ success: true, invoice: updatedInvoice });
-    } catch (err: any) {
-      console.error("Error updating tax invoice:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // 5.5 AI INVOICE SCANNING / PARSING
-  app.post("/api/parse-invoice", async (req, res) => {
-    try {
-      const { images } = req.body as { images?: string[] };
-      if (!images || !Array.isArray(images) || images.length === 0) {
-        return res.status(400).json({ error: "No images provided" });
-      }
-
-      const aiClient = getAiClient();
-      if (!aiClient) {
-        return res.status(500).json({ 
-          error: "لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة." 
+      if (student && typeof student === "object") {
+        Object.keys(student).forEach((key) => {
+          const val = String(student[key] ?? "");
+          // Use split & join to avoid any RegExp syntax errors with parentheses/brackets in column names
+          result = result.split(`{${key}}`).join(val);
         });
       }
+      return result;
+    };
 
-      // Process single image helper function
-      const parseSingleImage = async (img: string, idx: number) => {
-        try {
-          // Extract mime type and base64 data
-          const matches = img.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
-          let mimeType = "image/jpeg";
-          let base64Data = img;
+    const campaignLogs = students.map((std: any, idx: number) => {
+      const compiledMsg = compileTemplate(template, std);
+      const phone = extractStudentPhone(std);
+      const studentName = extractStudentName(std, idx + 1);
+      const grade = std.grade || std["الصف"] || std["المستوى"] || "";
+      const className = std.className || std["الفصل"] || std["الشعبة"] || "";
+      
+      return {
+        id: `log_${campaignId}_${idx}`,
+        studentName,
+        phone: String(phone).trim(),
+        grade: String(grade).trim(),
+        className: String(className).trim(),
+        message: compiledMsg,
+        status: "pending" as const,
+        timestamp: new Date().toISOString(),
+      };
+    });
 
-          if (matches && matches.length === 3) {
-            mimeType = matches[1];
-            base64Data = matches[2];
-          }
+    campaigns[campaignId] = {
+      id: campaignId,
+      name: name || `حملة إرسال جديدة ${new Date().toLocaleDateString("ar-SA")}`,
+      total: campaignLogs.length,
+      sent: 0,
+      failed: 0,
+      status: "running",
+      startTime: new Date().toISOString(),
+      endTime: null,
+      logs: campaignLogs,
+    };
+    saveCampaigns();
 
-          // Highly precise prompt for absolute accuracy in OCR numbers and details
-          const promptInstruction = "You are an expert OCR AI system specialized in Saudi Arabian tax invoices (ZATCA / هيئة الزكاة والضريبة والجمارك) and receipt analysis.\n\n" +
-            "CRITICAL EXTRACTION DIRECTIVES:\n" +
-            "1. NUMBERS & AMOUNTS ACCURACY:\n" +
-            "   - Read every number with digit-by-digit precision. Convert all Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩) to standard English numbers (0-9).\n" +
-            "   - Preserve decimal points accurately. Do NOT confuse thousands separators (,) with decimal points (.). For example: '1,250.50' is 1250.5, '15.00' is 15.0, '12.50' is 12.5 (never 1250).\n" +
-            "   - Grand Total ('amount'): Locate the ultimate final payable total (الإجمالي شامل ضريبة القيمة المضافة / المجموع الكلي / Grand Total / Net Total). Extract the exact number.\n\n" +
-            "2. SUPPLIER / COMPANY NAME ('company'):\n" +
-            "   - Extract the Arabic trade name of the supplier/vendor clearly (e.g. المراعي, نادك, اسواق العثيم, شركة الغاز, دواجن الوطنية, الخ).\n" +
-            "   - If the supplier name is completely unrecognizable or missing, output 'فاتورة'.\n\n" +
-            "3. INVOICE SERIAL NUMBER ('invoice_no'):\n" +
-            "   - MUST extract the actual document/receipt serial number (e.g. 'INV-10293', '004921', 'رقم الفاتورة', 'مسلسل', 'Receipt#').\n" +
-            "   - CRITICAL WARNING: NEVER use the 15-digit Tax Identification Number (الرقم الضريبي / TIN starting with 3xxxxxxxxxxxxx) as the invoice_no. NEVER use the 10-digit Commercial Register (السجل التجاري) as invoice_no.\n\n" +
-            "4. INVOICE DATE ('invoice_date'):\n" +
-            "   - Format strictly as YYYY-MM-DD in Gregorian calendar.\n" +
-            "   - If only a Hijri date is printed (e.g., 1445 or 1446 H), accurately convert it to its equivalent Gregorian YYYY-MM-DD date.\n\n" +
-            "5. LINE ITEMS ('items'):\n" +
-            "   - Extract purchased item rows with 'name' (Arabic item title), 'qty' (e.g. '5 كجم', '2 كرتون', '1 حبة'), 'price_with_tax' (the price inclusive of tax), and 'category' (e.g. خضار, غاز, ديزل, بيبسي, لحوم, دواجن, منظفات, مخبوزات, مستلزمات).\n" +
-            "   - If individual line items cannot be determined, provide a single item with the invoice description and total amount.";
+    // Start processing in background loop with 15-second anti-ban delay as default
+    const safeDelayMs = Math.max(15000, Number(delayMs) || 15000);
+    processCampaign(campaignId, safeDelayMs);
 
-          const response = await generateContentWithRetry({
-            model: "gemini-2.5-flash",
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: mimeType || "image/jpeg",
-                    data: base64Data,
-                  },
-                },
-                {
-                  text: promptInstruction,
-                },
-              ],
+    return res.json({ campaignId, message: "تم بدء الحملة بنجاح", total: campaignLogs.length });
+  } catch (err: any) {
+    console.error("Error creating campaign:", err);
+    return res.status(500).json({ error: err.message || "حدث خطأ غير متوقع في الخادم أثناء إنشاء الحملة" });
+  }
+});
+
+// Retrieve specific campaign progress
+app.get("/api/whatsapp/campaign/:id", (req, res) => {
+  const campaign = campaigns[req.params.id];
+  if (!campaign) {
+    return res.status(404).json({ error: "الحملة غير موجودة" });
+  }
+  res.json(campaign);
+});
+
+// Retrieve all historical campaigns
+app.get("/api/whatsapp/campaigns", (req, res) => {
+  res.json(Object.values(campaigns).map(c => ({
+    id: c.id,
+    name: c.name,
+    total: c.total,
+    sent: c.sent,
+    failed: c.failed,
+    status: c.status,
+    startTime: c.startTime,
+    endTime: c.endTime
+  })));
+});
+
+// Injects an invisible unique zero-width character sequence so every message has a unique payload hash
+function injectAntiSpamVariation(text: string): string {
+  if (!text) return text;
+  const zeroWidthChars = ["\u200B", "\u200C", "\u200D", "\uFEFF"];
+  const randomChars = Array.from({ length: 3 }, () => zeroWidthChars[Math.floor(Math.random() * zeroWidthChars.length)]).join("");
+  return text + randomChars;
+}
+
+// Background Campaign Processing with Anti-Ban Protection
+async function processCampaign(campaignId: string, baseDelayMs: number) {
+  const campaign = campaigns[campaignId];
+  if (!campaign || campaign.status !== "running") return;
+
+  let messagesInCurrentBatch = 0;
+  const totalLogs = campaign.logs.length;
+
+  for (let i = 0; i < totalLogs; i++) {
+    // Check if campaign was paused or cancelled in between
+    if (!campaigns[campaignId] || campaigns[campaignId].status !== "running") {
+      break;
+    }
+
+    const log = campaign.logs[i];
+    if (log.status !== "pending") continue;
+
+    log.status = "sending";
+    
+    // Anti-Ban Protection: Safe 15-second base interval with dynamic human jitter (+/- 2500ms)
+    const effectiveBaseDelay = Math.max(15000, Number(baseDelayMs || 15000));
+    const jitter = Math.floor(Math.random() * 5000) - 2500; // variance between -2.5s and +2.5s
+    const actualDelay = Math.max(12000, effectiveBaseDelay + jitter);
+
+    if (i > 0) {
+      await new Promise(resolve => setTimeout(resolve, actualDelay));
+    }
+
+    // Check again after delay
+    if (!campaigns[campaignId] || campaigns[campaignId].status !== "running") {
+      log.status = "pending";
+      break;
+    }
+
+    const isCloudAPI = whatsappConfig.mode === "cloud_api" && whatsappConfig.cloudApiKey && whatsappConfig.cloudPhoneId;
+    const isRealMode = whatsappConfig.mode === "real" || (sock && sock.user);
+    
+    if (isCloudAPI) {
+      try {
+        const formattedPhone = normalizePhoneNumber(log.phone);
+
+        const response = await fetch(
+          `https://graph.facebook.com/v18.0/${whatsappConfig.cloudPhoneId}/messages`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${whatsappConfig.cloudApiKey}`,
+              "Content-Type": "application/json",
             },
-            config: {
-              temperature: 0.1,
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  company: { 
-                    type: Type.STRING, 
-                    description: "Brief Arabic name of the supplier company or output 'فاتورة' if unclear." 
-                  },
-                  invoice_no: { 
-                    type: Type.STRING, 
-                    description: "The actual invoice serial number. CRITICAL: NEVER capture the 15-digit Tax ID (الرقم الضريبي) or CR (السجل التجاري) here." 
-                  },
-                  invoice_date: { 
-                    type: Type.STRING, 
-                    description: "Printed invoice date in Gregorian format strictly as YYYY-MM-DD." 
-                  },
-                  amount: { 
-                    type: Type.NUMBER, 
-                    description: "Absolute grand total amount inclusive of VAT as a decimal." 
-                  },
-                  items: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        name: { type: Type.STRING, description: "Arabic name of the purchased item/product" },
-                        qty: { type: Type.STRING, description: "Quantity or specification of the purchased item" },
-                        price_with_tax: { type: Type.NUMBER, description: "Total price of this item after VAT/Tax" },
-                        category: { type: Type.STRING, description: "Arabic category/type of the item (e.g. خضار, غاز, ديزل, بيبسي, لحوم, إلخ)" }
-                      },
-                      required: ["name", "price_with_tax", "category"]
-                    },
-                    description: "List of items/materials identified inside this invoice."
-                  }
-                },
-                required: ["company", "amount"]
-              }
-            }
-          });
-
-          const textStr = (response.text || "{}").trim();
-          const cleanedText = textStr
-            .replace(/^```json\s*/i, "")
-            .replace(/^```\s*/i, "")
-            .replace(/```\s*$/i, "")
-            .trim();
-          
-          let parsedObj: any = {};
-          try {
-            parsedObj = JSON.parse(cleanedText);
-          } catch (pe) {
-            const match = textStr.match(/\{[\s\S]*\}/);
-            if (match) {
-              parsedObj = JSON.parse(match[0]);
-            } else {
-              throw new Error("تعذر تحليل بيانات الفاتورة المقروءة من الذكاء الاصطناعي");
-            }
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: formattedPhone,
+              type: "text",
+              text: { body: log.message },
+            }),
           }
+        );
 
-          let company = (parsedObj.company || "").trim();
-          const companyLower = company.toLowerCase();
-          const isUnclear = 
-            !company || 
-            company === "" || 
-            company === "فاتورة" ||
-            company === "مورد غير معروف" || 
-            company === "غير معروف" || 
-            company === "فاتورة غير واضحة" || 
-            company.includes("غير واضح") || 
-            company.includes("غير معروف") || 
-            company.includes("غير محدد") || 
-            company.includes("غير مدون") || 
-            companyLower.includes("unknown") || 
-            companyLower.includes("unclear") || 
-            companyLower.includes("n/a") || 
-            companyLower.includes("null") || 
-            companyLower.includes("invoice");
-
-          if (isUnclear) {
-            company = "فاتورة";
-          }
-
-          // Clean up invoice_no if model accidentally returned 15-digit Tax ID
-          let invoiceNo = String(parsedObj.invoice_no || "").trim();
-          if (/^3\d{14}$/.test(invoiceNo)) {
-            // It's a 15-digit ZATCA TIN, clear it so user doesn't get misleading invoice number
-            invoiceNo = "";
-          }
-
-          return {
-            success: true,
-            company: company,
-            invoice_no: invoiceNo,
-            invoice_date: parsedObj.invoice_date || "",
-            amount: typeof parsedObj.amount === "number" ? parsedObj.amount : (parseFloat(parsedObj.amount) || 0),
-            items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => ({
-              name: String(it.name || "").trim(),
-              qty: it.qty !== undefined ? String(it.qty).trim() : "1 حبة",
-              price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
-            })).filter((it: any) => it.name !== "") : [],
-            tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-          };
-        } catch (err: any) {
-          console.error(`Error parsing image at index ${idx}:`, err);
-          return {
-            success: false,
-            error: err.message || "فشل قراءة تفاصيل الصورة",
-            company: "فاتورة",
-            invoice_no: "",
-            invoice_date: "",
-            amount: 0,
-            items: [],
-            tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-          };
-        }
-      };
-
-      // Process images concurrently in batches of 3 to optimize speed without exceeding quotas
-      const batchSize = 3;
-      const parsedResults: any[] = [];
-      for (let i = 0; i < images.length; i += batchSize) {
-        const batch = images.slice(i, i + batchSize);
-        const batchPromises = batch.map((img, bIdx) => parseSingleImage(img, i + bIdx));
-        const batchResults = await Promise.all(batchPromises);
-        parsedResults.push(...batchResults);
-      }
-
-      res.json({ success: true, results: parsedResults });
-    } catch (error: any) {
-      console.error("Critical error in /api/parse-invoice:", error);
-      res.status(500).json({ error: error.message || "حدث خطأ غير متوقع أثناء معالجة الفواتير" });
-    }
-  });
-
-  // 6. STATISTICS AND SYSTEM-WIDE REPORTS ENDPOINT
-  app.get("/api/reports", async (req, res) => {
-    const from = req.query.from as string;
-    const to = req.query.to as string;
-
-    if (!from || !to) {
-      return res.status(400).json({ error: "From and To dates are required" });
-    }
-
-    const settings = await getSettings();
-    const allDays = await getDays();
-    const allTaxInvoices = await getTaxInvoices();
-
-    // Filter by date
-    const rangeDays = allDays.filter((d) => d.date >= from && d.date <= to);
-    const rangeTaxInvoices = allTaxInvoices.filter((i) => i.date >= from && i.date <= to);
-
-    const qData = rangeDays.filter((d) => d.branch === "القادسية");
-    const mData = rangeDays.filter((d) => d.branch === "المروج");
-    const qTaxInvoices = rangeTaxInvoices.filter((i) => i.branch === "القادسية");
-    const mTaxInvoices = rangeTaxInvoices.filter((i) => i.branch === "المروج");
-
-    const getStats = (branchDays: DailyEntry[]) => {
-      const count = branchDays.length;
-      if (count === 0) {
-        return { total: 0, cash: 0, pos: 0, count: 0, max: 0, maxDate: "", min: 0, minDate: "", avg: 0 };
-      }
-
-      const total = Number(branchDays.reduce((sum, d) => sum + d.total_sales, 0).toFixed(2));
-      const cash = Number(branchDays.reduce((sum, d) => sum + d.cash_net, 0).toFixed(2));
-      const pos = Number(branchDays.reduce((sum, d) => sum + d.pos_net, 0).toFixed(2));
-      const avg = Number((total / count).toFixed(2));
-
-      let max = -9999999;
-      let maxDate = "";
-      let min = 9999999;
-      let minDate = "";
-
-      for (const d of branchDays) {
-        if (d.total_sales > max) {
-          max = d.total_sales;
-          maxDate = d.date;
-        }
-        if (d.total_sales < min) {
-          min = d.total_sales;
-          minDate = d.date;
-        }
-      }
-
-      return { total, cash, pos, count, max, maxDate, min, minDate, avg };
-    };
-
-    const getExpensesBreakdown = (branchDays: DailyEntry[], taxInvoices: TaxInvoice[]) => {
-      const exp: Record<string, number> = {
-        "المستودع": 0,
-        "بيبسي": 0,
-        "بلاستيكيات": 0,
-        "الغاز": 0,
-        "الخضار": 0,
-        "الصلصات": 0,
-        "الخبز": 0,
-        "البقالة": 0,
-        "الديزل": 0,
-        "الخصوم الدائمة": 0,
-        "مصروفات أخرى": 0
-      };
-
-      for (const d of branchDays) {
-        const purExtrasSum = (d.pur_extras || []).reduce((sum, e) => sum + (e.amt || 0), 0);
+        const result = await response.json() as any;
         
-        exp["المستودع"] += d.makhzan || 0;
-        exp["بيبسي"] += d.pepsi_deduct || 0;
-        exp["بلاستيكيات"] += d.plastic_deduct || 0;
-        exp["الغاز"] += Math.max(d.gas || 0, d.pur_gas || 0);
-        exp["الخضار"] += Math.max(d.vegetables || 0, d.pur_veg || 0);
-        exp["الصلصات"] += d.sauces_deduct || 0;
-        exp["الخبز"] += Math.max(d.bread || 0, d.pur_bread || 0);
-        exp["البقالة"] += Math.max(d.grocery || 0, d.pur_groc || 0);
-        exp["الديزل"] += d.diesel_deduct || 0;
-        exp["الخصوم الدائمة"] += d.fixed_deduct || 0;
-        exp["مصروفات أخرى"] += (d.others || []).reduce((sum, o) => sum + (o.amt || 0), 0) + purExtrasSum;
+        if (response.ok && result.messages) {
+          log.status = "success";
+          campaign.sent += 1;
+          messagesInCurrentBatch += 1;
+        } else {
+          log.status = "failed";
+          log.error = result.error?.message || "فشل إرسال الرسالة عبر WhatsApp Cloud API";
+          campaign.failed += 1;
+        }
+      } catch (err: any) {
+        log.status = "failed";
+        log.error = err.message || "حدث خطأ في الاتصال بالخادم الرئيسي";
+        campaign.failed += 1;
       }
-
-      // Convert all values to fixed 2 decimals
-      for (const k of Object.keys(exp)) {
-        exp[k] = Number(exp[k].toFixed(2));
+    } else if (isRealMode || (sock && sock.user)) {
+      const randomizedMessage = injectAntiSpamVariation(log.message);
+      const sendResult = await sendBaileysMessage(log.phone, randomizedMessage);
+      if (sendResult.success) {
+        log.status = "success";
+        campaign.sent += 1;
+        messagesInCurrentBatch += 1;
+      } else {
+        log.status = "failed";
+        log.error = sendResult.error || "فشل الإرسال عبر ربط الواتساب المباشر";
+        campaign.failed += 1;
       }
+    } else {
+      // Not connected to real WhatsApp
+      const cleanedPhone = normalizePhoneNumber(log.phone);
+      if (cleanedPhone.length < 8) {
+        log.status = "failed";
+        log.error = "رقم جوال غير صالح أو قصير جداً";
+        campaign.failed += 1;
+      } else {
+        log.status = "failed";
+        log.error = "جهاز الواتساب غير متصل. يرجى التوجه لصفحة 'ربط الواتساب' وربط جهازك بالباركود أو الرمز أولاً حتى يتم الإرسال للهاتف الفعلي.";
+        campaign.failed += 1;
+      }
+    }
 
-      return exp;
-    };
+    log.timestamp = new Date().toISOString();
+  }
 
-    const taxInvoicesTotalQ = Number(qTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
-    const taxInvoicesTotalM = Number(mTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
+  // Update final status
+  if (campaign.sent + campaign.failed >= campaign.total) {
+    campaign.status = "completed";
+  } else if (campaign.status === "running") {
+    campaign.status = "completed";
+  }
+  campaign.endTime = new Date().toISOString();
+  saveCampaigns();
+}
 
-    res.json({
-      qStats: getStats(qData),
-      mStats: getStats(mData),
-      qExp: getExpensesBreakdown(qData, qTaxInvoices),
-      mExp: getExpensesBreakdown(mData, mTaxInvoices),
-      qData,
-      mData,
-      qTaxInvoices,
-      mTaxInvoices,
-      taxInvoicesTotalQ,
-      taxInvoicesTotalM
+// Pause Campaign
+app.post("/api/whatsapp/campaign/:id/pause", (req, res) => {
+  const campaign = campaigns[req.params.id];
+  if (!campaign) return res.status(404).json({ error: "الحملة غير موجودة" });
+  campaign.status = "paused";
+  saveCampaigns();
+  res.json({ success: true, status: "paused" });
+});
+
+// Resume Campaign
+app.post("/api/whatsapp/campaign/:id/resume", (req, res) => {
+  const campaign = campaigns[req.params.id];
+  if (!campaign) return res.status(404).json({ error: "الحملة غير موجودة" });
+  
+  campaign.status = "running";
+  saveCampaigns();
+  // Restart background loop
+  const delayMs = req.body.delayMs || 3000;
+  
+  // Reset any temporary "sending" blocks to "pending" to retry them
+  campaign.logs.forEach(log => {
+    if (log.status === "sending") log.status = "pending";
+  });
+  
+  processCampaign(campaign.id, delayMs);
+  res.json({ success: true, status: "running" });
+});
+
+// Single Message Send Endpoint
+app.post(["/api/whatsapp/send-single", "/api/whatsapp/send", "/api/send-individual", "/api/send-whatsapp"], async (req, res) => {
+  const { phone, message, studentName, grade, className } = req.body;
+  if (!phone || !message) {
+    return res.status(400).json({ error: "يرجى تحديد رقم الجوال ونص الرسالة" });
+  }
+
+  const logEntry: IndividualLogItem = {
+    id: `ind_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    studentName: studentName || "رسالة فردية مباشرة",
+    phone: String(phone).trim(),
+    grade: grade ? String(grade).trim() : "",
+    className: className ? String(className).trim() : "",
+    message: String(message),
+    status: "success",
+    timestamp: new Date().toISOString(),
+  };
+
+  const isCloudAPI = whatsappConfig.mode === "cloud_api" && whatsappConfig.cloudApiKey && whatsappConfig.cloudPhoneId;
+  const isRealMode = whatsappConfig.mode === "real" || (sock && sock.user);
+
+  if (isCloudAPI) {
+    try {
+      const formattedPhone = normalizePhoneNumber(phone);
+
+      const response = await fetch(
+        `https://graph.facebook.com/v18.0/${whatsappConfig.cloudPhoneId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${whatsappConfig.cloudApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: formattedPhone,
+            type: "text",
+            text: { body: message },
+          }),
+        }
+      );
+
+      const result = await response.json() as any;
+
+      if (response.ok && result.messages) {
+        logEntry.status = "success";
+        individualLogs.unshift(logEntry);
+        saveIndividualLogs();
+        return res.json({ success: true, message: "تم إرسال الرسالة الفردية بنجاح" });
+      } else {
+        logEntry.status = "failed";
+        logEntry.error = result.error?.message || "فشل إرسال الرسالة عبر WhatsApp Cloud API";
+        individualLogs.unshift(logEntry);
+        saveIndividualLogs();
+        return res.status(500).json({
+          error: logEntry.error
+        });
+      }
+    } catch (err: any) {
+      logEntry.status = "failed";
+      logEntry.error = err.message || "حدث خطأ أثناء الاتصال بخوادم Meta";
+      individualLogs.unshift(logEntry);
+      saveIndividualLogs();
+      return res.status(500).json({
+        error: logEntry.error
+      });
+    }
+  } else if (isRealMode || (sock && sock.user)) {
+    const sendResult = await sendBaileysMessage(phone, message);
+    if (sendResult.success) {
+      logEntry.status = "success";
+      individualLogs.unshift(logEntry);
+      saveIndividualLogs();
+      return res.json({ success: true, message: "تم إرسال الرسالة الفردية بنجاح إلى هاتف المستلم عبر واتساب" });
+    } else {
+      logEntry.status = "failed";
+      logEntry.error = sendResult.error || "فشل إرسال الرسالة الفردية عبر ربط الواتساب";
+      individualLogs.unshift(logEntry);
+      saveIndividualLogs();
+      return res.status(400).json({ error: logEntry.error });
+    }
+  } else {
+    // Not connected to real WhatsApp
+    const cleanedPhone = normalizePhoneNumber(phone);
+    if (cleanedPhone.length < 8) {
+      logEntry.status = "failed";
+      logEntry.error = "رقم الجوال الفردي غير صالح أو قصير جداً";
+      individualLogs.unshift(logEntry);
+      saveIndividualLogs();
+      return res.status(400).json({ error: logEntry.error });
+    }
+    
+    logEntry.status = "failed";
+    logEntry.error = "جهاز الواتساب غير متصل حالياً. يرجى الانتقال إلى صفحة 'ربط الواتساب' والتأكد من إتمام الربط بالباركود أو الرمز أولاً حتى تصل الرسالة إلى هاتف المستلم.";
+    individualLogs.unshift(logEntry);
+    saveIndividualLogs();
+    return res.status(400).json({ error: logEntry.error });
+  }
+});
+
+// Comprehensive Reports Endpoint: Aggregates all campaign logs and individual logs
+app.get("/api/whatsapp/reports", (req, res) => {
+  const allLogs: any[] = [];
+  
+  // 1. Extract from all Campaigns
+  Object.values(campaigns).forEach(camp => {
+    (camp.logs || []).forEach(log => {
+      allLogs.push({
+        id: log.id,
+        studentName: log.studentName,
+        phone: log.phone,
+        grade: log.grade || "",
+        className: log.className || "",
+        message: log.message,
+        status: log.status,
+        timestamp: log.timestamp,
+        campaignId: camp.id,
+        campaignName: camp.name,
+        type: "campaign",
+        error: log.error || ""
+      });
     });
   });
 
-  // 6. SMART PURCHASES TRACKER ENDPOINTS
-  app.get("/api/purchases", async (req, res) => {
-    try {
-      const purchases = await getPurchases();
-      purchases.sort((a, b) => b.date.localeCompare(a.date));
-      res.json(purchases);
-    } catch (err: any) {
-      console.error("Error listing purchases:", err);
-      res.status(500).json({ error: err.message });
+  // 2. Extract from Individual Logs
+  individualLogs.forEach(log => {
+    allLogs.push({
+      id: log.id,
+      studentName: log.studentName || "إرسال فردي مباشر",
+      phone: log.phone,
+      grade: log.grade || "",
+      className: log.className || "",
+      message: log.message,
+      status: log.status,
+      timestamp: log.timestamp,
+      campaignId: "",
+      campaignName: "إرسال فردي سريع",
+      type: "individual",
+      error: log.error || ""
+    });
+  });
+
+  // Sort descending by timestamp
+  allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  res.json({
+    logs: allLogs,
+    total: allLogs.length,
+    sent: allLogs.filter(l => l.status === "success").length,
+    failed: allLogs.filter(l => l.status === "failed").length
+  });
+});
+
+// Clear historical logs if needed
+app.delete("/api/whatsapp/reports/clear", (req, res) => {
+  individualLogs.length = 0;
+  saveIndividualLogs();
+  // Clear campaign logs
+  Object.keys(campaigns).forEach(key => {
+    if (campaigns[key].status !== "running") {
+      delete campaigns[key];
     }
   });
+  saveCampaigns();
+  res.json({ success: true, message: "تم مسح سجلات التقارير بنجاح" });
+});
 
-  app.post("/api/purchases", async (req, res) => {
-    try {
-      const data = req.body;
-      if (!data.name || !data.date || !data.branch) {
-        return res.status(400).json({ error: "Required fields name, date and branch are missing" });
-      }
-      const p = await addNewPurchaseInServer(data);
-      res.json({ success: true, purchase: p });
-    } catch (err: any) {
-      console.error("Error creating purchase:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+// Noor Extractor Absences State
+let noorAbsencesList: any[] = [];
+let guidanceActionsHistory: any[] = [];
 
-  app.put("/api/purchases/:id", async (req, res) => {
-    const id = req.params.id;
-    const data = req.body;
-    try {
-      if (!data.name || !data.date || !data.branch) {
-        return res.status(400).json({ error: "Required fields name, date and branch are missing" });
-      }
-      const updated: Purchase = {
-        id,
-        name: data.name.trim(),
-        date: data.date,
-        qty: data.qty,
-        type: data.type || "direct",
-        price: parseFloat(data.price) || 0,
-        branch: data.branch,
-        depletedDate: data.depletedDate,
-        status: data.status || "active",
-        source: data.source || "manual",
-        invoiceId: data.invoiceId
-      };
-      await savePurchase(updated);
-      res.json({ success: true, purchase: updated });
-    } catch (err: any) {
-      console.error("Error updating purchase:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+// Noor Sync Endpoints
+app.get("/api/noor/absences", (req, res) => {
+  res.json({ absences: noorAbsencesList, total: noorAbsencesList.length });
+});
 
-  app.delete("/api/purchases/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deletePurchase(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("Error deleting purchase:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+app.post("/api/noor/sync-absences", (req, res) => {
+  const { absences } = req.body;
+  if (Array.isArray(absences)) {
+    noorAbsencesList = absences;
+    console.log(`[Noor Extractor] Synced ${absences.length} student absence records.`);
+    return res.json({ success: true, count: absences.length, message: "تمت مزامنة غيابات نظام نور بنجاح" });
+  }
+  res.status(400).json({ error: "بيانات الغياب غير صالحة" });
+});
 
-  app.post("/api/purchases/bulk-delete", async (req, res) => {
-    try {
-      const { ids, all, branch } = req.body as { ids?: string[]; all?: boolean; branch?: string };
-      if (all) {
-        const allPurchases = await getPurchases();
-        const toDelete = branch && branch !== "الكل" 
-          ? allPurchases.filter(p => p.branch === branch)
-          : allPurchases;
-        
-        await Promise.all(toDelete.map(p => deletePurchase(p.id)));
-        return res.json({ success: true, message: `تم حذف جميع السجلات (${toDelete.length}) بنجاح` });
-      }
+// Guidance Student Actions Log Endpoints
+app.get("/api/guidance/actions", (req, res) => {
+  res.json({ actions: guidanceActionsHistory });
+});
 
-      if (!ids || !Array.isArray(ids) || ids.length === 0) {
-        return res.status(400).json({ error: "Required array parameter 'ids' is missing or empty" });
-      }
+app.post("/api/guidance/actions", (req, res) => {
+  const action = req.body;
+  if (action && action.studentId) {
+    const newAction = {
+      id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      ...action,
+      createdAt: new Date().toISOString()
+    };
+    guidanceActionsHistory.unshift(newAction);
+    return res.json({ success: true, action: newAction });
+  }
+  res.status(400).json({ error: "بيانات الإجراء غير مكتملة" });
+});
 
-      await Promise.all(ids.map(id => deletePurchase(id)));
-      res.json({ success: true, message: `تم حذف ${ids.length} سجل بنجاح` });
-    } catch (err: any) {
-      console.error("Error bulk deleting purchases:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
+// Setup Vite Dev Server / Serve static assets in production
 
-  // --- BAKERY RECONCILIATION API ENDPOINTS ---
-  app.get("/api/bakery", async (req, res) => {
-    try {
-      const entries = await getBakeryEntries();
-      entries.sort((a, b) => b.date.localeCompare(a.date));
-      res.json(entries);
-    } catch (err: any) {
-      console.error("Error loading bakery entries:", err);
-      res.status(500).json({ error: "فشل تحميل سجلات ضبط المخبز" });
-    }
-  });
-
-  app.post("/api/bakery", async (req, res) => {
-    try {
-      const data = req.body as BakeryEntry;
-      if (!data.date || !data.branch) {
-        return res.status(400).json({ error: "التاريخ والفرع مطلوبان لتسجيل الضبط" });
-      }
-      if (!data.id) {
-        data.id = `${data.branch}-${data.date}`;
-      }
-      if (!data.createdAt) {
-        data.createdAt = new Date().toISOString();
-      }
-      await saveBakeryEntry(data);
-      res.json({ success: true, entry: data });
-    } catch (err: any) {
-      console.error("Error saving bakery entry:", err);
-      res.status(500).json({ error: err?.message || "فشل حفظ سجل ضبط المخبز" });
-    }
-  });
-
-  app.delete("/api/bakery/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteBakeryEntry(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("Error deleting bakery entry:", err);
-      res.status(500).json({ error: "فشل حذف سجل ضبط المخبز" });
-    }
-  });
-
-  // --- DRINKS RECONCILIATION API ENDPOINTS ---
-  app.get("/api/drinks", async (req, res) => {
-    try {
-      const entries = await getDrinksEntries();
-      entries.sort((a, b) => b.date.localeCompare(a.date));
-      res.json(entries);
-    } catch (err: any) {
-      console.error("Error loading drinks entries:", err);
-      res.status(500).json({ error: "فشل تحميل سجلات ضبط المشروبات" });
-    }
-  });
-
-  app.post("/api/drinks", async (req, res) => {
-    try {
-      const data = req.body as DrinksEntry;
-      if (!data.date || !data.branch) {
-        return res.status(400).json({ error: "التاريخ والفرع مطلوبان لتسجيل الضبط" });
-      }
-      if (!data.id) {
-        data.id = `${data.branch}-${data.date}`;
-      }
-      if (!data.createdAt) {
-        data.createdAt = new Date().toISOString();
-      }
-      await saveDrinksEntry(data);
-      res.json({ success: true, entry: data });
-    } catch (err: any) {
-      console.error("Error saving drinks entry:", err);
-      res.status(500).json({ error: err?.message || "فشل حفظ سجل ضبط المشروبات" });
-    }
-  });
-
-  app.delete("/api/drinks/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteDrinksEntry(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("Error deleting drinks entry:", err);
-      res.status(500).json({ error: "فشل حذف سجل ضبط المشروبات" });
-    }
-  });
-
-  // --- DRINKS PRICES ENDPOINTS ---
-  app.get("/api/drinks/prices", async (req, res) => {
-    try {
-      const prices = await getDrinkPrices();
-      res.json(prices);
-    } catch (err: any) {
-      console.error("Error loading drink prices:", err);
-      res.status(500).json({ error: "فشل تحميل أسعار المشروبات" });
-    }
-  });
-
-  app.post("/api/drinks/prices", async (req, res) => {
-    try {
-      const prices = req.body;
-      await saveDrinkPrices(prices);
-      res.json({ success: true, prices });
-    } catch (err: any) {
-      console.error("Error saving drink prices:", err);
-      res.status(500).json({ error: "فشل حفظ أسعار المشروبات الجديدة" });
-    }
-  });
-
-  // --- EMPLOYEE MANAGEMENT API ENDPOINTS ---
-  app.get("/api/employees", async (req, res) => {
-    try {
-      const list = await getEmployees();
-      res.json(list);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل بيانات الموظفين" });
-    }
-  });
-
-  app.post("/api/employees", async (req, res) => {
-    try {
-      const emp = req.body as Employee;
-      if (!emp || !emp.name || !emp.job || emp.salary === undefined) {
-        return res.status(400).json({ error: "جميع الحقول الأساسية: الاسم، المهنة، والراتب مطلوبة" });
-      }
-      if (!emp.id) {
-        emp.id = `emp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      }
-      if (emp.advanceLimitPercent === undefined || isNaN(emp.advanceLimitPercent)) {
-        emp.advanceLimitPercent = 25;
-      }
-      if (!emp.createdAt) {
-        emp.createdAt = new Date().toISOString();
-      }
-      await saveEmployee(emp);
-      res.json({ success: true, employee: emp });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حفظ بيانات الموظف" });
-    }
-  });
-
-  app.delete("/api/employees/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteEmployee(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حذف الموظف" });
-    }
-  });
-
-  app.get("/api/employee-advances", async (req, res) => {
-    try {
-      const list = await getEmployeeAdvances();
-      res.json(list);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل سلفيات الموظفين" });
-    }
-  });
-
-  app.post("/api/employee-advances", async (req, res) => {
-    try {
-      const adv = req.body as EmployeeAdvance;
-      if (!adv || !adv.employeeId || !adv.date || !adv.amount || adv.amount <= 0) {
-        return res.status(400).json({ error: "بيانات السلفة غير مكتملة أو المبلغ غير صحيح" });
-      }
-      if (!adv.id) {
-        adv.id = `adv-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      }
-      if (!adv.createdAt) {
-        adv.createdAt = new Date().toISOString();
-      }
-      await saveEmployeeAdvance(adv);
-      res.json({ success: true, advance: adv });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تسجيل السلفة" });
-    }
-  });
-
-  app.delete("/api/employee-advances/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteEmployeeAdvance(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حذف السلفة" });
-    }
-  });
-
-  app.get("/api/employee-violations", async (req, res) => {
-    try {
-      const list = await getEmployeeViolations();
-      res.json(list);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل سجل المخالفات والجزاءات" });
-    }
-  });
-
-  app.post("/api/employee-violations", async (req, res) => {
-    try {
-      const v = req.body as EmployeeViolation;
-      if (!v || !v.employeeId || !v.date || !v.description || !v.type) {
-        return res.status(400).json({ error: "بيانات المخالفة غير مكتملة" });
-      }
-      if (!v.id) {
-        v.id = `viol-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      }
-      if (!v.createdAt) {
-        v.createdAt = new Date().toISOString();
-      }
-      await saveEmployeeViolation(v);
-      res.json({ success: true, violation: v });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تسجيل المخالفة" });
-    }
-  });
-
-  app.delete("/api/employee-violations/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteEmployeeViolation(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حذف المخالفة" });
-    }
-  });
-
-  app.get("/api/employee-attendance", async (req, res) => {
-    try {
-      const list = await getEmployeeAttendance();
-      res.json(list);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل سجل حضور الموظفين" });
-    }
-  });
-
-  app.post("/api/employee-attendance", async (req, res) => {
-    try {
-      const att = req.body as EmployeeAttendance;
-      if (!att || !att.employeeId || !att.date || !att.arrivalTime || !att.departureTime) {
-        return res.status(400).json({ error: "بيانات الحضور غير مكتملة" });
-      }
-      if (!att.id) {
-        att.id = `${att.employeeId}-${att.date}`;
-      }
-      if (!att.createdAt) {
-        att.createdAt = new Date().toISOString();
-      }
-      await saveEmployeeAttendance(att);
-      res.json({ success: true, attendance: att });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حفظ سجل الحضور" });
-    }
-  });
-
-  app.delete("/api/employee-attendance/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteEmployeeAttendance(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حذف كشف الحضور" });
-    }
-  });
-
-  // --- EMPLOYEE DEDUCTION RULE CONFIG ENDPOINTS ---
-  app.get("/api/employee-deduction-config", async (req, res) => {
-    try {
-      const config = await getEmployeeDeductionConfig();
-      res.json(config);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل آليات الخصم والاستيفاء" });
-    }
-  });
-
-  app.post("/api/employee-deduction-config", async (req, res) => {
-    try {
-      const config = req.body as EmployeeDeductionConfig;
-      if (!config) {
-        return res.status(400).json({ error: "البيانات المدخلة للتهيئة غير صالحة" });
-      }
-      config.id = "global-rules";
-      config.updatedAt = new Date().toISOString();
-      await saveEmployeeDeductionConfig(config);
-      res.json({ success: true, config });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حفظ آليات الخصم والاستيفاء الجديدة" });
-    }
-  });
-
-  // --- WHATSAPP BROADCAST INTEGRATION ENDPOINTS ---
-  app.get("/api/whatsapp/config", async (req, res) => {
-    try {
-      const config = await getWhatsAppConfig();
-      res.json(config);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل تهيئة الواتساب" });
-    }
-  });
-
-  app.post("/api/whatsapp/pair-request", async (req, res) => {
-    try {
-      const { phoneNumber } = req.body;
-      if (!phoneNumber) {
-        return res.status(400).json({ error: "رقم الهاتف مطلوب للبدء بالربط" });
-      }
-      
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      let pairingCode = "";
-      for (let i = 0; i < 8; i++) {
-        if (i === 4) pairingCode += "-";
-        pairingCode += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-
-      const config = {
-        phoneNumber,
-        status: "pairing_requested",
-        pairingCode,
-        qrCodeUrl: "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://whatsapp.com/recv?c=" + pairingCode,
-        requestedAt: new Date().toISOString()
-      };
-
-      await saveWhatsAppConfig(config);
-      res.json({ success: true, config });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل توليد طلب الاقتران" });
-    }
-  });
-
-  app.post("/api/whatsapp/verify", async (req, res) => {
-    try {
-      const { code } = req.body;
-      const config = await getWhatsAppConfig();
-      
-      if (!config || config.status !== "pairing_requested") {
-        return res.status(400).json({ error: "لا يوجد طلب ربط واتساب نشط حالياً" });
-      }
-
-      config.status = "connected";
-      config.linkedAt = new Date().toISOString();
-      
-      await saveWhatsAppConfig(config);
-      res.json({ success: true, config });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تفعيل اقتران الواتساب" });
-    }
-  });
-
-  app.post("/api/whatsapp/disconnect", async (req, res) => {
-    try {
-      const config = {
-        status: "disconnected"
-      };
-      await saveWhatsAppConfig(config);
-      res.json({ success: true, config });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل فك الارتباط" });
-    }
-  });
-
-  app.get("/api/whatsapp/messages", async (req, res) => {
-    try {
-      const logs = await getWhatsAppMessages();
-      res.json(logs);
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل تحميل سجل الرسائل" });
-    }
-  });
-
-  app.post("/api/whatsapp/save-gateway", async (req, res) => {
-    try {
-      const { instanceId, token, gatewayEnabled, provider } = req.body;
-      const config = await getWhatsAppConfig();
-      
-      const updatedConfig = {
-        ...config,
-        instanceId: instanceId || "",
-        token: token || "",
-        gatewayEnabled: !!gatewayEnabled,
-        provider: provider || "ultramsg",
-        status: gatewayEnabled ? "connected" : (config.status || "disconnected")
-      };
-
-      await saveWhatsAppConfig(updatedConfig);
-      res.json({ success: true, config: updatedConfig });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل حفظ إعدادات بوابة الإرسال الفوري" });
-    }
-  });
-
-  app.post("/api/whatsapp/send", async (req, res) => {
-    try {
-      const { recipientPhone, recipientName, messageText, messageType, employeeId } = req.body;
-      if (!recipientPhone || !messageText) {
-        return res.status(400).json({ error: "الرقم ونص الرسالة مطلوبان للإرسال" });
-      }
-
-      const config = await getWhatsAppConfig();
-      if (config.status !== "connected") {
-        return res.status(400).json({ error: "يجب ربط رقم الواتساب بالنظام أولاً لتفعيل الإرسال" });
-      }
-
-      // Check for custom gateway integration
-      const isGatewayEnabled = config.gatewayEnabled;
-      const instanceId = (config.instanceId || process.env.WHATSAPP_INSTANCE_ID || "").trim();
-      const token = (config.token || process.env.WHATSAPP_API_TOKEN || "").trim();
-
-      const isRealSending = isGatewayEnabled && instanceId && token && !token.includes("xxxx") && !instanceId.includes("instanceXXX");
-      let statusLog = "sent";
-      let errorDetail = "";
-
-      if (isRealSending) {
-        // Prepare phone number (e.g. 9665xxxxxxxx)
-        let cleanPhone = recipientPhone.replace(/[^0-9]/g, "");
-        if (cleanPhone.startsWith("05") && cleanPhone.length === 10) {
-          cleanPhone = "966" + cleanPhone.substring(1);
-        } else if (cleanPhone.startsWith("5") && cleanPhone.length === 9) {
-          cleanPhone = "966" + cleanPhone;
-        }
-
-        try {
-          const url = `https://api.ultramsg.com/${instanceId}/messages/chat`;
-          const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              token: token,
-              to: cleanPhone,
-              body: messageText
-            })
-          });
-
-          const data = await response.json().catch(() => ({}));
-          
-          if (!response.ok || (data.sent !== "true" && !data.success && !data.id)) {
-            statusLog = "failed";
-            errorDetail = data.error || `استجابة خاطئة من بوابة الإرسال (رمز ${response.status})`;
-          }
-        } catch (fetchErr: any) {
-          statusLog = "failed";
-          errorDetail = fetchErr.message || "فشل الاتصال بخادم بوابة الواتساب الخارجية";
-        }
-      }
-
-      const msgId = `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      const messageLog = {
-        id: msgId,
-        employeeId: employeeId || null,
-        employeeName: recipientName || "جهة مخصصة",
-        recipientPhone,
-        messageType: messageType || "custom",
-        messageText,
-        status: statusLog,
-        sentAt: new Date().toISOString()
-      };
-
-      await saveWhatsAppMessage(messageLog);
-
-      if (statusLog === "failed") {
-        return res.status(400).json({ error: `فشل الإرسال عبر البوابة: ${errorDetail}` });
-      }
-
-      res.json({ success: true, message: messageLog, isRealGatewayUsed: isRealSending });
-    } catch (err: any) {
-      res.status(500).json({ error: "فشل إرسال رسالة الواتساب" });
-    }
-  });
-
-
-  // Catch-all JSON 404 handler for any unhandled /api/* requests
-  // to prevent them from falling through to the Vite SPA fallback (which returns HTML and breaks client parsing)
-  app.all("/api/*", (req, res) => {
-    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
-  });
-
-  // Vite middleware for development
+async function startServer() {
+  // 1. Setup Vite Dev Server or Serve static assets
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -3237,9 +3252,132 @@ async function startServer() {
     });
   }
 
+  // 2. Start HTTP listener
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
   });
+
+  // 3. Restore server state from Firestore in background
+  (async () => {
+    try {
+      const cloudState = await loadServerStateFromFirestore();
+      if (cloudState) {
+        if (cloudState.appSettings && Object.keys(cloudState.appSettings).length > 0) {
+          appSettings = { ...appSettings, ...cloudState.appSettings };
+        }
+        if (Array.isArray(cloudState.activeStudentsList) && cloudState.activeStudentsList.length > 0) {
+          if (activeStudentsList.length === 0) {
+            activeStudentsList = cloudState.activeStudentsList;
+            saveStudentsList();
+          }
+        }
+        if (Array.isArray(cloudState.teachersList) && cloudState.teachersList.length > 0) {
+          teachersList = cloudState.teachersList;
+          saveTeachersList();
+        }
+        if (Array.isArray(cloudState.scheduleAssignments) && cloudState.scheduleAssignments.length > 0) {
+          scheduleAssignments = cloudState.scheduleAssignments;
+          saveScheduleAssignments();
+        }
+        if (cloudState.attendanceRecords && typeof cloudState.attendanceRecords === "object" && Object.keys(cloudState.attendanceRecords).length > 0) {
+          attendanceRecordsStore = { ...attendanceRecordsStore, ...cloudState.attendanceRecords };
+          saveAttendanceRecords();
+        }
+        if (Array.isArray(cloudState.inquiryRequests) && cloudState.inquiryRequests.length > 0) {
+          inquiryRequestsStore = cloudState.inquiryRequests;
+          saveInquiryRequests();
+        }
+        if (Array.isArray(cloudState.systemUsersList) && cloudState.systemUsersList.length > 0) {
+          systemUsersList = cloudState.systemUsersList;
+          saveUsersList();
+        }
+        if (cloudState.activeTemplate && activeTemplate === "السلام عليكم ورحمة الله وبركاته،\nأهلاً بك يا سيد {أبو الطالب}، نود إحاطتكم علماً بأن الطالب {اسم الطالب} قد حصل على درجة {الدرجة} في مادة الرياضيات.\nنتمنى له دوام التوفيق والنجاح.\n- إدارة المدرسة") {
+          activeTemplate = cloudState.activeTemplate;
+          saveTemplate();
+        }
+        if (cloudState.whatsappConfig) {
+          whatsappConfig = { ...whatsappConfig, ...cloudState.whatsappConfig };
+          // If not currently actively connected, reset phone number and connection status
+          if (realConnectionStatus !== "connected") {
+            whatsappConfig.simulatedStatus = "disconnected";
+            whatsappConfig.simulatedPhone = "";
+          }
+        }
+        if (cloudState.campaigns && Object.keys(campaigns).length === 0) {
+          Object.assign(campaigns, cloudState.campaigns);
+        }
+        if (Array.isArray(cloudState.individualLogs) && individualLogs.length === 0) {
+          individualLogs.push(...cloudState.individualLogs);
+        }
+        if (cloudState.healthProfiles && Object.keys(cloudState.healthProfiles).length > 0) {
+          if (Object.keys(healthProfilesStore).length === 0) {
+            healthProfilesStore = cloudState.healthProfiles;
+          }
+        }
+        if (Array.isArray(cloudState.supportCases) && cloudState.supportCases.length > 0) {
+          if (supportCasesStore.length === 0) {
+            supportCasesStore = cloudState.supportCases;
+          }
+        }
+        if (Array.isArray(cloudState.healthAuditLogs) && cloudState.healthAuditLogs.length > 0) {
+          if (healthAuditLogsStore.length === 0) {
+            healthAuditLogsStore = cloudState.healthAuditLogs;
+          }
+        }
+        if (cloudState.needsSurveyProfiles && Object.keys(cloudState.needsSurveyProfiles).length > 0) {
+          if (Object.keys(needsSurveyProfilesStore).length === 0) {
+            needsSurveyProfilesStore = cloudState.needsSurveyProfiles;
+          }
+        }
+        console.log("[Firebase] System state successfully synchronized from Firestore.");
+      }
+    } catch (e) {
+      console.warn("[Firebase] Could not restore initial server state:", e);
+    }
+
+    // 4. Restore existing registered WhatsApp sessions from disk or Firestore
+    const authFolder = path.join(process.cwd(), "auth_info_baileys");
+    const credsFile = path.join(authFolder, "creds.json");
+    
+    try {
+      if (!fs.existsSync(credsFile)) {
+        await restoreBaileysSessionFromFirestore(authFolder);
+      }
+    } catch (e) {
+      console.warn("[Firebase] Could not restore WhatsApp session from Firestore:", e);
+    }
+
+    if (fs.existsSync(credsFile)) {
+      try {
+        const credsData = JSON.parse(fs.readFileSync(credsFile, "utf-8"));
+        if (credsData && credsData.registered) {
+          console.log("Found existing registered WhatsApp Web session. Restoring connection...");
+          initRealWhatsApp("resume");
+        }
+      } catch (e) {
+        console.warn("Could not inspect creds.json", e);
+      }
+    }
+  })().catch(err => {
+    console.warn("Error during background state restoration:", err);
+  });
+
+  // 5. Background Reconnection Watchdog for Render sleep/wake cycles & network drops
+  const authFolder = path.join(process.cwd(), "auth_info_baileys");
+  setInterval(() => {
+    if (whatsappConfig.mode === "real" && (realConnectionStatus === "disconnected" || realConnectionStatus === "error")) {
+      const localCreds = path.join(authFolder, "creds.json");
+      if (fs.existsSync(localCreds)) {
+        try {
+          const creds = JSON.parse(fs.readFileSync(localCreds, "utf-8"));
+          if (creds?.registered) {
+            console.log("[Watchdog] Auto-reconnecting registered WhatsApp session...");
+            initRealWhatsApp("resume");
+          }
+        } catch (e) {}
+      }
+    }
+  }, 45000);
 }
 
 startServer();
