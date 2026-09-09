@@ -3807,7 +3807,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         const pinvIdx = parsedInvoices.findIndex(p => p.tempId === auditInvoiceId);
 
         return (
-          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305 visual-inspection-modal" dir="rtl">
             <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
               
               {/* Modal Header */}
@@ -3955,7 +3955,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           }}
                           registeredCompanies={registeredCompanies}
                           onRegisterCompany={(name) => handleAddSupplier(name)}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-white !text-white"
                         />
                       </div>
 
@@ -3970,7 +3970,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].invoice_date = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white [color-scheme:dark]"
                         />
                       </div>
 
@@ -3985,7 +3985,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].invoice_no = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white"
                           placeholder="Inv-XXXXXXXX"
                         />
                       </div>
@@ -4002,7 +4002,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].amount = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                          className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-white !text-white rounded-md focus:outline-none focus:border-indigo-500 font-black"
                         />
                       </div>
                     </div>
@@ -4104,7 +4104,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-extrabold placeholder-slate-400 focus:outline-none focus:border-indigo-500"
                                 />
                               </div>
 
@@ -4122,7 +4122,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-white !text-white font-semibold focus:outline-none placeholder-pink-300/60"
                                 />
                               </div>
 
@@ -4140,7 +4140,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-center focus:outline-none"
                                 />
                               </div>
 
@@ -4159,7 +4159,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-left font-black focus:outline-none placeholder-slate-400"
                                 />
                               </div>
 
@@ -4244,7 +4244,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       {/* Immersive Visual Inspection & Preview Modal for Manager (Same system as Manager Audit Modal) */}
       {previewInvoice && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
+        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305 visual-inspection-modal" dir="rtl">
           <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             
             {/* Modal Header */}
@@ -4409,7 +4409,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         }}
                         registeredCompanies={registeredCompanies}
                         onRegisterCompany={(name) => handleAddSupplier(name)}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-white !text-white"
                       />
                     </div>
 
@@ -4422,7 +4422,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         onChange={(e) => {
                           setPreviewInvoice({ ...previewInvoice, invoice_date: e.target.value });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white [color-scheme:dark]"
                       />
                     </div>
 
@@ -4435,7 +4435,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         onChange={(e) => {
                           setPreviewInvoice({ ...previewInvoice, invoice_no: e.target.value });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white"
                         placeholder="Inv-XXXXXXXX"
                       />
                     </div>
@@ -4456,7 +4456,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             amount: isNaN(parsed) ? 0 : parsed
                           });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                        className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-white !text-white rounded-md focus:outline-none focus:border-indigo-500 font-black"
                       />
                     </div>
                   </div>
@@ -4551,7 +4551,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], name: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-extrabold placeholder-slate-400 focus:outline-none focus:border-indigo-500"
                               />
                             </div>
 
@@ -4567,7 +4567,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], category: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
+                                className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-white !text-white font-semibold focus:outline-none placeholder-pink-300/60"
                               />
                             </div>
 
@@ -4583,7 +4583,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], qty: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-center focus:outline-none"
                               />
                             </div>
 
@@ -4600,7 +4600,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], price_with_tax: val === "" ? 0 : parseFloat(val) };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-left font-black focus:outline-none placeholder-slate-400"
                               />
                             </div>
 
