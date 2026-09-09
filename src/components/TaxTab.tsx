@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { TaxInvoice, TaxInvoiceItem } from "../types";
 import ReorderTimerBanner from "./ReorderTimerBanner";
 import { AiExtractionProgressBar } from "./AiExtractionProgressBar";
+import { InvoiceCameraModal } from "./InvoiceCameraModal";
 import { 
   Receipt, 
   Calendar, 
@@ -351,12 +352,31 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [editDate, setEditDate] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<TaxInvoice | null>(null);
   const [previewAmountStr, setPreviewAmountStr] = useState<string>("");
+  const [loadingPreviewImage, setLoadingPreviewImage] = useState(false);
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
 
   useEffect(() => {
     if (previewInvoice) {
       setPreviewAmountStr(String(previewInvoice.amount));
+      if (previewInvoice.id && !previewInvoice.rawImage) {
+        setLoadingPreviewImage(true);
+        fetch(`/api/tax-invoices/${encodeURIComponent(previewInvoice.id)}/image`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data && data.rawImage) {
+              setPreviewInvoice((prev) =>
+                prev && prev.id === data.id
+                  ? { ...prev, rawImage: data.rawImage, fileType: data.fileType || prev.fileType }
+                  : prev
+              );
+            }
+          })
+          .catch((err) => console.error("Error loading invoice image:", err))
+          .finally(() => setLoadingPreviewImage(false));
+      }
     } else {
       setPreviewAmountStr("");
+      setLoadingPreviewImage(false);
     }
   }, [previewInvoice?.id]);
   const [previewImgZoom, setPreviewImgZoom] = useState(1);
@@ -1001,10 +1021,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       onShowToast("⚠️ يرجى تحديد نطاق التاريخ المطلوب");
       return;
     }
-    const isFirstTime = !hasInitiallyLoaded;
-    if (isFirstTime) {
-      setLoading(true);
-    }
+    setLoading(true);
     try {
       const promises: Promise<any>[] = [
         loadCompanies(),
@@ -1016,8 +1033,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       }
 
       const url = userRole === "مدخل فواتير"
-        ? "/api/tax-invoices"
-        : `/api/tax-invoices?from=${from}&to=${to}`;
+        ? "/api/tax-invoices?includeImages=false"
+        : `/api/tax-invoices?from=${from}&to=${to}&includeImages=false`;
 
       promises.push(
         fetch(url)
@@ -1037,8 +1054,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 const rep = await resReport.json();
                 cachedReportRawData = rep;
                 setReportRawData(rep);
-                const qPos = rep.qStats.pos || 0;
-                const mPos = rep.mStats.pos || 0;
+                const qPos = rep.qStats?.pos || 0;
+                const mPos = rep.mStats?.pos || 0;
                 const newStats = {
                   qPos,
                   mPos,
@@ -1054,6 +1071,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       await Promise.all(promises);
       hasInitiallyLoaded = true;
+      onShowToast("⚡ تم استعراض الفواتير الضريبية وتحديث الحسابات فوراً!");
     } catch (err) {
       console.error(err);
       onShowToast("❌ فشل تحميل بيانات التقرير الضريبي");
@@ -1765,23 +1783,42 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               
               <button
                 type="button"
-                onClick={() => document.getElementById("ai-camera-input")?.click()}
+                onClick={() => {
+                  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    setIsCameraModalOpen(true);
+                  } else {
+                    document.getElementById("ai-camera-input")?.click();
+                  }
+                }}
                 className="px-5 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-200"
               >
-                <Camera className="w-4 h-4" /> تصوير الفاتورة بالجوال
+                <Camera className="w-4 h-4" /> تصوير الفاتورة بالكاميرا
               </button>
             </div>
           </div>
 
-          {/* AI Loader Overlay with 5-Second Real Countdown */}
+          {/* AI Loader Overlay with 3-Second Ultra-Fast Progress */}
           {ocrLoading && (
             <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 rounded-2xl z-20">
               <div className="w-full max-w-md">
-                <AiExtractionProgressBar isExtracting={ocrLoading} estimatedSeconds={5} />
+                <AiExtractionProgressBar isExtracting={ocrLoading} estimatedSeconds={3} />
               </div>
             </div>
           )}
         </div>
+
+        {/* Live Camera Viewfinder Modal */}
+        <InvoiceCameraModal
+          isOpen={isCameraModalOpen}
+          onClose={() => setIsCameraModalOpen(false)}
+          onCapture={(file) => {
+            setIsCameraModalOpen(false);
+            processFiles([file]);
+          }}
+          onFallback={() => {
+            document.getElementById("ai-camera-input")?.click();
+          }}
+        />
 
         {/* Global Floating/Top Progress Bar when scanning */}
         {ocrLoading && (
@@ -4304,9 +4341,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     setPreviewImgZoom(prev => Math.max(0.4, Math.min(prev + delta, 4.5)));
                   }}
                 >
-                  {!previewInvoice.rawImage ? (
+                  {loadingPreviewImage ? (
+                    <div className="text-indigo-400 text-xs font-bold flex flex-col items-center gap-2">
+                      <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                      <span>جاري تحميل صورة الفاتورة المرفقة...</span>
+                    </div>
+                  ) : !previewInvoice.rawImage ? (
                     <div className="text-slate-500 text-xs font-bold flex flex-col items-center gap-2">
-                      <FileText className="w-8 h-8 text-slate-600 animate-bounce" />
+                      <FileText className="w-8 h-8 text-slate-600" />
                       <span>لم يتم إرفاق ملف ممسوح بصریاً من مدخل الفاتورة</span>
                     </div>
                   ) : previewInvoice.fileType === "application/pdf" ? (

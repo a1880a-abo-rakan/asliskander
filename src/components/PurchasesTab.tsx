@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Purchase } from "../types";
 import {
   ResponsiveContainer,
@@ -25,7 +25,11 @@ import {
   Clock, 
   TrendingUp, 
   Building2,
-  Pencil
+  Pencil,
+  ChevronRight,
+  ChevronLeft,
+  ChevronsRight,
+  ChevronsLeft
 } from "lucide-react";
 
 interface PurchasesTabProps {
@@ -107,9 +111,15 @@ function getItemUnitPrice(p: Purchase): number {
   return p.price;
 }
 
+let cachedPurchases: Purchase[] = [];
+
 export default function PurchasesTab({ onShowToast, userRole, userBranch }: PurchasesTabProps) {
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [purchases, setPurchases] = useState<Purchase[]>(() => cachedPurchases);
+  const [loading, setLoading] = useState(() => cachedPurchases.length === 0);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Filters state
   const [selectedBranch, setSelectedBranch] = useState<"الكل" | "القادسية" | "المروج">(() => {
@@ -139,6 +149,10 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
     sessionStorage.setItem("app_purchases_to_date", toDate);
   }, [toDate]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedBranch, statusFilter, sourceFilter, searchQuery, fromDate, toDate]);
+
   // Form states
   const [showAddForm, setShowAddForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -164,11 +178,12 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
   }, [userBranch]);
 
   const fetchPurchases = async () => {
-    setLoading(true);
+    if (cachedPurchases.length === 0) setLoading(true);
     try {
       const res = await fetch("/api/purchases");
       if (res.ok) {
         const data = await res.json();
+        cachedPurchases = data;
         setPurchases(data);
       } else {
         onShowToast("⚠️ فشل جلب سجلات المشتريات");
@@ -428,21 +443,23 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
     }
   };
 
-  // Filtered logic
-  const filteredPurchases = purchases.filter((p) => {
-    if (selectedBranch !== "الكل" && p.branch !== selectedBranch) return false;
-    if (statusFilter !== "الكل" && p.status !== statusFilter) return false;
-    if (sourceFilter !== "الكل" && p.source !== sourceFilter) return false;
-    if (fromDate && p.date < fromDate) return false;
-    if (toDate && p.date > toDate) return false;
-    if (searchQuery.trim() !== "") {
-      const q = normalizeArabicString(searchQuery);
-      const nameMatch = normalizeArabicString(p.name).includes(q);
-      const invoiceMatch = p.invoiceId?.toLowerCase().includes(searchQuery.toLowerCase()) || false;
-      return nameMatch || invoiceMatch;
-    }
-    return true;
-  });
+  // Filtered logic memoized
+  const filteredPurchases = useMemo(() => {
+    const q = searchQuery.trim() !== "" ? normalizeArabicString(searchQuery) : "";
+    return purchases.filter((p) => {
+      if (selectedBranch !== "الكل" && p.branch !== selectedBranch) return false;
+      if (statusFilter !== "الكل" && p.status !== statusFilter) return false;
+      if (sourceFilter !== "الكل" && p.source !== sourceFilter) return false;
+      if (fromDate && p.date < fromDate) return false;
+      if (toDate && p.date > toDate) return false;
+      if (q !== "") {
+        const nameMatch = normalizeArabicString(p.name).includes(q);
+        const invoiceMatch = p.invoiceId?.toLowerCase().includes(searchQuery.toLowerCase()) || false;
+        return nameMatch || invoiceMatch;
+      }
+      return true;
+    });
+  }, [purchases, selectedBranch, statusFilter, sourceFilter, fromDate, toDate, searchQuery]);
 
   // Calculate statistics metrics
   const totalCost = filteredPurchases.reduce((sum, p) => sum + (p.price || 0), 0);
@@ -454,72 +471,23 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
   const totalCount = filteredPurchases.length;
 
   // Smart analysis calculations for average lifespan
-  const calculatedLifespans = filteredPurchases
-    .filter((p) => p.status === "depleted" && p.depletedDate && p.depletedDate >= p.date)
-    .map((p) => {
-      const start = new Date(p.date).getTime();
-      const end = new Date(p.depletedDate!).getTime();
-      return Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-    });
+  const calculatedLifespans = useMemo(() => {
+    return filteredPurchases
+      .filter((p) => p.status === "depleted" && p.depletedDate && p.depletedDate >= p.date)
+      .map((p) => {
+        const start = new Date(p.date).getTime() || 0;
+        const end = new Date(p.depletedDate!).getTime() || 0;
+        return Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+      });
+  }, [filteredPurchases]);
 
   const avgLifespan = calculatedLifespans.length > 0 
     ? (calculatedLifespans.reduce((sum, val) => sum + val, 0) / calculatedLifespans.length).toFixed(1) 
     : "غير متوفر";
 
-  // Group items by name (consolidated) and calculate average lifespans of previous batches
-  const lifespanByItemName: Record<string, { totalDays: number; count: number; displayName: string; branch: 'القادسية' | 'المروج' | 'الكل' }> = {};
-  
-  // To do this accurately, let's group all purchases by their consolidated name and branch
-  const groupedPurchases: Record<string, Purchase[]> = {};
-  purchases.forEach((p) => {
-    const key = `${normalizeArabicString(getConsolidatedProductName(p.name))}-${p.branch}`;
-    if (!groupedPurchases[key]) {
-      groupedPurchases[key] = [];
-    }
-    groupedPurchases[key].push(p);
-  });
-
-  // For each group, sort by date ascending and calculate lifespan of each item (except the last one in group, which is currently active)
-  Object.entries(groupedPurchases).forEach(([groupKey, list]) => {
-    if (list.length === 0) return;
-    const sorted = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const normName = normalizeArabicString(getConsolidatedProductName(sorted[0].name));
-    const displayName = getConsolidatedProductName(sorted[0].name);
-    const branch = sorted[0].branch as 'القادسية' | 'المروج' | 'الكل';
-
-    // Filter by branch choice in the UI
-    if (selectedBranch !== "الكل" && branch !== selectedBranch) return;
-
-    const mapKey = `${normName}_${branch}`;
-
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const curr = sorted[i];
-      const next = sorted[i + 1];
-      const start = new Date(curr.date).getTime();
-      const end = new Date(next.date).getTime();
-      if (start && end && end >= start) {
-        const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-        if (!lifespanByItemName[mapKey]) {
-          lifespanByItemName[mapKey] = { totalDays: 0, count: 0, displayName, branch };
-        }
-        lifespanByItemName[mapKey].totalDays += diffDays;
-        lifespanByItemName[mapKey].count += 1;
-      }
-    }
-  });
-
-  const itemAverages = Object.entries(lifespanByItemName)
-    .map(([key, stats]) => ({
-      name: stats.displayName,
-      branch: stats.branch,
-      avg: (stats.totalDays / stats.count).toFixed(1),
-      count: stats.count,
-    }))
-    .sort((a, b) => b.count - a.count);
-
   const getDaysSince = (dateStr: string) => {
     try {
-      const start = new Date(dateStr).getTime();
+      const start = new Date(dateStr).getTime() || 0;
       const today = new Date().getTime();
       const diffTime = today - start;
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
@@ -529,163 +497,316 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
     }
   };
 
-  const getAnalysis = (item: Purchase) => {
-    const normName = normalizeArabicString(getConsolidatedProductName(item.name));
-    const branch = item.branch;
+  // High-performance single-pass analysis index Map: O(N log M) instead of O(N^2 log N)
+  const analysisMap = useMemo(() => {
+    const map = new Map<string, {
+      priceTrend: "up" | "down" | "stable" | "none";
+      priceDiff: number;
+      pricePct: number;
+      qtyTrend: "up" | "down" | "stable" | "none";
+      qtyDiff: number;
+      qtyPct: number;
+      durationTrend: "longer" | "shorter" | "typical" | "none";
+      durationDiff: number;
+      durationPct: number;
+      itemAvgLifespan: number;
+      currentDuration: number;
+      prevPrice: number;
+      prevQty: string;
+      depletionDate?: string;
+      identicalCount: number;
+    }>();
 
-    // Get all purchases of this consolidated name in this branch, sorted by date ascending with safe timestamp logic
-    const historyList = purchases
-      .filter((p) => normalizeArabicString(getConsolidatedProductName(p.name)) === normName && p.branch === branch)
-      .sort((a, b) => {
-        const dA = new Date(a.date).getTime() || 0;
-        const dB = new Date(b.date).getTime() || 0;
-        return dA - dB;
-      });
+    // Group purchases by normalized product name and branch
+    const groups = new Map<string, Purchase[]>();
+    for (let i = 0; i < purchases.length; i++) {
+      const p = purchases[i];
+      const normName = normalizeArabicString(getConsolidatedProductName(p.name));
+      const key = `${normName}_${p.branch}`;
+      let list = groups.get(key);
+      if (!list) {
+        list = [];
+        groups.set(key, list);
+      }
+      list.push(p);
+    }
 
-    // Find the position index of this specific item
-    const index = historyList.findIndex((p) => p.id === item.id);
+    const todayTime = new Date().getTime();
 
-    // Price Trend
-    let priceTrend: "up" | "down" | "stable" | "none" = "none";
-    let priceDiff = 0;
-    let pricePct = 0;
-    let prevPrice = 0;
-    const currentUnitPrice = getItemUnitPrice(item);
+    // Process each group once
+    for (const [_, list] of groups) {
+      list.sort((a, b) => a.date.localeCompare(b.date));
 
-    if (index > 0) {
-      const prevItem = historyList[index - 1];
-      prevPrice = getItemUnitPrice(prevItem);
-      if (prevPrice > 0) {
-        priceDiff = currentUnitPrice - prevPrice;
-        pricePct = (priceDiff / prevPrice) * 100;
-        if (priceDiff > 0.05) {
-          priceTrend = "up";
-        } else if (priceDiff < -0.05) {
-          priceTrend = "down";
-        } else {
-          priceTrend = "stable";
+      let totalBatchDays = 0;
+      let batchCount = 0;
+      for (let i = 0; i < list.length - 1; i++) {
+        const curr = list[i];
+        const next = list[i + 1];
+        const start = new Date(curr.date).getTime() || 0;
+        const end = new Date(next.date).getTime() || 0;
+        if (start && end && end >= start) {
+          totalBatchDays += Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+          batchCount++;
         }
       }
-    }
+      const itemAvgLifespan = batchCount > 0 ? totalBatchDays / batchCount : 0;
 
-    // Quantity Trend
-    let qtyTrend: "up" | "down" | "stable" | "none" = "none";
-    let qtyDiff = 0;
-    let qtyPct = 0;
-    let prevQty = "0";
+      for (let index = 0; index < list.length; index++) {
+        const item = list[index];
+        const currentUnitPrice = getItemUnitPrice(item);
 
-    if (index > 0) {
-      const prevItem = historyList[index - 1];
-      prevQty = String(prevItem.qty || "");
-      const nPrev = parseQtyVal(prevItem.qty);
-      const nCurr = parseQtyVal(item.qty);
-      if (nPrev > 0) {
-        qtyDiff = nCurr - nPrev;
-        qtyPct = (qtyDiff / nPrev) * 100;
-        if (qtyDiff > 0.05) {
-          qtyTrend = "up";
-        } else if (qtyDiff < -0.05) {
-          qtyTrend = "down";
-        } else {
-          qtyTrend = "stable";
+        // Price Trend
+        let priceTrend: "up" | "down" | "stable" | "none" = "none";
+        let priceDiff = 0;
+        let pricePct = 0;
+        let prevPrice = 0;
+
+        if (index > 0) {
+          const prevItem = list[index - 1];
+          prevPrice = getItemUnitPrice(prevItem);
+          if (prevPrice > 0) {
+            priceDiff = currentUnitPrice - prevPrice;
+            pricePct = (priceDiff / prevPrice) * 100;
+            if (priceDiff > 0.05) {
+              priceTrend = "up";
+            } else if (priceDiff < -0.05) {
+              priceTrend = "down";
+            } else {
+              priceTrend = "stable";
+            }
+          }
         }
-      }
-    }
 
-    // Determine current duration based on Next Order Date if it exists
-    let currentDuration = 0;
-    let depletionDate: string | undefined = undefined;
+        // Quantity Trend
+        let qtyTrend: "up" | "down" | "stable" | "none" = "none";
+        let qtyDiff = 0;
+        let qtyPct = 0;
+        let prevQty = "0";
 
-    if (index < historyList.length - 1) {
-      const nextItem = historyList[index + 1];
-      depletionDate = nextItem.date;
-      const start = new Date(item.date).getTime();
-      const end = new Date(nextItem.date).getTime();
-      currentDuration = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-    } else {
-      currentDuration = getDaysSince(item.date);
-    }
-
-    // Calculate item average lifespan specifically for this consolidated item in this branch
-    let itemAvgLifespan = 0;
-    let totalBatchDays = 0;
-    let batchCount = 0;
-    for (let i = 0; i < historyList.length - 1; i++) {
-      const curr = historyList[i];
-      const next = historyList[i + 1];
-      const start = new Date(curr.date).getTime();
-      const end = new Date(next.date).getTime();
-      if (start && end && end >= start) {
-        totalBatchDays += Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-        batchCount++;
-      }
-    }
-    if (batchCount > 0) {
-      itemAvgLifespan = totalBatchDays / batchCount;
-    }
-
-    // Duration Trend (longer/shorter than average of this item name)
-    let durationTrend: "longer" | "shorter" | "typical" | "none" = "none";
-    let durationDiff = 0;
-    let durationPct = 0;
-
-    if (itemAvgLifespan > 0) {
-      durationDiff = currentDuration - itemAvgLifespan;
-      durationPct = (durationDiff / itemAvgLifespan) * 100;
-
-      // require at least 1 day difference and 10% difference
-      if (Math.abs(durationDiff) >= 1 && Math.abs(durationPct) >= 10) {
-        if (durationDiff > 0) {
-          durationTrend = "longer";
-        } else {
-          durationTrend = "shorter";
+        if (index > 0) {
+          const prevItem = list[index - 1];
+          prevQty = String(prevItem.qty || "");
+          const nPrev = parseQtyVal(prevItem.qty);
+          const nCurr = parseQtyVal(item.qty);
+          if (nPrev > 0) {
+            qtyDiff = nCurr - nPrev;
+            qtyPct = (qtyDiff / nPrev) * 100;
+            if (qtyDiff > 0.05) {
+              qtyTrend = "up";
+            } else if (qtyDiff < -0.05) {
+              qtyTrend = "down";
+            } else {
+              qtyTrend = "stable";
+            }
+          }
         }
-      } else {
-        durationTrend = "typical";
+
+        // Current duration & depletionDate
+        let currentDuration = 0;
+        let depletionDate: string | undefined = undefined;
+
+        if (index < list.length - 1) {
+          const nextItem = list[index + 1];
+          depletionDate = nextItem.date;
+          const start = new Date(item.date).getTime() || 0;
+          const end = new Date(nextItem.date).getTime() || 0;
+          currentDuration = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+        } else {
+          const start = new Date(item.date).getTime() || 0;
+          currentDuration = Math.max(0, Math.floor((todayTime - start) / (1000 * 60 * 60 * 24)));
+        }
+
+        // Duration Trend
+        let durationTrend: "longer" | "shorter" | "typical" | "none" = "none";
+        let durationDiff = 0;
+        let durationPct = 0;
+
+        if (itemAvgLifespan > 0) {
+          durationDiff = currentDuration - itemAvgLifespan;
+          durationPct = (durationDiff / itemAvgLifespan) * 100;
+          if (Math.abs(durationDiff) >= 1 && Math.abs(durationPct) >= 10) {
+            durationTrend = durationDiff > 0 ? "longer" : "shorter";
+          } else {
+            durationTrend = "typical";
+          }
+        }
+
+        map.set(item.id, {
+          priceTrend,
+          priceDiff,
+          pricePct,
+          qtyTrend,
+          qtyDiff,
+          qtyPct,
+          durationTrend,
+          durationDiff,
+          durationPct,
+          itemAvgLifespan,
+          currentDuration,
+          prevPrice,
+          prevQty,
+          depletionDate,
+          identicalCount: list.length
+        });
       }
     }
 
-    return {
-      priceTrend,
-      priceDiff,
-      pricePct,
-      qtyTrend,
-      qtyDiff,
-      qtyPct,
-      durationTrend,
-      durationDiff,
-      durationPct,
-      itemAvgLifespan,
-      currentDuration,
-      prevPrice,
-      prevQty,
-      depletionDate,
-      identicalCount: historyList.length
-    };
+    return map;
+  }, [purchases]);
+
+  const defaultAnalysis = {
+    priceTrend: "none" as const,
+    priceDiff: 0,
+    pricePct: 0,
+    qtyTrend: "none" as const,
+    qtyDiff: 0,
+    qtyPct: 0,
+    durationTrend: "none" as const,
+    durationDiff: 0,
+    durationPct: 0,
+    itemAvgLifespan: 0,
+    currentDuration: 0,
+    prevPrice: 0,
+    prevQty: "0",
+    identicalCount: 0
   };
 
-  // Compile active alerts
-  const activeAlerts = purchases
-    .filter((p) => {
-      // Find matches in user's branch filter
-      if (selectedBranch !== "الكل" && p.branch !== selectedBranch) return false;
-      const daysOld = getDaysSince(p.date);
-      // Alerts for active items or items in the last 60 days
-      return p.status === "active" || daysOld <= 60;
-    })
-    .map((p) => {
-      const analysis = getAnalysis(p);
-      return { item: p, ...analysis };
-    })
-    .filter(
-      (a) =>
-        a.priceTrend === "up" ||
-        a.priceTrend === "down" ||
-        a.durationTrend === "longer" ||
-        a.durationTrend === "shorter"
-    )
-    .sort((a, b) => b.item.date.localeCompare(a.item.date))
-    .slice(0, 6);
+  const getAnalysis = (item: Purchase) => {
+    return analysisMap.get(item.id) || defaultAnalysis;
+  };
+
+  // Group items by name (consolidated) and calculate average lifespans of previous batches
+  const itemAverages = useMemo(() => {
+    const lifespanByItemName: Record<string, { totalDays: number; count: number; displayName: string; branch: 'القادسية' | 'المروج' | 'الكل' }> = {};
+    const groupedPurchases: Record<string, Purchase[]> = {};
+    
+    purchases.forEach((p) => {
+      const key = `${normalizeArabicString(getConsolidatedProductName(p.name))}-${p.branch}`;
+      if (!groupedPurchases[key]) {
+        groupedPurchases[key] = [];
+      }
+      groupedPurchases[key].push(p);
+    });
+
+    Object.entries(groupedPurchases).forEach(([groupKey, list]) => {
+      if (list.length === 0) return;
+      const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+      const normName = normalizeArabicString(getConsolidatedProductName(sorted[0].name));
+      const displayName = getConsolidatedProductName(sorted[0].name);
+      const branch = sorted[0].branch as 'القادسية' | 'المروج' | 'الكل';
+
+      if (selectedBranch !== "الكل" && branch !== selectedBranch) return;
+
+      const mapKey = `${normName}_${branch}`;
+
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const curr = sorted[i];
+        const next = sorted[i + 1];
+        const start = new Date(curr.date).getTime() || 0;
+        const end = new Date(next.date).getTime() || 0;
+        if (start && end && end >= start) {
+          const diffDays = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+          if (!lifespanByItemName[mapKey]) {
+            lifespanByItemName[mapKey] = { totalDays: 0, count: 0, displayName, branch };
+          }
+          lifespanByItemName[mapKey].totalDays += diffDays;
+          lifespanByItemName[mapKey].count += 1;
+        }
+      }
+    });
+
+    return Object.entries(lifespanByItemName)
+      .map(([key, stats]) => ({
+        name: stats.displayName,
+        branch: stats.branch,
+        avg: (stats.totalDays / stats.count).toFixed(1),
+        count: stats.count,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [purchases, selectedBranch]);
+
+  // Compile active alerts with fast memoized search
+  const activeAlerts = useMemo(() => {
+    return purchases
+      .filter((p) => {
+        if (selectedBranch !== "الكل" && p.branch !== selectedBranch) return false;
+        const daysOld = getDaysSince(p.date);
+        return p.status === "active" || daysOld <= 60;
+      })
+      .map((p) => {
+        const analysis = getAnalysis(p);
+        return { item: p, ...analysis };
+      })
+      .filter(
+        (a) =>
+          a.priceTrend === "up" ||
+          a.priceTrend === "down" ||
+          a.durationTrend === "longer" ||
+          a.durationTrend === "shorter"
+      )
+      .sort((a, b) => b.item.date.localeCompare(a.item.date))
+      .slice(0, 6);
+  }, [purchases, selectedBranch, analysisMap]);
+
+  // Memoize unique products for chart selection
+  const uniqueProductNames = useMemo(() => {
+    const uniqueProductsMap = new Map<string, string>();
+    const defaultProducts = ["ديزل", "خبز", "خضار", "غاز", "بقالة"];
+    defaultProducts.forEach((p) => {
+      uniqueProductsMap.set(normalizeArabicString(p), p);
+    });
+    for (let i = 0; i < purchases.length; i++) {
+      const p = purchases[i];
+      const consolidated = getConsolidatedProductName(p.name);
+      if (!consolidated) continue;
+      const norm = normalizeArabicString(consolidated);
+      if (!uniqueProductsMap.has(norm)) {
+        uniqueProductsMap.set(norm, consolidated);
+      }
+    }
+    return Array.from(uniqueProductsMap.values()).filter(Boolean);
+  }, [purchases]);
+
+  // Memoize chart data to avoid running heavy array maps on every re-render
+  const chartData = useMemo(() => {
+    const normSelected = normalizeArabicString(selectedChartProduct);
+    return purchases
+      .filter((p) => {
+        const matchName = normalizeArabicString(getConsolidatedProductName(p.name)) === normSelected;
+        const matchBranch = selectedBranch === "الكل" || p.branch === selectedBranch;
+        return matchName && matchBranch;
+      })
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((p) => {
+        const qtyNum = parseQtyVal(p.qty);
+        const unitPrice = getItemUnitPrice(p);
+        const analysis = getAnalysis(p);
+        return {
+          date: p.date,
+          price: unitPrice,
+          price_qadsia: p.branch === "القادسية" ? unitPrice : undefined,
+          price_murooj: p.branch === "المروج" ? unitPrice : undefined,
+          qty: qtyNum,
+          qty_qadsia: p.branch === "القادسية" ? qtyNum : undefined,
+          qty_murooj: p.branch === "المروج" ? qtyNum : undefined,
+          lifespan: analysis.currentDuration,
+          lifespan_qadsia: p.branch === "القادسية" ? analysis.currentDuration : undefined,
+          lifespan_murooj: p.branch === "المروج" ? analysis.currentDuration : undefined,
+          qtyRaw: p.qty,
+          depletionDate: analysis.depletionDate,
+          name: p.name,
+          branch: p.branch,
+          isDepleted: p.status === "depleted"
+        };
+      });
+  }, [purchases, selectedChartProduct, selectedBranch, analysisMap]);
+
+  // Pagination calculation
+  const totalPages = Math.max(1, Math.ceil(filteredPurchases.length / pageSize));
+  const paginatedPurchases = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredPurchases.slice(start, start + pageSize);
+  }, [filteredPurchases, currentPage, pageSize]);
 
   return (
     <div className="space-y-6 text-right" dir="rtl">
@@ -1029,84 +1150,24 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
             </div>
 
             {/* Product Selector */}
-            {(() => {
-              const uniqueProductsMap = new Map<string, string>();
-              
-              // Prepopulate basic products so they map to their neat Arabic names
-              const defaultProducts = ["ديزل", "خبز", "خضار", "غاز", "بقالة"];
-              defaultProducts.forEach(p => {
-                uniqueProductsMap.set(normalizeArabicString(p), p);
-              });
-              
-              // Map all products to their unique consolidated and normalized names
-              purchases.forEach(p => {
-                const consolidated = getConsolidatedProductName(p.name);
-                if (!consolidated) return;
-                const norm = normalizeArabicString(consolidated);
-                if (!uniqueProductsMap.has(norm)) {
-                  uniqueProductsMap.set(norm, consolidated);
-                }
-              });
-
-              const uniqueProductNames = Array.from(uniqueProductsMap.values()).filter(Boolean);
-
-              return (
-                <select
-                  value={selectedChartProduct}
-                  onChange={(e) => setSelectedChartProduct(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 font-extrabold text-indigo-700 cursor-pointer"
-                >
-                  {uniqueProductNames.map((prodOpt, prodIdx) => (
-                    <option key={prodIdx} value={prodOpt}>{prodOpt}</option>
-                  ))}
-                </select>
-              );
-            })()}
+            <select
+              value={selectedChartProduct}
+              onChange={(e) => setSelectedChartProduct(e.target.value)}
+              className="px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 font-extrabold text-indigo-700 cursor-pointer"
+            >
+              {uniqueProductNames.map((prodOpt, prodIdx) => (
+                <option key={prodIdx} value={prodOpt}>{prodOpt}</option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {(() => {
-          const chartData = purchases
-            .filter(p => {
-              const matchName = normalizeArabicString(getConsolidatedProductName(p.name)) === normalizeArabicString(selectedChartProduct);
-              const matchBranch = selectedBranch === "الكل" || p.branch === selectedBranch;
-              return matchName && matchBranch;
-            })
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-            .map(p => {
-              const qtyNum = parseQtyVal(p.qty);
-              const unitPrice = getItemUnitPrice(p);
-              const analysis = getAnalysis(p);
-              return {
-                date: p.date,
-                price: unitPrice,
-                price_qadsia: p.branch === "القادسية" ? unitPrice : undefined,
-                price_murooj: p.branch === "المروج" ? unitPrice : undefined,
-                qty: qtyNum,
-                qty_qadsia: p.branch === "القادسية" ? qtyNum : undefined,
-                qty_murooj: p.branch === "المروج" ? qtyNum : undefined,
-                lifespan: analysis.currentDuration,
-                lifespan_qadsia: p.branch === "القادسية" ? analysis.currentDuration : undefined,
-                lifespan_murooj: p.branch === "المروج" ? analysis.currentDuration : undefined,
-                qtyRaw: p.qty,
-                depletionDate: analysis.depletionDate,
-                name: p.name,
-                branch: p.branch,
-                isDepleted: p.status === "depleted"
-              };
-            });
-
-          if (chartData.length === 0) {
-            return (
-              <div className="h-60 flex items-center justify-center text-xs font-medium text-slate-400 font-sans" dir="rtl">
-                لا توجد بيانات متوفرة لهذا المنتج في الفرع المحدد حالياً.
-              </div>
-            );
-          }
-
-          if (chartMode === "price") {
-            return (
-              <div className="h-72 w-full pr-4 text-xs font-bold pointer-events-auto">
+        {chartData.length === 0 ? (
+          <div className="h-60 flex items-center justify-center text-xs font-medium text-slate-400 font-sans" dir="rtl">
+            لا توجد بيانات متوفرة لهذا المنتج في الفرع المحدد حالياً.
+          </div>
+        ) : chartMode === "price" ? (
+          <div className="h-72 w-full pr-4 text-xs font-bold pointer-events-auto">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={chartData}
@@ -1194,9 +1255,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-            );
-          } else {
-            return (
+            ) : (
               <div className="h-72 w-full pr-4 text-xs font-bold pointer-events-auto">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
@@ -1338,9 +1397,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-            );
-          }
-        })()}
+            )}
       </div>
 
       {/* Main Filter Control Bar */}
@@ -1508,7 +1565,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredPurchases.map((item) => {
+                {paginatedPurchases.map((item) => {
                   const analysis = getAnalysis(item);
                   const isSelected = selectedIds.includes(item.id);
                   return (
@@ -1691,6 +1748,85 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Pagination Controls */}
+        {!loading && filteredPurchases.length > 0 && (
+          <div className="p-4 border-t border-slate-100 bg-slate-50/70 flex flex-col md:flex-row items-center justify-between gap-4 text-xs font-bold text-slate-600 rounded-b-2xl">
+            <div className="flex items-center gap-2">
+              <span>
+                عرض السجلات <strong className="text-slate-900 font-mono">{(currentPage - 1) * pageSize + 1}</strong> إلى{" "}
+                <strong className="text-slate-900 font-mono">
+                  {Math.min(filteredPurchases.length, currentPage * pageSize)}
+                </strong>{" "}
+                من إجمالي <strong className="text-indigo-600 font-mono">{filteredPurchases.length.toLocaleString("en-US")}</strong> سجل
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5" dir="rtl">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="الصفحة الأولى"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center gap-1 px-3 text-xs"
+                title="السابق"
+              >
+                <ChevronRight className="w-4 h-4" />
+                <span>السابق</span>
+              </button>
+
+              <span className="px-3 py-1 font-mono text-xs text-slate-800 bg-white border border-slate-200 rounded-xl shadow-2xs">
+                صفحة {currentPage} من {totalPages}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="p-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors flex items-center gap-1 px-3 text-xs"
+                title="التالي"
+              >
+                <span>التالي</span>
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage >= totalPages}
+                className="p-1.5 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="الصفحة الأخيرة"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="pageSizeSelect" className="text-slate-500 text-[11px]">عدد السطور:</label>
+              <select
+                id="pageSizeSelect"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-2.5 py-1 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-600 cursor-pointer font-mono"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+              </select>
+            </div>
           </div>
         )}
       </div>

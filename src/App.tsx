@@ -1,1273 +1,763 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { 
-  Link2, 
-  FileSpreadsheet, 
-  MessageSquare, 
-  Send, 
-  CheckCircle2, 
-  AlertCircle, 
-  Sparkles, 
-  Smartphone, 
-  ShieldCheck, 
-  Database, 
-  User, 
-  Printer,
-  Sliders,
-  ChevronDown,
-  ChevronUp,
-  Check,
-  Award,
-  Building,
-  School,
-  Settings,
-  CloudCheck,
-  Cloud,
-  Menu,
-  X
+  Plus, Settings as SettingsIcon, BarChart3, Receipt,
+  User, Shield, Calendar, LogOut, Check, Building2, Terminal, ShoppingBag, Users,
+  Timer, AlertTriangle, ChefHat, CupSoda
 } from "lucide-react";
-import ConnectionPanel from "./components/ConnectionPanel";
-import ExcelUploader from "./components/ExcelUploader";
-import CampaignMonitor from "./components/CampaignMonitor";
-import IndividualSender from "./components/IndividualSender";
-import ReportsPrinter from "./components/ReportsPrinter";
-import Sidebar, { MainSectionType } from "./components/Sidebar";
-import HomeDashboard from "./components/HomeDashboard";
-import AttendanceSystem from "./components/AttendanceSystem";
-import LoginScreen from "./components/LoginScreen";
-import UserManagement from "./components/UserManagement";
-import StudentInquiry from "./components/StudentInquiry";
-import TeachersScheduleManager from "./components/TeachersScheduleManager";
-import TeacherEvaluationPortal from "./components/TeacherEvaluationPortal";
-import StudentNeedsSurveyMain from "./components/StudentNeedsSurvey/StudentNeedsSurveyMain";
-import ParentNeedsSurveyPortal from "./components/StudentNeedsSurvey/ParentNeedsSurveyPortal";
-import ParentCouncilDashboard from "./components/ParentCouncil/ParentCouncilDashboard";
-import ParentCouncilPortal from "./components/ParentCouncil/ParentCouncilPortal";
-import DatabaseManagementModal from "./components/DatabaseManagementModal";
-import { SchoolSignatoriesModal, DEFAULT_MINISTRY_LOGO } from "./components/SchoolSignatoriesModal";
-import { StudentSupportProfile, SupportCase, HealthAuditLog } from "./types/studentSupport";
-import { Student, WhatsAppConfig, SchoolSignatories, AppUser, Teacher, ScheduleAssignment, TeacherInquiryRequest } from "./types";
-import { 
-  loadInitialAppData, 
-  saveSchoolDataToCloud, 
-  saveStudentsDataToCloud,
-  saveUsersDataToCloud,
-  saveTeachersDataToCloud,
-  saveScheduleDataToCloud,
-  saveInquiriesDataToCloud,
-  DEFAULT_ADMIN_USER,
-  getCloudStorageStatus
-} from "./firebaseService";
-import { DEFAULT_SAMPLE_TEACHERS, DEFAULT_SAMPLE_SCHEDULE } from "./utils/teachersScheduleParser";
-import { LogOut } from "lucide-react";
+import DailyInputTab from "./components/DailyInputTab";
+import PurchasesTab from "./components/PurchasesTab";
+import TaxTab from "./components/TaxTab";
+import ReportsTab from "./components/ReportsTab";
+import EmployeesTab from "./components/EmployeesTab";
+import SettingsTab from "./components/SettingsTab";
+import BakeryTab from "./components/BakeryTab";
+import DrinksTab from "./components/DrinksTab";
+import SecondAccountantTab from "./components/SecondAccountantTab";
+import { AslIskanderLogoSymbol, AslIskanderText } from "./components/AslIskanderLogo";
+
+type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings" | "bakery" | "drinks" | "assistant";
+type RoleType = "مدير" | "محاسب" | "مدخل فواتير" | "محاسب ثان";
+
+const PERMISSIONS: Record<RoleType, Record<TabType, boolean>> = {
+  "مدير": { input: true, purchases: true, tax: true, reports: true, employees: true, settings: true, bakery: true, drinks: true, assistant: true },
+  "محاسب": { input: true, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: false, drinks: false, assistant: false },
+  "مدخل فواتير": { input: false, purchases: false, tax: true, reports: false, employees: false, settings: false, bakery: false, drinks: false, assistant: false },
+  "محاسب ثان": { input: false, purchases: false, tax: false, reports: false, employees: false, settings: false, bakery: false, drinks: false, assistant: true }
+};
+
+interface UserSession {
+  username: string;
+  displayName: string;
+  role: RoleType;
+  status: string;
+  branch?: 'الكل' | 'القادسية' | 'المروج';
+  canEnterInvoices?: boolean;
+}
 
 export default function App() {
-  const [mainSection, setMainSection] = useState<MainSectionType>("messages");
-  const [activeTab, setActiveTab] = useState<"connection" | "upload" | "send" | "individual" | "reports">("connection");
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-
-  // Authentication & Users State
-  const [users, setUsers] = useState<AppUser[]>(() => {
-    const savedUsers = localStorage.getItem("abna_system_users");
-    if (savedUsers) {
-      try {
-        const parsed = JSON.parse(savedUsers);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        console.error(e);
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    try {
+      const saved = sessionStorage.getItem("alex_user_session");
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u.role === "محاسب ثان") return "assistant";
+        if (u.role === "مدخل فواتير") return "tax";
       }
-    }
-    return [DEFAULT_ADMIN_USER];
-  });
-
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
-    const saved = localStorage.getItem("abna_auth_current_user");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.id && parsed.status === "active") return parsed;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return null;
-  });
-
-  const [config, setConfig] = useState<WhatsAppConfig>({
-    mode: "simulated",
-    simulatedStatus: "disconnected",
-    simulatedPhone: "",
-    hasCloudApiKey: false,
-    cloudPhoneId: "",
-    cloudAccountId: "",
-  });
-  const [students, setStudents] = useState<Student[]>([]);
-  const [template, setTemplate] = useState(
-    "السلام عليكم ورحمة الله وبركاته،\nأهلاً بك يا سيد {أبو الطالب}، نود إحاطتكم علماً بأن الطالب {اسم الطالب} قد حصل على درجة {الدرجة} في مادة الرياضيات.\nنتمنى له دوام التوفيق والنجاح.\n- إدارة المدرسة"
-  );
-
-  // School Information & Signatories State (synced across server & browsers)
-  const [signatories, setSignatories] = useState<SchoolSignatories>(() => {
-    const saved = localStorage.getItem("school_signatories");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          countryName: parsed.countryName || "المملكة العربية السعودية",
-          ministryName: parsed.ministryName || "وزارة التعليم",
-          administrationName: parsed.administrationName || "الإدارة العامة للتعليم بمنطقة تبوك",
-          schoolName: parsed.schoolName || "ثانوية الأبناء الأولى",
-          principalName: parsed.principalName || "",
-          vicePrincipalName: parsed.vicePrincipalName || "",
-          counselorName: parsed.counselorName || "",
-          systemManagerName: parsed.systemManagerName || "",
-          logoUrl: parsed.logoUrl || DEFAULT_MINISTRY_LOGO,
-          logoWidth: parsed.logoWidth || 76,
-          logoHeight: parsed.logoHeight || 76,
-          showStudentGuidanceLine:
-            parsed.showStudentGuidanceLine !== undefined
-              ? parsed.showStudentGuidanceLine
-              : true,
-        };
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return {
-      countryName: "المملكة العربية السعودية",
-      ministryName: "وزارة التعليم",
-      administrationName: "الإدارة العامة للتعليم بمنطقة تبوك",
-      schoolName: "ثانوية الأبناء الأولى",
-      principalName: "",
-      vicePrincipalName: "",
-      counselorName: "",
-      systemManagerName: "",
-      logoUrl: DEFAULT_MINISTRY_LOGO,
-      logoWidth: 76,
-      logoHeight: 76,
-      showStudentGuidanceLine: true,
-    };
+    } catch (e) {}
+    return "input";
   });
   
-  const [showSignatoriesConfig, setShowSignatoriesConfig] = useState(false);
-  const [signatoriesSavedToast, setSignatoriesSavedToast] = useState(false);
-
-  // Direct Teacher Evaluation Portal URL parameter (?eval=<id>)
-  const [evaluationInquiryId, setEvaluationInquiryId] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      return params.get("eval");
-    }
-    return null;
-  });
-
-  // Teachers, Timetable Schedule, and Inquiry Requests State
-  const [teachers, setTeachers] = useState<Teacher[]>(() => {
-    const saved = localStorage.getItem("abna_teachers_roster");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return DEFAULT_SAMPLE_TEACHERS;
-  });
-
-  const [scheduleAssignments, setScheduleAssignments] = useState<ScheduleAssignment[]>(() => {
-    const saved = localStorage.getItem("abna_school_schedule");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out any stale quota items from Column AI (such as section 12 or 18)
-          return parsed.filter((a: ScheduleAssignment) => {
-            if (a.id && a.id.includes("_34_")) return false;
-            const sec = (a.section || "").trim();
-            return sec !== "شعبة 12" && sec !== "شعبة 18" && sec !== "12" && sec !== "18";
-          });
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return DEFAULT_SAMPLE_SCHEDULE;
-  });
-
-  const [inquiryRequests, setInquiryRequests] = useState<TeacherInquiryRequest[]>(() => {
-    const saved = localStorage.getItem("abna_inquiry_requests");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return [];
-  });
-
-  // Direct Parent Council Portal URL parameter (?portal=parent-council or ?parent_council=true or ?council_token=<token> or ?council_code=<code> or token with pc_/council_)
-  const [parentCouncilPortalData, setParentCouncilPortalData] = useState<{
-    isOpen: boolean;
-    token: string | null;
-    code: string | null;
-  }>(() => {
-    if (typeof window !== "undefined") {
-      const search =
-        window.location.search ||
-        (window.location.hash.includes("?")
-          ? window.location.hash.substring(window.location.hash.indexOf("?"))
-          : "");
-      const params = new URLSearchParams(search);
-      const portalParam = params.get("portal")?.toLowerCase();
-      const rawToken = params.get("council_token") || params.get("token") || null;
-      const isPcToken =
-        !!rawToken && (rawToken.startsWith("pc_") || rawToken.startsWith("council_"));
-      const isParentCouncil =
-        portalParam === "parent-council" ||
-        portalParam === "parent_council" ||
-        portalParam === "council" ||
-        params.get("parent_council") === "true" ||
-        !!params.get("council_token") ||
-        !!params.get("council_code") ||
-        isPcToken;
-
-      return {
-        isOpen: isParentCouncil,
-        token: isParentCouncil ? (params.get("council_token") || params.get("token") || null) : null,
-        code: params.get("council_code") || params.get("code") || null,
-      };
-    }
-    return { isOpen: false, token: null, code: null };
-  });
-
-  // Direct Parent Student Needs Survey Portal URL parameter (?survey_token=<token> or ?needs_token=<token> or ?token=<token>)
-  const [parentSurveyToken, setParentSurveyToken] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      const search =
-        window.location.search ||
-        (window.location.hash.includes("?")
-          ? window.location.hash.substring(window.location.hash.indexOf("?"))
-          : "");
-      const params = new URLSearchParams(search);
-      const portalParam = params.get("portal")?.toLowerCase();
-      const rawToken = params.get("token");
-      const isPcToken =
-        !!rawToken && (rawToken.startsWith("pc_") || rawToken.startsWith("council_"));
-      const isParentCouncil =
-        portalParam === "parent-council" ||
-        portalParam === "parent_council" ||
-        portalParam === "council" ||
-        params.get("parent_council") === "true" ||
-        !!params.get("council_token") ||
-        !!params.get("council_code") ||
-        isPcToken;
-
-      // Do not hijack parent council links
-      if (isParentCouncil) return null;
-
-      return (
-        params.get("survey_token") ||
-        params.get("needs_token") ||
-        params.get("support_token") ||
-        params.get("health_token") ||
-        (!isPcToken ? params.get("token") : null)
-      );
-    }
-    return null;
-  });
-
-  const [supportProfiles, setSupportProfiles] = useState<Record<string, StudentSupportProfile>>(() => {
-    const saved = localStorage.getItem("abna_support_profiles");
+  // Clean, persistent User Session state
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
+    const saved = sessionStorage.getItem("alex_user_session");
     if (saved) {
       try {
         return JSON.parse(saved);
       } catch (e) {
-        console.error(e);
+        return null;
       }
     }
-    return {};
+    return null;
   });
 
-  const [supportCases, setSupportCases] = useState<SupportCase[]>(() => {
-    const saved = localStorage.getItem("abna_support_cases");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    return [];
-  });
+  // Idle timeout and warning countdown states
+  const [showIdleWarning, setShowIdleWarning] = useState(false);
+  const [idleCountdown, setIdleCountdown] = useState(30);
 
-  const [healthAuditLogs, setHealthAuditLogs] = useState<HealthAuditLog[]>([]);
-  const [showDatabaseModal, setShowDatabaseModal] = useState(false);
-
-  // Clear specific or all local state sections
-  const handleClearLocalSection = (scope: "all" | "students" | "attendance" | "teachers" | "schedule" | "inquiries" | "health" | "logs") => {
-    if (scope === "all") {
-      setStudents([]);
-      localStorage.removeItem("whatsapp_student_list");
-
-      setTeachers([]);
-      localStorage.removeItem("abna_teachers_roster");
-
-      setScheduleAssignments([]);
-      localStorage.removeItem("abna_school_schedule");
-
-      setInquiryRequests([]);
-      localStorage.removeItem("abna_inquiry_requests");
-
-      setSupportProfiles({});
-      localStorage.removeItem("abna_support_profiles");
-
-      setSupportCases([]);
-      localStorage.removeItem("abna_support_cases");
-
-      setHealthAuditLogs([]);
-
-      localStorage.removeItem("school_attendance_records");
-      localStorage.removeItem("whatsapp_campaigns");
-      localStorage.removeItem("whatsapp_individual_logs");
-    } else if (scope === "students") {
-      setStudents([]);
-      localStorage.removeItem("whatsapp_student_list");
-    } else if (scope === "teachers") {
-      setTeachers([]);
-      localStorage.removeItem("abna_teachers_roster");
-    } else if (scope === "schedule") {
-      setScheduleAssignments([]);
-      localStorage.removeItem("abna_school_schedule");
-    } else if (scope === "inquiries") {
-      setInquiryRequests([]);
-      localStorage.removeItem("abna_inquiry_requests");
-    } else if (scope === "attendance") {
-      localStorage.removeItem("school_attendance_records");
-    } else if (scope === "health") {
-      setSupportProfiles({});
-      localStorage.removeItem("abna_support_profiles");
-      setSupportCases([]);
-      localStorage.removeItem("abna_support_cases");
-      setHealthAuditLogs([]);
-    } else if (scope === "logs") {
-      localStorage.removeItem("whatsapp_campaigns");
-      localStorage.removeItem("whatsapp_individual_logs");
-    }
-  };
-
-  // Debounced cloud sync timer ref for template edits
-  const templateSyncTimeout = useRef<NodeJS.Timeout | null>(null);
-
-  // Sync state to Cloud Firestore, server & local storage
-  const handleUpdateSignatory = (field: keyof SchoolSignatories, val: any) => {
-    const updated = { ...signatories, [field]: val };
-    setSignatories(updated);
-    localStorage.setItem("school_signatories", JSON.stringify(updated));
-    setSignatoriesSavedToast(true);
-    setTimeout(() => setSignatoriesSavedToast(false), 2000);
-
-    // Save to Cloud Firestore (Single lightweight write)
-    saveSchoolDataToCloud(updated, template).catch(() => {});
-
-    // Save to local server
-    fetch("/api/app-state/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    }).catch(() => {});
-  };
-
-  const handleBulkUpdateSignatories = (updatedFields: Partial<SchoolSignatories>) => {
-    const updated = { ...signatories, ...updatedFields };
-    setSignatories(updated);
-    localStorage.setItem("school_signatories", JSON.stringify(updated));
-    setSignatoriesSavedToast(true);
-    setTimeout(() => setSignatoriesSavedToast(false), 2000);
-
-    // Save to Cloud Firestore (Single lightweight write)
-    saveSchoolDataToCloud(updated, template).catch(() => {});
-
-    // Save to local server
-    fetch("/api/app-state/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updated),
-    }).catch(() => {});
-  };
-
-  const fetchConfig = async () => {
-    try {
-      const response = await fetch("/api/whatsapp/config");
-      if (response.ok) {
-        const data = await response.json();
-        setConfig(data);
-      }
-    } catch {
-      // Handled quietly
-    }
-  };
-
-  // Hydrate full state from Cloud Firestore and Server on app mount
-  const fetchFullAppState = async () => {
-    try {
-      // 1. First fetch from Cloud Firestore (Permanent storage across devices/browsers)
-      const cloudData = await loadInitialAppData();
-      
-      if (cloudData.schoolSignatories) {
-        setSignatories(prev => ({ ...prev, ...cloudData.schoolSignatories }));
-        localStorage.setItem("school_signatories", JSON.stringify(cloudData.schoolSignatories));
-      }
-      if (Array.isArray(cloudData.students) && cloudData.students.length > 0) {
-        setStudents(cloudData.students);
-        localStorage.setItem("whatsapp_student_list", JSON.stringify(cloudData.students));
-      }
-      if (cloudData.savedTemplate) {
-        setTemplate(cloudData.savedTemplate);
-        localStorage.setItem("whatsapp_student_template", cloudData.savedTemplate);
-      }
-      if (Array.isArray(cloudData.users) && cloudData.users.length > 0) {
-        setUsers(cloudData.users);
-        localStorage.setItem("abna_system_users", JSON.stringify(cloudData.users));
-      }
-      if (Array.isArray(cloudData.teachers) && cloudData.teachers.length > 0) {
-        setTeachers(cloudData.teachers);
-        localStorage.setItem("abna_teachers_roster", JSON.stringify(cloudData.teachers));
-      }
-      if (Array.isArray(cloudData.scheduleAssignments) && cloudData.scheduleAssignments.length > 0) {
-        const cleanCloudSchedule = cloudData.scheduleAssignments.filter((a: ScheduleAssignment) => {
-          if (a.id && a.id.includes("_34_")) return false;
-          const sec = (a.section || "").trim();
-          return sec !== "شعبة 12" && sec !== "شعبة 18" && sec !== "12" && sec !== "18";
-        });
-        setScheduleAssignments(cleanCloudSchedule);
-        localStorage.setItem("abna_school_schedule", JSON.stringify(cleanCloudSchedule));
-      }
-      if (Array.isArray(cloudData.inquiryRequests) && cloudData.inquiryRequests.length > 0) {
-        setInquiryRequests(cloudData.inquiryRequests);
-        localStorage.setItem("abna_inquiry_requests", JSON.stringify(cloudData.inquiryRequests));
-      }
-
-      // 2. Sync from local server state (Live source of truth for inquiries & real-time evaluations)
-      const res = await fetch("/api/app-state");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.settings && !cloudData.schoolSignatories) {
-          setSignatories(prev => ({ ...prev, ...data.settings }));
-          localStorage.setItem("school_signatories", JSON.stringify(data.settings));
-        }
-        if (Array.isArray(data.students) && data.students.length > 0 && (!cloudData.students || cloudData.students.length === 0)) {
-          setStudents(data.students);
-          localStorage.setItem("whatsapp_student_list", JSON.stringify(data.students));
-        }
-        if (data.template && !cloudData.savedTemplate) {
-          setTemplate(data.template);
-          localStorage.setItem("whatsapp_student_template", data.template);
-        }
-        if (Array.isArray(data.users) && data.users.length > 0 && (!cloudData.users || cloudData.users.length === 0)) {
-          setUsers(data.users);
-          localStorage.setItem("abna_system_users", JSON.stringify(data.users));
-        }
-        if (Array.isArray(data.teachers) && data.teachers.length > 0 && (!cloudData.teachers || cloudData.teachers.length === 0)) {
-          setTeachers(data.teachers);
-          localStorage.setItem("abna_teachers_roster", JSON.stringify(data.teachers));
-        }
-        if (Array.isArray(data.schedule) && data.schedule.length > 0 && (!cloudData.scheduleAssignments || cloudData.scheduleAssignments.length === 0)) {
-          const cleanServerSchedule = data.schedule.filter((a: ScheduleAssignment) => {
-            if (a.id && a.id.includes("_34_")) return false;
-            const sec = (a.section || "").trim();
-            return sec !== "شعبة 12" && sec !== "شعبة 18" && sec !== "12" && sec !== "18";
-          });
-          setScheduleAssignments(cleanServerSchedule);
-          localStorage.setItem("abna_school_schedule", JSON.stringify(cleanServerSchedule));
-        }
-        if (Array.isArray(data.inquiries) && data.inquiries.length > 0) {
-          setInquiryRequests(data.inquiries);
-          localStorage.setItem("abna_inquiry_requests", JSON.stringify(data.inquiries));
-        }
-      }
-
-      // Fetch Health Tracker data
-      try {
-        const hRes = await fetch("/api/health-tracker/profiles");
-        if (hRes.ok) {
-          const hData = await hRes.json();
-          if (hData.success && hData.profiles) {
-            setSupportProfiles(prev => ({ ...prev, ...hData.profiles }));
-            localStorage.setItem("abna_support_profiles", JSON.stringify(hData.profiles));
-          }
-        }
-
-        const cRes = await fetch("/api/health-tracker/cases");
-        if (cRes.ok) {
-          const cData = await cRes.json();
-          if (cData.success && Array.isArray(cData.cases)) {
-            setSupportCases(cData.cases);
-            localStorage.setItem("abna_support_cases", JSON.stringify(cData.cases));
-          }
-        }
-
-        const aRes = await fetch("/api/health-tracker/audit-logs");
-        if (aRes.ok) {
-          const aData = await aRes.json();
-          if (aData.success && Array.isArray(aData.logs)) {
-            setHealthAuditLogs(aData.logs);
-          }
-        }
-      } catch (err) {
-        console.error("Could not fetch health tracker state", err);
-      }
-    } catch (e) {
-      console.error("Could not fetch remote app-state", e);
-    }
-  };
-
-  // Dedicated real-time sync for inquiries so teacher submissions reflect instantly
-  const syncInquiriesFromServer = async () => {
-    try {
-      const res = await fetch("/api/inquiries");
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.inquiries)) {
-          setInquiryRequests((prev) => {
-            // Check if there are changes before triggering re-renders
-            const prevSerialized = JSON.stringify(prev);
-            const nextSerialized = JSON.stringify(data.inquiries);
-            if (prevSerialized !== nextSerialized) {
-              localStorage.setItem("abna_inquiry_requests", nextSerialized);
-              return data.inquiries;
-            }
-            return prev;
-          });
-        }
-      }
-    } catch {
-      // Quiet background polling error handling
-    }
-  };
-
-  const handleLoginSuccess = (user: AppUser) => {
-    // Update lastLogin
-    const updatedUsers = users.map((u) => (u.id === user.id ? { ...u, lastLogin: new Date().toISOString() } : u));
-    setUsers(updatedUsers);
-    localStorage.setItem("abna_system_users", JSON.stringify(updatedUsers));
-    saveUsersDataToCloud(updatedUsers).catch(() => {});
-
-    const activeLoggedInUser = { ...user, lastLogin: new Date().toISOString() };
-    setCurrentUser(activeLoggedInUser);
-    localStorage.setItem("abna_auth_current_user", JSON.stringify(activeLoggedInUser));
-    
-    // Redirect to default home or admin section depending on user
-    if (activeLoggedInUser.role === "admin") {
-      setMainSection("messages");
-    } else {
-      setMainSection("messages");
-    }
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem("abna_auth_current_user");
-    setMainSection("messages");
-  };
-
-  const handleSaveUsers = (updatedUsers: AppUser[]) => {
-    setUsers(updatedUsers);
-    localStorage.setItem("abna_system_users", JSON.stringify(updatedUsers));
-
-    // If current logged-in user was updated, update currentUser state
-    if (currentUser) {
-      const refreshedCurrent = updatedUsers.find((u) => u.id === currentUser.id);
-      if (refreshedCurrent) {
-        if (refreshedCurrent.status === "blocked") {
-          handleLogout();
-          return;
-        }
-        setCurrentUser(refreshedCurrent);
-        localStorage.setItem("abna_auth_current_user", JSON.stringify(refreshedCurrent));
-      }
+  // Inactivity detection effect using absolute timestamp comparison (survives background suspend/minimizing/device sleep)
+  useEffect(() => {
+    if (!currentUser) {
+      setShowIdleWarning(false);
+      return;
     }
 
-    // Save to Cloud Firestore
-    saveUsersDataToCloud(updatedUsers).catch(() => {});
+    const updateActivity = () => {
+      sessionStorage.setItem("alex_last_activity_time", Date.now().toString());
+    };
 
-    // Save to Server
-    fetch("/api/app-state/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ users: updatedUsers }),
-    }).catch(() => {});
+    // Initialize/reset timestamp if warning is not active
+    if (!showIdleWarning) {
+      updateActivity();
+    }
+
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    const handleReset = () => {
+      if (!showIdleWarning) {
+        updateActivity();
+      }
+    };
+
+    events.forEach((event) => {
+      window.addEventListener(event, handleReset);
+    });
+
+    // Inactivity evaluation running every second - absolutely robust
+    const checkInterval = setInterval(() => {
+      const savedTimeStr = sessionStorage.getItem("alex_last_activity_time");
+      if (!savedTimeStr) return;
+      const lastActive = parseInt(savedTimeStr, 10);
+      const diff = Date.now() - lastActive;
+
+      const WARNING_THRESHOLD = 4.5 * 60 * 1000; // 4 minutes 30 seconds
+      const TOTAL_TIMEOUT = 5 * 60 * 1000;      // 5 minutes
+
+      if (diff >= TOTAL_TIMEOUT) {
+        // Auto logout
+        sessionStorage.removeItem("alex_user_session");
+        sessionStorage.removeItem("alex_last_activity_time");
+        localStorage.removeItem("alex_user_session");
+        setCurrentUser(null);
+        setShowIdleWarning(false);
+        showToast("⚠️ تم تسجيل الخروج تلقائياً لعدم النشاط");
+      } else if (diff >= WARNING_THRESHOLD) {
+        // Show count down in modal
+        const secondsLeft = Math.max(0, Math.ceil((TOTAL_TIMEOUT - diff) / 1000));
+        setIdleCountdown(secondsLeft);
+        setShowIdleWarning(true);
+      } else {
+        if (showIdleWarning) {
+          setShowIdleWarning(false);
+        }
+      }
+    }, 1000);
+
+    // Visibility-change or focus triggers immediate validation (e.g., when waking up, focusing, or returning to tab)
+    const runImmediateCheck = () => {
+      const savedTimeStr = sessionStorage.getItem("alex_last_activity_time");
+      if (!savedTimeStr) return;
+      const lastActive = parseInt(savedTimeStr, 10);
+      const diff = Date.now() - lastActive;
+      if (diff >= 5 * 60 * 1000) {
+        sessionStorage.removeItem("alex_user_session");
+        sessionStorage.removeItem("alex_last_activity_time");
+        localStorage.removeItem("alex_user_session");
+        setCurrentUser(null);
+        setShowIdleWarning(false);
+        showToast("⚠️ تم تسجيل الخروج تلقائياً لعدم النشاط");
+      }
+    };
+
+    document.addEventListener("visibilitychange", runImmediateCheck);
+    window.addEventListener("focus", runImmediateCheck);
+
+    return () => {
+      clearInterval(checkInterval);
+      events.forEach((event) => {
+        window.removeEventListener(event, handleReset);
+      });
+      document.removeEventListener("visibilitychange", runImmediateCheck);
+      window.removeEventListener("focus", runImmediateCheck);
+    };
+  }, [currentUser, showIdleWarning]);
+
+  const handleExtendSession = () => {
+    sessionStorage.setItem("alex_last_activity_time", Date.now().toString());
+    setShowIdleWarning(false);
+    setIdleCountdown(30);
+    showToast("🔄 تم تمديد جلسة العمل بنجاح");
+  };
+
+  // Login Form State
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState("");
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 4000);
   };
 
   useEffect(() => {
-    fetchConfig();
-    fetchFullAppState();
-
-    const interval = setInterval(() => {
-      fetchConfig();
-      syncInquiriesFromServer();
-    }, 3000);
-
-    // Initial local fallback if server hasn't responded yet
-    const savedTemplate = localStorage.getItem("whatsapp_student_template");
-    if (savedTemplate) setTemplate(savedTemplate);
-
-    const savedStudents = localStorage.getItem("whatsapp_student_list");
-    if (savedStudents) {
-      try {
-        setStudents(JSON.parse(savedStudents));
-      } catch (e) {
-        console.error(e);
+    // Format Arabic Gregorian date & time beautifully
+    const formatTimeArabic = () => {
+      const now = new Date();
+      return now.toLocaleDateString("ar-SA", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+      });
+    };
+    setCurrentTime(formatTimeArabic());
+    
+    // Auto sync tab based on roles on mount if logged in
+    if (currentUser) {
+      const isAllowed = (tab: TabType) => {
+        if (tab === "tax" && currentUser.role === "محاسب" && currentUser.canEnterInvoices) {
+          return true;
+        }
+        return PERMISSIONS[currentUser.role][tab];
+      };
+      if (!isAllowed(activeTab)) {
+        const firstAllowed = (Object.keys(PERMISSIONS[currentUser.role]) as TabType[]).find((tab) => isAllowed(tab));
+        if (firstAllowed) {
+          setActiveTab(firstAllowed);
+        }
       }
     }
+  }, [currentUser]);
 
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleUpdateStudents = (newStudents: Student[]) => {
-    setStudents(newStudents);
-    localStorage.setItem("whatsapp_student_list", JSON.stringify(newStudents));
-    
-    // Save to Cloud Firestore (1 Single Write for all students list)
-    saveStudentsDataToCloud(newStudents).catch(() => {});
-
-    // Save to server for cross-device/browser sync
-    fetch("/api/app-state/students", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ students: newStudents }),
-    }).catch(() => {});
-  };
-
-  const handleTemplateChange = (newTmpl: string) => {
-    setTemplate(newTmpl);
-    localStorage.setItem("whatsapp_student_template", newTmpl);
-
-    // Debounced Cloud Save to avoid high write counts while typing (1 write after done typing)
-    if (templateSyncTimeout.current) clearTimeout(templateSyncTimeout.current);
-    templateSyncTimeout.current = setTimeout(() => {
-      saveSchoolDataToCloud(signatories, newTmpl).catch(() => {});
-    }, 1500);
-
-    // Save to server for cross-device/browser sync
-    fetch("/api/app-state/template", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template: newTmpl }),
-    }).catch(() => {});
-  };
-
-  const handleUpdateTeachers = (newTeachers: Teacher[]) => {
-    setTeachers(newTeachers);
-    localStorage.setItem("abna_teachers_roster", JSON.stringify(newTeachers));
-    saveTeachersDataToCloud(newTeachers).catch(() => {});
-    fetch("/api/teachers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teachers: newTeachers }),
-    }).catch(() => {});
-  };
-
-  const handleUpdateSchedule = (newSchedule: ScheduleAssignment[]) => {
-    setScheduleAssignments(newSchedule);
-    localStorage.setItem("abna_school_schedule", JSON.stringify(newSchedule));
-    saveScheduleDataToCloud(newSchedule).catch(() => {});
-    fetch("/api/schedule", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assignments: newSchedule }),
-    }).catch(() => {});
-  };
-
-  const handleUpdateInquiries = (newInquiries: TeacherInquiryRequest[]) => {
-    setInquiryRequests(newInquiries);
-    localStorage.setItem("abna_inquiry_requests", JSON.stringify(newInquiries));
-    saveInquiriesDataToCloud(newInquiries).catch(() => {});
-  };
-
-  const handleSaveSupportProfile = async (profile: StudentSupportProfile): Promise<boolean> => {
-    try {
-      setSupportProfiles((prev) => {
-        const next = { ...prev, [profile.studentId]: profile };
-        localStorage.setItem("abna_support_profiles", JSON.stringify(next));
-        return next;
-      });
-
-      const res = await fetch("/api/health-tracker/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile }),
-      });
-      const data = await res.json();
-      return data.success === true;
-    } catch (e) {
-      console.error("Error saving support profile", e);
-      return false;
-    }
-  };
-
-  const handleSaveSupportCase = async (supportCase: SupportCase): Promise<boolean> => {
-    try {
-      setSupportCases((prev) => {
-        const idx = prev.findIndex((c) => c.id === supportCase.id);
-        const next = idx >= 0 ? [...prev] : [supportCase, ...prev];
-        if (idx >= 0) next[idx] = supportCase;
-        localStorage.setItem("abna_support_cases", JSON.stringify(next));
-        return next;
-      });
-
-      const res = await fetch("/api/health-tracker/cases", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ supportCase }),
-      });
-      const data = await res.json();
-      return data.success === true;
-    } catch (e) {
-      console.error("Error saving support case", e);
-      return false;
-    }
-  };
-
-  const handleLogHealthAudit = async (
-    action: "view" | "edit" | "print", 
-    dataType: HealthAuditLog["dataType"], 
-    reason: string,
-    studentId?: string,
-    studentName?: string
-  ) => {
-    const newLog: HealthAuditLog = {
-      id: `audit_${Date.now()}`,
-      userId: currentUser?.id || "unknown",
-      userName: currentUser?.name || "مستخدم",
-      userRole: currentUser?.role || "admin",
-      studentId,
-      studentName,
-      action,
-      dataType,
-      reason,
-      timestamp: new Date().toISOString(),
+  // Global enhancement for ultra-fast and fluent data entry (Excel-like experience)
+  useEffect(() => {
+    const handleGlobalFocus = (e: FocusEvent) => {
+      const target = e.target as HTMLInputElement;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        const inputType = target.type;
+        if (inputType === "number" || inputType === "text" || inputType === "tel" || inputType === "password") {
+          setTimeout(() => {
+            try {
+              target.select();
+            } catch (err) {
+              // ignore
+            }
+          }, 50);
+        }
+      }
     };
 
-    setHealthAuditLogs((prev) => [newLog, ...prev.slice(0, 500)]);
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
 
-    fetch("/api/health-tracker/audit-logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ log: newLog }),
-    }).catch(() => {});
-  };
+      const isInput = target.tagName === "INPUT";
+      const isSelect = target.tagName === "SELECT";
+      const isTextArea = target.tagName === "TEXTAREA";
 
-  const handleSendWhatsAppDirect = async (
-    phone: string, 
-    message: string,
-    studentName?: string,
-    grade?: string,
-    className?: string
-  ): Promise<{ success: boolean; error?: string }> => {
+      if (!isInput && !isSelect && !isTextArea) return;
+      if (isTextArea) return; // Leave textareas alone so they can handle Enter and arrows normally
+
+      // Identify if we should handle the key
+      const isEnter = e.key === "Enter";
+      const isArrowDown = e.key === "ArrowDown";
+      const isArrowUp = e.key === "ArrowUp";
+
+      if (!isEnter && !isArrowDown && !isArrowUp) return;
+
+      if (isInput) {
+        const inputType = (target as HTMLInputElement).type;
+        // Don't hijack Enter/Arrows on buttons, checkboxes, radio, file, color inputs
+        if (["submit", "button", "reset", "image", "file", "checkbox", "radio", "color"].includes(inputType)) {
+          return;
+        }
+      }
+
+      // Restrict Arrow navigation to text, number, and tel inputs to avoid breaking date pickers or dropdowns
+      if (isArrowUp || isArrowDown) {
+        if (isInput) {
+          const inputType = (target as HTMLInputElement).type;
+          if (inputType !== "number" && inputType !== "text" && inputType !== "tel") {
+            return;
+          }
+        } else {
+          return;
+        }
+      }
+
+      // Prevent default form submission or default browser behavior
+      e.preventDefault();
+
+      // Gather all visible and enabled inputs, select elements, textareas, and submit buttons
+      const selectors = [
+        'input:not([disabled]):not([type="hidden"]):not([readonly])',
+        'select:not([disabled])',
+        'textarea:not([disabled])',
+        'button[type="submit"]:not([disabled])'
+      ].join(", ");
+
+      const elements = Array.from(document.querySelectorAll(selectors)) as HTMLElement[];
+
+      // Filter only visible elements
+      const visibleElements = elements.filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+      });
+
+      const index = visibleElements.indexOf(target);
+      if (index === -1) return;
+
+      if (isEnter || isArrowDown) {
+        if (index < visibleElements.length - 1) {
+          const nextElement = visibleElements[index + 1];
+          nextElement.focus();
+          if (nextElement instanceof HTMLInputElement && (nextElement.type === "number" || nextElement.type === "text" || nextElement.type === "tel")) {
+            setTimeout(() => {
+              try {
+                nextElement.select();
+              } catch (err) {}
+            }, 50);
+          }
+        }
+      } else if (isArrowUp) {
+        if (index > 0) {
+          const prevElement = visibleElements[index - 1];
+          prevElement.focus();
+          if (prevElement instanceof HTMLInputElement && (prevElement.type === "number" || prevElement.type === "text" || prevElement.type === "tel")) {
+            setTimeout(() => {
+              try {
+                prevElement.select();
+              } catch (err) {}
+            }, 50);
+          }
+        }
+      }
+    };
+
+    document.addEventListener("focusin", handleGlobalFocus);
+    document.addEventListener("keydown", handleGlobalKeyDown);
+
+    return () => {
+      document.removeEventListener("focusin", handleGlobalFocus);
+      document.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setLoginLoading(true);
+
     try {
-      const res = await fetch("/api/whatsapp/send-single", {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, message, studentName, grade, className }),
+        body: JSON.stringify({
+          username: loginUsername.trim().toLowerCase(),
+          password: loginPassword.trim()
+        })
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { success: false, error: data.error || "تعذر إرسال الرسالة عبر خادم الواتساب" };
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.user) {
+          sessionStorage.setItem("alex_user_session", JSON.stringify(data.user));
+          localStorage.removeItem("alex_user_session"); // strictly clean localStorage copy
+          setCurrentUser(data.user);
+          if (data.user.role === "محاسب ثان") {
+            setActiveTab("assistant");
+          } else if (data.user.role === "مدخل فواتير") {
+            setActiveTab("tax");
+          } else {
+            setActiveTab("input");
+          }
+          showToast(`🔓 تم تفويض دخول: ${data.user.displayName}`);
+        }
+      } else {
+        const errData = await res.json().catch(() => ({ error: "فشل تسجيل الدخول، خطأ في استجابة الخادم" }));
+        setErrorMsg(errData.error || "❌ فشل تسجيل الدخول، يرجى مراجعة المدخلات");
       }
-      return { success: data.success === true, error: data.error };
-    } catch (e: any) {
-      return { success: false, error: e.message || "خطأ في الاتصال بالخادم" };
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("❌ خطأ شبكة أثناء التحقق من الحساب");
+    } finally {
+      setLoginLoading(false);
     }
   };
 
-  const isWhatsAppConnected = (config as any).isConnected === true && (config.realStatus === "connected" || config.simulatedStatus === "connected");
+  const userRole = currentUser?.role || "محاسب";
+  const isTabAllowed = (tab: TabType) => {
+    if (tab === "tax" && userRole === "محاسب" && currentUser?.canEnterInvoices) {
+      return true;
+    }
+    return PERMISSIONS[userRole][tab];
+  };
 
-  // Direct Teacher Evaluation Portal (Accessed directly via WhatsApp link)
-  if (evaluationInquiryId) {
+  if (!currentUser) {
     return (
-      <TeacherEvaluationPortal
-        inquiryId={evaluationInquiryId}
-        onClose={() => {
-          setEvaluationInquiryId(null);
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }}
-      />
-    );
-  }
+      <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4 antialiased select-none" dir="rtl">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200/50 overflow-hidden flex flex-col">
+          {/* Header layout with brand identity */}
+          <div className="bg-slate-950 p-8 text-center border-b border-slate-800/60 flex flex-col items-center gap-4 relative overflow-hidden">
+            {/* Subtle background warm brand gradients */}
+            <div className="absolute top-0 left-1/4 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none"></div>
+            <div className="absolute bottom-0 right-1/4 w-32 h-32 bg-orange-600/10 rounded-full blur-2xl pointer-events-none"></div>
 
-  // Direct Parent Council Portal (مجالس أولياء الأمور - Accessed directly via WhatsApp link)
-  if (parentCouncilPortalData.isOpen) {
-    return (
-      <ParentCouncilPortal
-        token={parentCouncilPortalData.token}
-        initialCode={parentCouncilPortalData.code}
-        students={students}
-        onExit={() => {
-          setParentCouncilPortalData({ isOpen: false, token: null, code: null });
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }}
-      />
-    );
-  }
+            <div className="relative group transition-transform duration-300">
+              {/* Pulsing glow under the circle logo */}
+              <div className="absolute inset-0 bg-gradient-to-tr from-amber-500 via-orange-500 to-red-600 rounded-full scale-105 blur-lg opacity-25 group-hover:opacity-40 transition-opacity duration-500 animate-pulse"></div>
+              <AslIskanderLogoSymbol size={100} className="relative z-10" />
+            </div>
 
-  // Direct Parent Student Needs Survey Portal (Accessed directly via WhatsApp token link)
-  if (parentSurveyToken) {
-    return (
-      <ParentNeedsSurveyPortal
-        token={parentSurveyToken}
-        onExit={() => {
-          setParentSurveyToken(null);
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }}
-      />
-    );
-  }
+            <div className="z-10 space-y-2 mt-1">
+              <AslIskanderText className="text-[13px] tracking-[0.25em]" />
+              <div className="flex items-center justify-center gap-1.5">
+                <h1 className="text-base font-black text-slate-100 tracking-tight">مطعم أصل الاسكندر</h1>
+                <span className="text-xs">🍽️</span>
+              </div>
+              <p className="text-[9px] text-orange-400/80 font-black tracking-widest uppercase">المنظومة المالية وحوكمة مبيعات الفروع الموحدة</p>
+            </div>
+          </div>
 
-  // 1. Full Authentication Guard: Show login screen if not authenticated or blocked
-  if (!currentUser || currentUser.status === "blocked") {
-    return (
-      <LoginScreen
-        users={users}
-        signatories={signatories}
-        onLoginSuccess={handleLoginSuccess}
-        onUpdateUsers={handleSaveUsers}
-      />
+          {/* Form container */}
+          <form onSubmit={handleLogin} className="p-8 space-y-5 text-right bg-white flex-1">
+            <div className="space-y-1">
+              <h2 className="text-sm font-extrabold text-slate-800">🔒 تسجيل الدخول الآمن للمنظومة</h2>
+              <p className="text-[10px] text-slate-500 font-medium">الرجاء إدخال اسم مستخدم الحساب ورمز المرور السري (PIN).</p>
+            </div>
+
+            {errorMsg && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-lg flex items-start gap-1.5 leading-relaxed">
+                <span>⚠️</span>
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            {/* Username Field */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">اسم مستخدم الحساب</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  required
+                  placeholder="e.g. admin"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  className="w-full text-left pl-3 pr-10 py-2.5 text-xs text-black border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono font-bold placeholder:text-slate-400 caret-black"
+                  style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
+                />
+                <User className="w-4 h-4 text-slate-400 absolute right-3 top-3.5" />
+              </div>
+            </div>
+
+            {/* Password PIN Field */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">كلمة المرور أو رمز الـ PIN</label>
+              <div className="relative">
+                <input
+                  type="password"
+                  name="password"
+                  autoComplete="current-password"
+                  required
+                  placeholder="ادخل رمز الدخول الموحد"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  className="w-full pl-3 pr-10 py-2.5 text-xs text-black border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono font-bold placeholder:text-slate-400 caret-black"
+                  style={{ color: "#000000", WebkitTextFillColor: "#000000" }}
+                />
+                <Shield className="w-4 h-4 text-slate-400 absolute right-3 top-3.5" />
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={loginLoading}
+              className="w-full bg-slate-900 hover:bg-slate-800 hover:scale-[0.99] text-white font-extrabold text-xs py-3.5 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md cursor-pointer disabled:opacity-50"
+            >
+              <Check className="w-4 h-4 text-indigo-400 animate-pulse" />
+              <span>{loginLoading ? "جاري المطابقة..." : "تأكيد وتسجيل الدخول المالي"}</span>
+            </button>
+
+
+          </form>
+        </div>
+
+        <footer className="text-slate-600 py-6 text-[9px] tracking-wide mt-6">
+          مطعم أصل الاسكندر • كافة الحقوق محفوظة  © {new Date().getFullYear()}
+        </footer>
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col font-sans" dir="rtl" id="app-root">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col antialiased select-none" dir="rtl">
       
-      {/* Dynamic Navigation Banner */}
-      <header className="bg-white border-b border-slate-200/80 sticky top-0 z-30 shadow-sm" id="main-header">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4">
-          
-          {/* Logo & Dynamic School Name */}
-          <div className="flex items-center gap-3">
-            {signatories.logoUrl ? (
-              <img
-                src={signatories.logoUrl}
-                alt="شعار"
-                referrerPolicy="no-referrer"
-                className="w-10 h-10 object-contain rounded-xl border border-slate-200 p-0.5 bg-white shrink-0"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white shadow-md shadow-emerald-600/10 shrink-0">
-                <Send className="w-5 h-5 rotate-180" />
-              </div>
-            )}
+      {/* Dynamic Toast Alerts */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, x: "-50%" }}
+            animate={{ opacity: 1, y: 0, x: "-50%" }}
+            exit={{ opacity: 0, y: 50, x: "-50%" }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-slate-800 text-slate-100 font-bold px-6 py-3.5 rounded-full shadow-2xl text-xs flex items-center gap-2"
+          >
+            <Terminal className="w-4 h-4 text-indigo-400" />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            <div className="text-right">
-              <h1 className="text-base sm:text-lg font-bold text-slate-800 leading-none">
-                {signatories.schoolName || "ثانوية الأبناء الأولى"} - مرسل الطلاب الذكي
-              </h1>
-              <span className="text-[10px] text-slate-400 font-medium">
-                {signatories.administrationName || "الإدارة العامة للتعليم"} • نظام الإرسال والتقارير الرسمية
-              </span>
-            </div>
+      {/* Top Navbar Header */}
+      <header className="bg-slate-900 text-slate-100 border-b border-slate-800 px-6 py-3 px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-40 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="relative group transition-all duration-300">
+            <div className="absolute inset-0 bg-orange-500/10 rounded-full scale-110 blur-xs transition-opacity"></div>
+            <AslIskanderLogoSymbol size={42} className="relative z-10" />
           </div>
+          <div>
+            <div className="flex items-center gap-1.5 flex-row-reverse justify-end">
+              <h1 className="text-sm font-black tracking-tight text-white leading-tight">مطعم أصل الاسكندر</h1>
+              <span className="text-xs">🍽️</span>
+            </div>
+            <p className="text-[9px] text-orange-400 font-bold tracking-wide mt-0.5">نظام الحوكمة المالية وإدارة الفروع الموحدة والمخزون الذكي</p>
+          </div>
+        </div>
 
-          {/* Core Applet Status Indicators & Signatories Toggle & Top Logout */}
-          <div className="flex flex-wrap items-center gap-2 text-xs" id="header-status-indicators">
+        {/* Calendar visual */}
+        <div className="hidden lg:flex items-center gap-1.5 text-xs bg-slate-800/80 px-4 py-1.5 rounded-full text-slate-300 font-medium border border-slate-700/50">
+          <Calendar className="w-4 h-4 text-indigo-400" />
+          <span>{currentTime}</span>
+        </div>
+
+        {/* Roles controls */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-xl border border-slate-700/50">
+              <User className="w-4 h-4 text-indigo-400" />
+              <span>أهلاً، <span className="font-extrabold text-white">{currentUser.displayName}</span></span>
+              <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-bold px-2 py-0.5 rounded-lg border border-indigo-500/30">
+                {currentUser.role}
+              </span>
+            </div>
             
-            {/* Logged in User Profile Info Chip */}
-            <div className="flex items-center gap-2 px-3 py-1 bg-slate-100/90 rounded-full border border-slate-200/80 text-xs" id="header-user-badge">
-              <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                currentUser.role === "admin" ? "bg-blue-600 text-white" : "bg-slate-700 text-white"
-              }`}>
-                {currentUser.name.charAt(0) || "U"}
-              </div>
-              <span className="font-bold text-slate-800 max-w-32 sm:max-w-40 truncate">
-                {currentUser.name}
-              </span>
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                currentUser.role === "admin"
-                  ? "bg-blue-50 text-blue-800 border border-blue-200"
-                  : "bg-slate-200 text-slate-700"
-              }`}>
-                {currentUser.role === "admin" ? "مدير نظام" : "مستخدم"}
-              </span>
-            </div>
-
-            {/* School & Signatories Configuration Trigger */}
             <button
-              onClick={() => setShowSignatoriesConfig(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-200 bg-amber-50/90 hover:bg-amber-100 text-amber-950 transition-all text-xs font-bold cursor-pointer shadow-2xs"
-              title="تخصيص بيانات المدرسة، الشعار والمعتمدين وإعدادات الترويسة لكافة التقارير"
-              id="btn-toggle-signatories"
+              onClick={() => {
+                sessionStorage.removeItem("alex_user_session");
+                localStorage.removeItem("alex_user_session");
+                setCurrentUser(null);
+                showToast("🔒 تم تسجيل الخروج بنجاح");
+              }}
+              className="text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-xl px-3 py-1.5 text-xs font-bold font-sans flex items-center gap-1.5 cursor-pointer transition-all"
             >
-              <Building className="w-3.5 h-3.5 text-amber-600" />
-              <span>بيانات المدرسة والمعتمدين والشعار</span>
-            </button>
-
-            {/* Connection Status Badge */}
-            <button
-              type="button"
-              onClick={() => setActiveTab("connection")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all text-xs font-semibold cursor-pointer ${
-                isWhatsAppConnected 
-                  ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 shadow-2xs" 
-                  : "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 shadow-2xs animate-pulse"
-              }`}
-              title={isWhatsAppConnected ? "الواتساب متصل وجاهز للإرسال الفعلي" : "اضغط هنا لربط الواتساب بمسح الباركود أو الرمز"}
-              id="header-wa-status-badge"
-            >
-              <span className={`w-2 h-2 rounded-full ${isWhatsAppConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
-              <span>
-                {isWhatsAppConnected 
-                  ? `متصل: ${config.simulatedPhone || "نشط"}` 
-                  : "واتساب غير مرتبط (اضغط للربط)"
-                }
-              </span>
-            </button>
-
-            {/* Students count */}
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${
-              students.length > 0 
-                ? "bg-blue-50 text-blue-800 border-blue-100" 
-                : "bg-slate-100 text-slate-500 border-slate-200"
-            }`}>
-              <Database className="w-3.5 h-3.5 text-blue-500" />
-              <span className="font-semibold">
-                {students.length > 0 ? `${students.length} طالب جاهز` : "لا توجد قوائم"}
-              </span>
-            </div>
-
-            {/* Cloud Database Management Center Trigger */}
-            <button
-              type="button"
-              onClick={() => setShowDatabaseModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 font-bold transition-all text-xs cursor-pointer shadow-2xs"
-              title="مركز إدارة قاعدة البيانات وحفظ البيانات والحذف الجزئي والشامل"
-              id="header-database-center-btn"
-            >
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>قاعدة البيانات والحفظ</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            </button>
-
-            {/* Top Logout Button for all users including Admin */}
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 font-bold transition-all text-xs cursor-pointer shadow-xs active:scale-95 ml-1"
-              title="تسجيل الخروج من الحساب"
-              id="btn-top-logout"
-            >
-              <LogOut className="w-3.5 h-3.5 rotate-180 text-rose-600" />
+              <LogOut className="w-4 h-4 text-rose-400" />
               <span>خروج</span>
             </button>
-
           </div>
-
         </div>
-
-        {/* UNIFIED MODAL FOR SCHOOL DATA, LOGO & SIGNATORIES */}
-        <SchoolSignatoriesModal
-          isOpen={showSignatoriesConfig}
-          onClose={() => setShowSignatoriesConfig(false)}
-          signatories={signatories}
-          onSave={handleBulkUpdateSignatories}
-        />
       </header>
 
-      {/* Primary Dashboard Container with Sidebar and Content Area */}
-      <div className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row gap-5 items-start">
+      {/* Main content wrapper */}
+      <div className="flex-1 w-full max-w-7xl mx-auto px-4 py-6 flex flex-col gap-6">
         
-        {/* Main Side Navigation Bar */}
-        <Sidebar
-          currentSection={mainSection}
-          onSelectSection={(sec) => setMainSection(sec)}
-          studentsCount={students.length}
-          teachersCount={teachers.length}
-          isWhatsAppConnected={isWhatsAppConnected}
-          currentUser={currentUser}
-          schoolName={signatories.schoolName}
-          isCollapsed={isSidebarCollapsed}
-          onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
-          onOpenDatabaseModal={() => setShowDatabaseModal(true)}
-        />
-
-        {/* Dynamic Section Content Viewport */}
-        <main className="flex-1 min-w-0 flex flex-col gap-6" id="primary-content-viewport">
-          
-          {/* 1. Main Section: Home / Dashboard */}
-          {mainSection === "home" && (
-            <HomeDashboard
-              students={students}
-              teachersCount={teachers.length}
-              signatories={signatories}
-              config={config}
-              onNavigateToMessages={(tab) => {
-                setMainSection("messages");
-                if (tab) setActiveTab(tab);
-              }}
-              onNavigateToAttendance={() => setMainSection("attendance")}
-              onNavigateToTeachersSchedule={() => setMainSection("teachers_schedule")}
-              onNavigateToInquiry={() => setMainSection("inquiry")}
-              onOpenSignatoriesConfig={() => setShowSignatoriesConfig(true)}
-            />
+        {/* Navigation tabs row */}
+        <nav className="bg-white p-1.5 rounded-2xl shadow-xs border border-slate-100 flex flex-wrap items-center gap-1">
+          {isTabAllowed("input") && (
+            <button
+              onClick={() => setActiveTab("input")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "input"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Plus className="w-4 h-4" /> إدخال كاش ومبيعات
+            </button>
           )}
 
-          {/* 2. Main Section: Teachers Registry & School Schedule (Placed under Home) */}
-          {mainSection === "teachers_schedule" && (
-            <TeachersScheduleManager
-              teachers={teachers}
-              scheduleAssignments={scheduleAssignments}
-              students={students}
-              onUpdateTeachers={handleUpdateTeachers}
-              onUpdateSchedule={handleUpdateSchedule}
-              schoolSignatories={signatories}
-              isWhatsAppConnected={isWhatsAppConnected}
-              onNavigateToInquiry={() => setMainSection("inquiry")}
-              onNavigateToMessages={() => {
-                setMainSection("messages");
-                setActiveTab("connection");
-              }}
-            />
+          {isTabAllowed("purchases") && (
+            <button
+              onClick={() => setActiveTab("purchases")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "purchases"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4" /> تتبع المشتريات والمخزون
+            </button>
           )}
 
-          {/* 2. Main Section: Messaging System (Existing tabs & features) */}
-          <div className={mainSection === "messages" ? "flex flex-col gap-6 w-full animate-fadeIn" : "hidden"}>
-            
-            {/* Navigation / Wizard Tab Links */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 bg-white border border-slate-200/80 p-1.5 rounded-2xl shadow-sm text-sm font-semibold text-slate-500 gap-1" id="wizard-navigation-tabs">
-              
-              <button
-                onClick={() => setActiveTab("connection")}
-                className={`py-3 px-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs sm:text-sm ${
-                  activeTab === "connection"
-                    ? "bg-slate-900 text-white shadow-sm font-bold"
-                    : "hover:text-slate-800 hover:bg-slate-50"
-                }`}
-                id="tab-btn-connection"
-              >
-                <Link2 className="w-4 h-4 shrink-0" />
-                <span>الربط والاتصال</span>
-              </button>
+          {isTabAllowed("tax") && (
+            <button
+              onClick={() => setActiveTab("tax")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "tax"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Receipt className="w-4 h-4" /> الفواتير الضريبية
+            </button>
+          )}
 
-              <button
-                onClick={() => setActiveTab("upload")}
-                className={`py-3 px-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs sm:text-sm ${
-                  activeTab === "upload"
-                    ? "bg-slate-900 text-white shadow-sm font-bold"
-                    : "hover:text-slate-800 hover:bg-slate-50"
-                }`}
-                id="tab-btn-upload"
-              >
-                <FileSpreadsheet className="w-4 h-4 shrink-0" />
-                <span>رفع كشوف الطلاب</span>
-              </button>
+          {isTabAllowed("reports") && (
+            <button
+              onClick={() => setActiveTab("reports")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "reports"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" /> قياس كفاءة الفروع والتقارير
+            </button>
+          )}
 
-              <button
-                onClick={() => setActiveTab("send")}
-                disabled={students.length === 0}
-                className={`py-3 px-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed text-xs sm:text-sm ${
-                  activeTab === "send"
-                    ? "bg-slate-900 text-white shadow-sm font-bold"
-                    : "hover:text-slate-800 hover:bg-slate-50"
-                }`}
-                id="tab-btn-send"
-              >
-                <Send className="w-4 h-4 shrink-0 rotate-180" />
-                <span>حملة الإرسال الجماعي</span>
-              </button>
+          {isTabAllowed("employees") && (
+            <button
+              onClick={() => setActiveTab("employees")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "employees"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Users className="w-4 h-4" /> إدارة الموظفين
+            </button>
+          )}
 
-              <button
-                onClick={() => setActiveTab("individual")}
-                className={`py-3 px-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs sm:text-sm ${
-                  activeTab === "individual"
-                    ? "bg-slate-900 text-white shadow-sm font-bold"
-                    : "hover:text-slate-800 hover:bg-slate-50"
-                }`}
-                id="tab-btn-individual"
-              >
-                <User className="w-4 h-4 shrink-0" />
-                <span>إرسال فردي سريع</span>
-              </button>
+          {isTabAllowed("bakery") && (
+            <button
+              onClick={() => setActiveTab("bakery")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "bakery"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <ChefHat className="w-4 h-4" /> ضبط المخبز والمطابقة
+            </button>
+          )}
 
-              <button
-                onClick={() => setActiveTab("reports")}
-                className={`py-3 px-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs sm:text-sm col-span-2 sm:col-span-1 ${
-                  activeTab === "reports"
-                    ? "bg-emerald-700 text-white shadow-sm font-bold"
-                    : "hover:text-emerald-800 hover:bg-emerald-50/60 text-emerald-700"
-                }`}
-                id="tab-btn-reports"
-              >
-                <Printer className="w-4 h-4 shrink-0" />
-                <span>التقارير والطباعة</span>
-              </button>
+          {isTabAllowed("drinks") && (
+            <button
+              onClick={() => setActiveTab("drinks")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "drinks"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <CupSoda className="w-4 h-4" /> ضبط المشروبات والمطابقة
+            </button>
+          )}
 
-            </div>
+          {isTabAllowed("assistant") && (
+            <button
+              onClick={() => setActiveTab("assistant")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "assistant"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Terminal className="w-4 h-4 text-amber-500" /> بوابة المحاسب الثاني
+            </button>
+          )}
 
-            {/* Wizard Main Panel with Keep-Alive View Preservation */}
-            <div className="flex-1" id="wizard-panels-viewport">
-              <div className={activeTab === "connection" ? "block" : "hidden"}>
-                <ConnectionPanel 
-                  config={config} 
-                  onUpdateConfig={(updated) => setConfig((prev) => ({ ...prev, ...updated }))} 
-                  onRefreshConfig={fetchConfig}
+          {isTabAllowed("settings") && (
+            <button
+              onClick={() => setActiveTab("settings")}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "settings"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <SettingsIcon className="w-4 h-4" /> التحكم والأهداف
+            </button>
+          )}
+        </nav>
+
+        {/* Tabs views orchestration */}
+        <main className="flex-1">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+            >
+              {activeTab === "input" && isTabAllowed("input") && (
+                <DailyInputTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "assistant" && isTabAllowed("assistant") && (
+                <SecondAccountantTab 
+                  onShowToast={showToast} 
+                  userRole={userRole} 
+                  userBranch={currentUser?.branch || "الكل"} 
+                  userName={currentUser?.displayName || currentUser?.username}
                 />
-              </div>
-
-              <div className={activeTab === "upload" ? "block" : "hidden"}>
-                <ExcelUploader 
-                  students={students} 
-                  onStudentsLoaded={handleUpdateStudents} 
-                />
-              </div>
-
-              <div className={activeTab === "send" ? "block" : "hidden"}>
-                <CampaignMonitor 
-                  students={students} 
-                  template={template} 
-                  onTemplateChange={handleTemplateChange}
-                  isWhatsAppConnected={isWhatsAppConnected}
-                />
-              </div>
-
-              <div className={activeTab === "individual" ? "block" : "hidden"}>
-                <IndividualSender 
-                  isWhatsAppConnected={isWhatsAppConnected} 
-                  onNavigateToConnection={() => setActiveTab("connection")}
-                />
-              </div>
-
-              <div className={activeTab === "reports" ? "block" : "hidden"}>
-                <ReportsPrinter 
-                  students={students}
-                  signatories={signatories}
-                  template={template}
-                  onUpdateSignatory={handleBulkUpdateSignatories}
-                  onOpenSignatoriesModal={() => setShowSignatoriesConfig(true)}
-                  onNavigateToTab={(tab) => setActiveTab(tab)}
-                />
-              </div>
-            </div>
-
-          </div>
-
-          {/* 3. Main Section: Attendance & Tardiness */}
-          {mainSection === "attendance" && (
-            <AttendanceSystem
-              students={students}
-              signatories={signatories}
-              isWhatsAppConnected={isWhatsAppConnected}
-              onNavigateToMessages={(tab) => {
-                setMainSection("messages");
-                if (tab) setActiveTab(tab);
-              }}
-            />
-          )}
-
-          {/* 4. Main Section: Student Inquiry & Teacher Feedback */}
-          {mainSection === "inquiry" && (
-            <StudentInquiry
-              students={students}
-              teachers={teachers}
-              scheduleAssignments={scheduleAssignments}
-              inquiryRequests={inquiryRequests}
-              onUpdateTeachers={handleUpdateTeachers}
-              onUpdateSchedule={handleUpdateSchedule}
-              onUpdateInquiries={handleUpdateInquiries}
-              schoolSignatories={signatories}
-              isWhatsAppConnected={isWhatsAppConnected}
-              onNavigateToWhatsApp={() => {
-                setMainSection("messages");
-                setActiveTab("connection");
-              }}
-              onNavigateToTeachersSchedule={() => setMainSection("teachers_schedule")}
-            />
-          )}
-
-          {/* 5. Main Section: Student Needs Survey (استبيان احتياجات الطلاب) */}
-          {mainSection === "student_needs" && (
-            <StudentNeedsSurveyMain
-              students={students}
-              isWhatsAppConnected={isWhatsAppConnected}
-              onNavigateToWhatsApp={() => {
-                setMainSection("messages");
-                setActiveTab("connection");
-              }}
-              schoolSignatories={signatories}
-              onOpenSignatoriesModal={() => setShowSignatoriesConfig(true)}
-              currentUser={currentUser}
-            />
-          )}
-
-          {/* 6. Main Section: Parent Councils (مجالس أولياء الأمور في التعليم العام) */}
-          {mainSection === "parent_councils" && (
-            <ParentCouncilDashboard
-              students={students}
-              schoolSignatories={signatories}
-              isWhatsAppConnected={isWhatsAppConnected}
-              onNavigateToWhatsApp={() => {
-                setMainSection("messages");
-                setActiveTab("connection");
-              }}
-              onOpenSignatoriesModal={() => setShowSignatoriesConfig(true)}
-            />
-          )}
-
-          {/* 6. Main Section: Admin & User Management */}
-          {mainSection === "admin" && currentUser.role === "admin" && (
-            <UserManagement
-              users={users}
-              currentUser={currentUser}
-              signatories={signatories}
-              isWhatsAppConnected={isWhatsAppConnected}
-              onSaveUsers={handleSaveUsers}
-            />
-          )}
-
+              )}
+              {activeTab === "purchases" && isTabAllowed("purchases") && (
+                <PurchasesTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "tax" && isTabAllowed("tax") && (
+                <TaxTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "reports" && isTabAllowed("reports") && (
+                <ReportsTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "employees" && isTabAllowed("employees") && (
+                <EmployeesTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "settings" && isTabAllowed("settings") && (
+                <SettingsTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "bakery" && isTabAllowed("bakery") && (
+                <BakeryTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "drinks" && isTabAllowed("drinks") && (
+                <DrinksTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </main>
-
       </div>
 
-      {/* System Footer Info */}
-      <footer className="bg-white border-t border-slate-200/80 py-5 text-center text-xs text-slate-500 select-none mt-8" id="main-footer">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-3">
-          <p className="font-medium">
-            جميع الحقوق محفوظة لـ {signatories.schoolName || "ثانوية الأبناء الأولى"} 2026 - 2027
-          </p>
-          <div className="flex items-center gap-4 text-[10px] font-bold">
-            <span className="flex items-center gap-1 text-emerald-600">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              تشفير واتصال آمن
-            </span>
-            <span className="flex items-center gap-1 text-slate-500">
-              <Smartphone className="w-3.5 h-3.5" />
-              متوافق مع الجوال والمتصفحات
-            </span>
-          </div>
-        </div>
+      {/* Footer footer */}
+      <footer className="bg-slate-900 border-t border-slate-800 text-slate-500 text-center py-4 text-[10px] tracking-wide mt-12">
+        مطعم أصل الاسكندر • كافة الحقوق المحفوظة لبراءة الذمة المحاسبية © {new Date().getFullYear()}
       </footer>
 
-      {/* Cloud Database Management Center Modal */}
-      <DatabaseManagementModal
-        isOpen={showDatabaseModal}
-        onClose={() => setShowDatabaseModal(false)}
-        students={students}
-        teachers={teachers}
-        schedule={scheduleAssignments}
-        attendanceRecords={(() => {
-          try {
-            return JSON.parse(localStorage.getItem("school_attendance_records") || "{}");
-          } catch {
-            return {};
-          }
-        })()}
-        inquiries={inquiryRequests}
-        users={users}
-        signatories={signatories}
-        currentUser={currentUser}
-        onRefreshAllData={fetchFullAppState}
-        onClearLocalSection={handleClearLocalSection}
-      />
+      {/* ⚠️ IDLE WARNING COUNTDOWN OVERLAY MODAL */}
+      <AnimatePresence>
+        {showIdleWarning && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[99999] flex items-center justify-center p-4" dir="rtl">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-slate-200 text-center space-y-6"
+            >
+              <div className="mx-auto bg-amber-50 rounded-2xl p-4 w-16 h-16 flex items-center justify-center border border-amber-200/50">
+                <Timer className="w-8 h-8 text-amber-600 animate-pulse" />
+              </div>
 
+              <div className="space-y-2">
+                <h3 className="text-base font-extrabold text-slate-900">⚠️ تنبيه: انتهاء الجلسة بسبب عدم النشاط</h3>
+                <p className="text-xs text-slate-500 font-bold leading-relaxed">
+                  أنت واقف عن العمل منذ أكثر من 5 دقائق. لحماية أمن البيانات المالية للمنظومة، سيتم تسجيل خروجك تلقائياً بعد:
+                </p>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl py-4 border border-slate-100 flex flex-col items-center justify-center">
+                <span className="text-4xl font-black font-mono text-indigo-700 animate-bounce">{idleCountdown}</span>
+                <span className="text-[10px] text-slate-400 font-bold mt-1">ثانية لطلب التمديد</span>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleExtendSession}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs py-3 rounded-xl shadow-md cursor-pointer transition-all hover:scale-[1.02]"
+                >
+                  استمرار العمل بالمنظومة
+                </button>
+                <button
+                  onClick={() => {
+                    sessionStorage.removeItem("alex_user_session");
+                    localStorage.removeItem("alex_user_session");
+                    setCurrentUser(null);
+                    setShowIdleWarning(false);
+                  }}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-5 py-3 rounded-xl cursor-pointer"
+                >
+                  الخروج الآن
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -63,24 +63,27 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
 
     setLoading(true);
     try {
-      // 1. Load Sales & Expenses statistics
-      const resStats = await fetch(`/api/reports?from=${fromDate}&to=${toDate}`);
-      const stats = await resStats.ok ? await resStats.json() : null;
-      setReportData(stats);
+      // Parallel loading: fetch reports and lightweight tax invoices together
+      const [resStats, resTax] = await Promise.all([
+        fetch(`/api/reports?from=${fromDate}&to=${toDate}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/tax-invoices?from=${fromDate}&to=${toDate}&includeImages=false`).then((r) =>
+          r.ok ? r.json() : []
+        )
+      ]);
 
-      // 2. Load Tax invoices in range
-      const resTax = await fetch(`/api/tax-invoices?from=${fromDate}&to=${toDate}`);
-      const taxList = await resTax.ok ? await resTax.json() : [];
-      setTaxData(taxList);
+      setReportData(resStats);
+      setTaxData(resTax);
 
-      // 3. Load System Settings
-      const resSettings = await fetch("/api/settings");
-      if (resSettings.ok) {
-        const sData = await resSettings.json();
-        setSettings(sData);
+      // Load System Settings once
+      if (!settings) {
+        const resSettings = await fetch("/api/settings");
+        if (resSettings.ok) {
+          const sData = await resSettings.json();
+          setSettings(sData);
+        }
       }
 
-      onShowToast("📊 تم تجميع وإحصاء التقرير الشامل للفترة بنجاح!");
+      onShowToast("📊 تم تجميع وإحصاء تقرير كفاءة الفروع للفترة بنجاح!");
     } catch (err) {
       console.error(err);
       onShowToast("❌ فشل تجميع التقرير المالي");
@@ -91,7 +94,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
 
   useEffect(() => {
     loadReport();
-  }, [reportMode, singleDate, branch, from, to]); // Auto trigger on quick changes or date updates
+  }, [reportMode, singleDate, from, to]); // Auto trigger on date range updates (branch filtering is instant in-memory)
 
   // Calculations
   const q = reportData?.qStats || { total: 0, cash: 0, pos: 0, count: 0, max: 0, maxDate: "", min: 0, minDate: "", avg: 0 };
