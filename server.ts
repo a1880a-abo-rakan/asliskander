@@ -65,9 +65,9 @@ async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1
   let attempt = 0;
   // Dynamic fallback models list with standard official supported Gemini models
   const modelsToTry = [
-    "gemini-3.8-flash",
-    "gemini-flash-latest",
-    "gemini-3.1-pro-preview"
+    "gemini-2.5-flash",
+    "gemini-3.7-flash",
+    "gemini-2.5-pro"
   ];
 
   while (attempt <= maxRetries) {
@@ -488,7 +488,7 @@ function isDeepEqual(obj1: any, obj2: any): boolean {
 
 async function getDays(): Promise<DailyEntry[]> {
   if (daysLoaded) {
-    return Array.from(daysCache.values());
+    return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
   }
   try {
     const snap = await getDocs(collection(db, "days"));
@@ -501,7 +501,8 @@ async function getDays(): Promise<DailyEntry[]> {
           data.id = d.id;
         }
         list.push(data);
-        daysCache.set(data.id, cleanObject(data));
+        // Cache the deeply cleaned version
+        daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
     daysLoaded = true;
@@ -611,7 +612,7 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
 
 async function getTaxInvoices(): Promise<TaxInvoice[]> {
   if (taxInvoicesLoaded) {
-    return Array.from(taxInvoicesCache.values());
+    return Array.from(taxInvoicesCache.values()).map(i => JSON.parse(JSON.stringify(i)));
   }
   try {
     const snap = await getDocs(collection(db, "tax_invoices"));
@@ -624,7 +625,7 @@ async function getTaxInvoices(): Promise<TaxInvoice[]> {
           data.id = d.id;
         }
         list.push(data);
-        taxInvoicesCache.set(data.id, cleanObject(data));
+        taxInvoicesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
     taxInvoicesLoaded = true;
@@ -1084,6 +1085,11 @@ async function autoRegisterDayInputsAsPurchases(entry: DailyEntry) {
       addOrUpdate("groc", "بقالة", grocVal, "1");
     }
 
+    // Warehouse purchase
+    if (entry.makhzan && entry.makhzan > 0) {
+      addOrUpdate("makhzan", "مستودع (حبة الأخضر)", entry.makhzan, "1");
+    }
+
     // Invoices / payments entered as part of day
     if (entry.pepsi_paid && entry.pepsi_paid > 0 && entry.pepsi_type === 'invoice') {
       addOrUpdate("pepsi", "بيبسي", entry.pepsi_paid, "1");
@@ -1378,10 +1384,8 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
     entry.net_day = Number((entry.total_sales - correctExpensesTotal).toFixed(2));
   }
 
-  // Update original list with rescheduled elements
-  const otherBranchDays = allDays.filter((d) => d.branch !== branch);
-  const updatedDays = [...otherBranchDays, ...filtered];
-  await saveDays(updatedDays);
+  // Save only the calculated branch's days to avoid cross-branch race conditions or overwriting
+  await saveDays(filtered);
 }
 
 // --- WHATSAPP SYSTEM HELPERS ---
@@ -1446,7 +1450,7 @@ async function saveWhatsAppMessage(msg: any): Promise<void> {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
@@ -1971,11 +1975,9 @@ async function startServer() {
     }
     await saveDays(allDays);
 
-    // Call dynamic carry-over recalculation loop for both branches concurrently
-    await Promise.all([
-      recalculateCarryOvers("القادسية"),
-      recalculateCarryOvers("المروج")
-    ]);
+    // Call dynamic carry-over recalculation loop sequentially for both branches
+    await recalculateCarryOvers("القادسية");
+    await recalculateCarryOvers("المروج");
 
     // Fetch refreshed result back
     const refreshed = (await getDays()).find((d) => d.id === id);
@@ -2083,11 +2085,9 @@ async function startServer() {
       return res.status(400).json({ error: "No ids or deleteAll specified" });
     }
 
-    // Recalculate carryovers for both branches concurrently so everything re-balances correctly
-    await Promise.all([
-      recalculateCarryOvers("القادسية"),
-      recalculateCarryOvers("المروج")
-    ]);
+    // Recalculate carryovers for both branches sequentially so everything re-balances correctly
+    await recalculateCarryOvers("القادسية");
+    await recalculateCarryOvers("المروج");
 
     res.json({ success: true });
   });
@@ -2220,41 +2220,14 @@ async function startServer() {
     const from = req.query.from as string;
     const to = req.query.to as string;
     const status = req.query.status as string;
-    const includeImages = req.query.includeImages === "true";
     let invoices = await getTaxInvoices();
 
-    if (from) invoices = invoices.filter((i) => (i.date || i.invoice_date) >= from);
-    if (to) invoices = invoices.filter((i) => (i.date || i.invoice_date) <= to);
+    if (from) invoices = invoices.filter((i) => i.date >= from);
+    if (to) invoices = invoices.filter((i) => i.date <= to);
     if (status) invoices = invoices.filter((i) => i.status === status);
 
     invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
-
-    if (!includeImages) {
-      const lightweight = invoices.map(i => {
-        const { rawImage, ...rest } = i;
-        return {
-          ...rest,
-          hasImage: !!rawImage
-        };
-      });
-      return res.json(lightweight);
-    }
-
     res.json(invoices);
-  });
-
-  app.get("/api/tax-invoices/:id/image", async (req, res) => {
-    const { id } = req.params;
-    const invoices = await getTaxInvoices();
-    const invoice = invoices.find(i => i.id === id);
-    if (!invoice) {
-      return res.status(404).json({ error: "Invoice not found" });
-    }
-    res.json({
-      id: invoice.id,
-      rawImage: invoice.rawImage || "",
-      fileType: invoice.fileType || ""
-    });
   });
 
   app.post("/api/tax-invoices", async (req, res) => {
@@ -2426,7 +2399,7 @@ async function startServer() {
             "   - If individual line items cannot be determined, provide a single item with the invoice description and total amount.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-3.8-flash",
+            model: "gemini-2.5-flash",
             contents: {
               parts: [
                 {
@@ -2441,9 +2414,6 @@ async function startServer() {
               ],
             },
             config: {
-              thinkingConfig: {
-                thinkingLevel: ThinkingLevel.LOW,
-              },
               temperature: 0.1,
               responseMimeType: "application/json",
               responseSchema: {
@@ -2543,8 +2513,7 @@ async function startServer() {
             items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => ({
               name: String(it.name || "").trim(),
               qty: it.qty !== undefined ? String(it.qty).trim() : "1 حبة",
-              price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0),
-              category: String(it.category || "").trim()
+              price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
             })).filter((it: any) => it.name !== "") : [],
             tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
           };
@@ -2674,15 +2643,6 @@ async function startServer() {
     const taxInvoicesTotalQ = Number(qTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
     const taxInvoicesTotalM = Number(mTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
 
-    const lightQTax = qTaxInvoices.map(i => {
-      const { rawImage, ...rest } = i;
-      return { ...rest, hasImage: !!rawImage };
-    });
-    const lightMTax = mTaxInvoices.map(i => {
-      const { rawImage, ...rest } = i;
-      return { ...rest, hasImage: !!rawImage };
-    });
-
     res.json({
       qStats: getStats(qData),
       mStats: getStats(mData),
@@ -2690,8 +2650,8 @@ async function startServer() {
       mExp: getExpensesBreakdown(mData, mTaxInvoices),
       qData,
       mData,
-      qTaxInvoices: lightQTax,
-      mTaxInvoices: lightMTax,
+      qTaxInvoices,
+      mTaxInvoices,
       taxInvoicesTotalQ,
       taxInvoicesTotalM
     });
@@ -3278,26 +3238,6 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    // Warm up Firestore caches asynchronously in the background so all client queries are instant
-    setTimeout(async () => {
-      try {
-        console.log("[Cache Warmup] Warming up system caches in background...");
-        await Promise.allSettled([
-          getSettings(),
-          getDays(),
-          getTaxInvoices(),
-          getPurchases(),
-          getDiesels(),
-          getTaxRegisteredCompanies(),
-          getEmployees(),
-          getBakeryEntries(),
-          getDrinksEntries()
-        ]);
-        console.log("[Cache Warmup] System caches loaded and ready for ultra-fast responses!");
-      } catch (err) {
-        console.warn("[Cache Warmup] Notice during cache warmup:", err);
-      }
-    }, 100);
   });
 }
 

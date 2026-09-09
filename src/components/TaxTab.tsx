@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from "react";
 import { TaxInvoice, TaxInvoiceItem } from "../types";
 import ReorderTimerBanner from "./ReorderTimerBanner";
 import { AiExtractionProgressBar } from "./AiExtractionProgressBar";
-import { InvoiceCameraModal } from "./InvoiceCameraModal";
 import { 
   Receipt, 
   Calendar, 
@@ -352,31 +351,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [editDate, setEditDate] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<TaxInvoice | null>(null);
   const [previewAmountStr, setPreviewAmountStr] = useState<string>("");
-  const [loadingPreviewImage, setLoadingPreviewImage] = useState(false);
-  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
 
   useEffect(() => {
     if (previewInvoice) {
       setPreviewAmountStr(String(previewInvoice.amount));
-      if (previewInvoice.id && !previewInvoice.rawImage) {
-        setLoadingPreviewImage(true);
-        fetch(`/api/tax-invoices/${encodeURIComponent(previewInvoice.id)}/image`)
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
-            if (data && data.rawImage) {
-              setPreviewInvoice((prev) =>
-                prev && prev.id === data.id
-                  ? { ...prev, rawImage: data.rawImage, fileType: data.fileType || prev.fileType }
-                  : prev
-              );
-            }
-          })
-          .catch((err) => console.error("Error loading invoice image:", err))
-          .finally(() => setLoadingPreviewImage(false));
-      }
     } else {
       setPreviewAmountStr("");
-      setLoadingPreviewImage(false);
     }
   }, [previewInvoice?.id]);
   const [previewImgZoom, setPreviewImgZoom] = useState(1);
@@ -1021,7 +1001,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       onShowToast("⚠️ يرجى تحديد نطاق التاريخ المطلوب");
       return;
     }
-    setLoading(true);
+    const isFirstTime = !hasInitiallyLoaded;
+    if (isFirstTime) {
+      setLoading(true);
+    }
     try {
       const promises: Promise<any>[] = [
         loadCompanies(),
@@ -1033,8 +1016,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       }
 
       const url = userRole === "مدخل فواتير"
-        ? "/api/tax-invoices?includeImages=false"
-        : `/api/tax-invoices?from=${from}&to=${to}&includeImages=false`;
+        ? "/api/tax-invoices"
+        : `/api/tax-invoices?from=${from}&to=${to}`;
 
       promises.push(
         fetch(url)
@@ -1054,8 +1037,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 const rep = await resReport.json();
                 cachedReportRawData = rep;
                 setReportRawData(rep);
-                const qPos = rep.qStats?.pos || 0;
-                const mPos = rep.mStats?.pos || 0;
+                const qPos = rep.qStats.pos || 0;
+                const mPos = rep.mStats.pos || 0;
                 const newStats = {
                   qPos,
                   mPos,
@@ -1071,7 +1054,6 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       await Promise.all(promises);
       hasInitiallyLoaded = true;
-      onShowToast("⚡ تم استعراض الفواتير الضريبية وتحديث الحسابات فوراً!");
     } catch (err) {
       console.error(err);
       onShowToast("❌ فشل تحميل بيانات التقرير الضريبي");
@@ -1783,42 +1765,23 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               
               <button
                 type="button"
-                onClick={() => {
-                  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    setIsCameraModalOpen(true);
-                  } else {
-                    document.getElementById("ai-camera-input")?.click();
-                  }
-                }}
+                onClick={() => document.getElementById("ai-camera-input")?.click()}
                 className="px-5 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-indigo-200"
               >
-                <Camera className="w-4 h-4" /> تصوير الفاتورة بالكاميرا
+                <Camera className="w-4 h-4" /> تصوير الفاتورة بالجوال
               </button>
             </div>
           </div>
 
-          {/* AI Loader Overlay with 3-Second Ultra-Fast Progress */}
+          {/* AI Loader Overlay with 5-Second Real Countdown */}
           {ocrLoading && (
             <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 rounded-2xl z-20">
               <div className="w-full max-w-md">
-                <AiExtractionProgressBar isExtracting={ocrLoading} estimatedSeconds={3} />
+                <AiExtractionProgressBar isExtracting={ocrLoading} estimatedSeconds={5} />
               </div>
             </div>
           )}
         </div>
-
-        {/* Live Camera Viewfinder Modal */}
-        <InvoiceCameraModal
-          isOpen={isCameraModalOpen}
-          onClose={() => setIsCameraModalOpen(false)}
-          onCapture={(file) => {
-            setIsCameraModalOpen(false);
-            processFiles([file]);
-          }}
-          onFallback={() => {
-            document.getElementById("ai-camera-input")?.click();
-          }}
-        />
 
         {/* Global Floating/Top Progress Bar when scanning */}
         {ocrLoading && (
@@ -3807,7 +3770,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         const pinvIdx = parsedInvoices.findIndex(p => p.tempId === auditInvoiceId);
 
         return (
-          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305 visual-inspection-modal" dir="rtl">
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
             <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
               
               {/* Modal Header */}
@@ -3955,7 +3918,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           }}
                           registeredCompanies={registeredCompanies}
                           onRegisterCompany={(name) => handleAddSupplier(name)}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-white !text-white"
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
                         />
                       </div>
 
@@ -3970,7 +3933,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].invoice_date = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white [color-scheme:dark]"
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
                         />
                       </div>
 
@@ -3985,7 +3948,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].invoice_no = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white"
+                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
                           placeholder="Inv-XXXXXXXX"
                         />
                       </div>
@@ -4002,7 +3965,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].amount = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-white !text-white rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                          className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
                         />
                       </div>
                     </div>
@@ -4104,7 +4067,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-extrabold placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                                 />
                               </div>
 
@@ -4122,7 +4085,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-white !text-white font-semibold focus:outline-none placeholder-pink-300/60"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
                                 />
                               </div>
 
@@ -4140,7 +4103,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-center focus:outline-none"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
                                 />
                               </div>
 
@@ -4159,7 +4122,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-left font-black focus:outline-none placeholder-slate-400"
+                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
                                 />
                               </div>
 
@@ -4244,7 +4207,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       {/* Immersive Visual Inspection & Preview Modal for Manager (Same system as Manager Audit Modal) */}
       {previewInvoice && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305 visual-inspection-modal" dir="rtl">
+        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
           <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             
             {/* Modal Header */}
@@ -4341,14 +4304,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     setPreviewImgZoom(prev => Math.max(0.4, Math.min(prev + delta, 4.5)));
                   }}
                 >
-                  {loadingPreviewImage ? (
-                    <div className="text-indigo-400 text-xs font-bold flex flex-col items-center gap-2">
-                      <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-                      <span>جاري تحميل صورة الفاتورة المرفقة...</span>
-                    </div>
-                  ) : !previewInvoice.rawImage ? (
+                  {!previewInvoice.rawImage ? (
                     <div className="text-slate-500 text-xs font-bold flex flex-col items-center gap-2">
-                      <FileText className="w-8 h-8 text-slate-600" />
+                      <FileText className="w-8 h-8 text-slate-600 animate-bounce" />
                       <span>لم يتم إرفاق ملف ممسوح بصریاً من مدخل الفاتورة</span>
                     </div>
                   ) : previewInvoice.fileType === "application/pdf" ? (
@@ -4409,7 +4367,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         }}
                         registeredCompanies={registeredCompanies}
                         onRegisterCompany={(name) => handleAddSupplier(name)}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-white !text-white"
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
                       />
                     </div>
 
@@ -4422,7 +4380,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         onChange={(e) => {
                           setPreviewInvoice({ ...previewInvoice, invoice_date: e.target.value });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white [color-scheme:dark]"
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
                       />
                     </div>
 
@@ -4435,7 +4393,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         onChange={(e) => {
                           setPreviewInvoice({ ...previewInvoice, invoice_no: e.target.value });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-white !text-white"
+                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
                         placeholder="Inv-XXXXXXXX"
                       />
                     </div>
@@ -4456,7 +4414,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             amount: isNaN(parsed) ? 0 : parsed
                           });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-white !text-white rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                        className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
                       />
                     </div>
                   </div>
@@ -4551,7 +4509,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], name: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-extrabold placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                               />
                             </div>
 
@@ -4567,7 +4525,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], category: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-white !text-white font-semibold focus:outline-none placeholder-pink-300/60"
+                                className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
                               />
                             </div>
 
@@ -4583,7 +4541,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], qty: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-center focus:outline-none"
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
                               />
                             </div>
 
@@ -4600,7 +4558,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], price_with_tax: val === "" ? 0 : parseFloat(val) };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-white !text-white font-mono text-left font-black focus:outline-none placeholder-slate-400"
+                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
                               />
                             </div>
 

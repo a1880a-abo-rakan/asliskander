@@ -110,6 +110,16 @@ export default function SecondAccountantTab({
   // 8. Diesel (الديزل) -> diesel_paid
   const [dieselPaid, setDieselPaid] = useState<number | "">("");
 
+  // Supplier installment entry types: 'payment' (دفع قسط مالي) | 'invoice' (فاتورة جديدة كاملة)
+  const [pepsiType, setPepsiType] = useState<'payment' | 'invoice'>('invoice');
+  const [plasticType, setPlasticType] = useState<'payment' | 'invoice'>('invoice');
+  const [saucesType, setSaucesType] = useState<'payment' | 'invoice'>('invoice');
+  const [dieselType, setDieselType] = useState<'payment' | 'invoice'>('invoice');
+
+  // Active carryovers & system settings for dynamic installment calculations
+  const [carryovers, setCarryovers] = useState<any[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+
   // 9. Delivery Count (عدد التوصيل)
   // For Qadisiyah: count multiplied by 6 SAR
   // For Murooj: entered directly as an amount
@@ -123,6 +133,31 @@ export default function SecondAccountantTab({
   const fetchDayData = async (selectedBranch: "القادسية" | "المروج", selectedDate: string) => {
     setLoading(true);
     try {
+      // Fetch carryovers for this branch and date concurrently with day data
+      let carryList: any[] = [];
+      try {
+        const carryRes = await fetch(`/api/carryover?branch=${encodeURIComponent(selectedBranch)}&date=${selectedDate}`);
+        if (carryRes.ok) {
+          carryList = await carryRes.json();
+          setCarryovers(carryList);
+        }
+      } catch (carryErr) {
+        console.error("Error fetching carryovers for second accountant:", carryErr);
+      }
+
+      // Fetch system settings if not yet loaded
+      if (!settings) {
+        try {
+          const setRes = await fetch("/api/settings");
+          if (setRes.ok) {
+            const setJson = await setRes.json();
+            setSettings(setJson);
+          }
+        } catch (setErr) {
+          console.error("Error fetching settings for second accountant:", setErr);
+        }
+      }
+
       const res = await fetch(`/api/days?branch=${selectedBranch}&from=${selectedDate}&to=${selectedDate}`);
       if (res.ok) {
         const list: DailyEntry[] = await res.json();
@@ -162,9 +197,16 @@ export default function SecondAccountantTab({
           // Suppliers
           setMakhzan(found.makhzan || "");
           setPepsiPaid(found.pepsi_paid || "");
+          setPepsiType(found.pepsi_type || (carryList.some(c => c.key === "pepsi" && c.carry > 0) ? 'payment' : 'invoice'));
+
           setPlasticPaid(found.plastic_paid || "");
+          setPlasticType(found.plastic_type || (carryList.some(c => c.key === "plastic" && c.carry > 0) ? 'payment' : 'invoice'));
+
           setSaucesPaid(found.sauces_paid || "");
+          setSaucesType(found.sauces_type || (carryList.some(c => c.key === "sauces" && c.carry > 0) ? 'payment' : 'invoice'));
+
           setDieselPaid(found.diesel_paid || "");
+          setDieselType(found.diesel_type || (carryList.some(c => c.key === "diesel" && c.carry > 0) ? 'payment' : 'invoice'));
 
           // Delivery
           const deliveryItem = (found.others || []).find(o => o.name === "توصيل");
@@ -186,8 +228,8 @@ export default function SecondAccountantTab({
           setNotes(found.notes || "");
         } else {
           setExistingEntry(null);
-          // Reset form to clean defaults
-          resetForm();
+          // Reset form to clean defaults with installment awareness
+          resetForm(carryList);
         }
       }
     } catch (err) {
@@ -197,7 +239,8 @@ export default function SecondAccountantTab({
     }
   };
 
-  const resetForm = () => {
+  const resetForm = (currentCarries?: any[]) => {
+    const list = currentCarries || carryovers;
     setCashBox("");
     setMada1("");
     setVisa1("");
@@ -215,6 +258,286 @@ export default function SecondAccountantTab({
     setDieselPaid("");
     setDeliveryCount("");
     setNotes("");
+
+    setPepsiType(list.some(c => c.key === "pepsi" && c.carry > 0) ? 'payment' : 'invoice');
+    setPlasticType(list.some(c => c.key === "plastic" && c.carry > 0) ? 'payment' : 'invoice');
+    setSaucesType(list.some(c => c.key === "sauces" && c.carry > 0) ? 'payment' : 'invoice');
+    setDieselType(list.some(c => c.key === "diesel" && c.carry > 0) ? 'payment' : 'invoice');
+  };
+
+  // Helper and calculations for interactive live installments feedback
+  const getCarryoverStats = (key: string, liveAddedAmtRaw: number | string, entryType: 'payment' | 'invoice') => {
+    const item = carryovers.find(c => c.key === key);
+    const liveAddedAmt = parseFloat(liveAddedAmtRaw as string) || 0;
+    
+    // Determine the active cap from settings or defaults
+    let currentCap = 400;
+    if (settings) {
+      if (key === "pepsi") {
+        currentCap = branch === "القادسية"
+          ? (settings.سقف_بيبسي_قادسية || settings.سقف_بيبسي || 400)
+          : (settings.سقف_بيبسي_مروج || settings.سقف_بيبسي || 400);
+      } else if (key === "plastic") {
+        currentCap = branch === "القادسية"
+          ? (settings.سقف_بلاستيك_قادسية || settings.سقف_بلاستيك || 100)
+          : (settings.سقف_بلاستيك_مروج || settings.سقف_بلاستيك || 100);
+      } else if (key === "sauces") {
+        currentCap = branch === "القادسية"
+          ? (settings.سقف_صلصات_قادسية || settings.سقف_صلصات || 150)
+          : (settings.سقف_صلصات_مروج || settings.سقف_صلصات || 150);
+      } else if (key === "diesel") {
+        currentCap = branch === "القادسية" ? (settings.سقف_ديزل_قادسية || 50) : (settings.سقف_ديزل_مروج || 30);
+      }
+    }
+
+    if (!item) {
+      // No active carryover from yesterday (fresh starts or currently clear)
+      if (liveAddedAmt > 0) {
+        const deduct = Math.min(liveAddedAmt, currentCap);
+        const remaining = Math.max(0, liveAddedAmt - deduct);
+        const daysLeft = currentCap > 0 ? Math.ceil(remaining / currentCap) : 0;
+        return {
+          hasPrev: false,
+          prevCarry: 0,
+          cap: currentCap,
+          deduct,
+          remaining,
+          totalOriginal: liveAddedAmt,
+          daysPassed: deduct > 0 ? 1 : 0,
+          daysLeft,
+          exceedsCap: liveAddedAmt > currentCap
+        };
+      }
+      return null;
+    }
+
+    // There is an active carryover in progress
+    const prevCarry = item.carry || 0;
+
+    let deduct = 0;
+    let remaining = prevCarry;
+    let totalOriginal = item.totalOriginal || prevCarry;
+    let daysPassed = item.daysPassed || 0;
+
+    if (entryType === 'invoice') {
+      // New invoice being added
+      if (liveAddedAmt > 0) {
+        totalOriginal = Number(((item.totalOriginal || 0) + liveAddedAmt).toFixed(2));
+        const totalBalance = Number((prevCarry + liveAddedAmt).toFixed(2));
+        deduct = Math.min(totalBalance, currentCap);
+        remaining = Number((totalBalance - deduct).toFixed(2));
+      } else {
+        // empty invoice entered - fallback to auto-deducting previous carryover
+        deduct = Math.min(prevCarry, currentCap);
+        remaining = Number((prevCarry - deduct).toFixed(2));
+      }
+    } else {
+      // payment mode represent payments or automatic deduction
+      if (liveAddedAmt > 0) {
+        // Manual payment specified
+        deduct = Math.min(liveAddedAmt, prevCarry);
+        remaining = Number((prevCarry - deduct).toFixed(2));
+      } else {
+        // No input: automatic deduction up to current cap
+        deduct = Math.min(prevCarry, currentCap);
+        remaining = Number((prevCarry - deduct).toFixed(2));
+      }
+    }
+
+    // Number of days left of installments
+    const daysLeft = currentCap > 0 ? Math.ceil(remaining / currentCap) : 0;
+
+    return {
+      hasPrev: true,
+      prevCarry,
+      cap: currentCap,
+      deduct,
+      remaining,
+      totalOriginal,
+      daysPassed: deduct > 0 ? daysPassed + 1 : daysPassed,
+      daysLeft,
+      exceedsCap: entryType === 'invoice' && liveAddedAmt > currentCap
+    };
+  };
+
+  const renderSupplierInstallmentCard = (
+    key: "pepsi" | "plastic" | "sauces" | "diesel",
+    title: string,
+    badgeText: string,
+    badgeColor: string,
+    paid: number | "",
+    setPaid: (val: number | "") => void,
+    entryType: "payment" | "invoice",
+    setEntryType: (val: "payment" | "invoice") => void
+  ) => {
+    const carryItem = carryovers.find(c => c.key === key);
+    const hasActiveInstallment = Boolean(carryItem && carryItem.carry > 0);
+    const stats = getCarryoverStats(key, paid, entryType);
+    const quickCapAmt = carryItem ? Math.min(carryItem.carry, carryItem.cap) : (stats?.cap || 0);
+
+    return (
+      <div className="space-y-2.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 flex flex-col justify-between">
+        <div className="space-y-2">
+          {/* Header */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <label className="block text-xs font-black text-slate-800">
+                <span>{title}</span>
+              </label>
+              <span className={`text-[9px] ${badgeColor} font-bold px-1.5 py-0.5 rounded`}>
+                {badgeText}
+              </span>
+            </div>
+
+            {/* Installment Status Pill */}
+            {hasActiveInstallment ? (
+              <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                <span>{t("قسط نشط", "Active", "किश्त चालू")}</span>
+                <span className="font-mono font-black">{carryItem?.carry.toFixed(0)}</span>
+                <span className="text-[8px] opacity-80">{t("ر", "SAR", "रियाल")}</span>
+              </span>
+            ) : (
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
+                <Check className="w-3 h-3 text-emerald-600" />
+                <span>{t("تم السداد", "Cleared", "कोई किश्त नहीं")}</span>
+              </span>
+            )}
+          </div>
+
+          {/* Mode Selector (Pay Installment vs Full New Invoice) */}
+          {hasActiveInstallment ? (
+            <div className="bg-white p-1 rounded-lg border border-slate-200 grid grid-cols-2 gap-1 text-[11px] font-bold">
+              <button
+                type="button"
+                disabled={!isEditable}
+                onClick={() => setEntryType("payment")}
+                className={`py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                  entryType === "payment"
+                    ? "bg-emerald-600 text-white shadow-xs font-black"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <span>🟢</span>
+                <span>{t("دفع قسط مالي", "Pay Installment", "किश्त भरें")}</span>
+              </button>
+              <button
+                type="button"
+                disabled={!isEditable}
+                onClick={() => setEntryType("invoice")}
+                className={`py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                  entryType === "invoice"
+                    ? "bg-blue-600 text-white shadow-xs font-black"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                <span>🔵</span>
+                <span>{t("فاتورة كاملة", "Full Invoice", "नया पूरा बिल")}</span>
+              </button>
+            </div>
+          ) : (
+            <div className="bg-emerald-50/60 border border-emerald-100 px-2.5 py-1 rounded-lg text-[10px] text-emerald-800 flex items-center justify-between">
+              <span>{t("الرصيد مصفّر بالكامل", "Zero Balance", "पिछला पूरा बकाया चुकता है")}</span>
+              <span className="font-bold bg-white px-1.5 py-0.5 rounded border border-emerald-200">
+                {t("مسموح فاتورة جديدة", "New Invoice Only", "केवल नया बिल")}
+              </span>
+            </div>
+          )}
+
+          {/* Amount input with Quick Cap Button */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-semibold text-slate-700">
+                {entryType === "payment" && hasActiveInstallment
+                  ? t("مبلغ القسط المسدد لليوم", "Today's installment payment", "आज की भरी जाने वाली किश्त")
+                  : t("مبلغ الفاتورة الإجمالي الجديد", "Total new invoice amount", "नया कुल बिल राशि")}
+              </span>
+              {hasActiveInstallment && entryType === "payment" && isEditable && quickCapAmt > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPaid(quickCapAmt)}
+                  className="text-[10px] bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold px-2 py-0.5 rounded border border-blue-200 transition-colors cursor-pointer"
+                >
+                  {t("قسط اليوم", "Today's Cap", "आज की किश्त")} ({quickCapAmt} {t("ر", "SAR", "रियाल")})
+                </button>
+              )}
+            </div>
+
+            <input
+              type="number"
+              step="0.01"
+              placeholder={
+                entryType === "payment" && hasActiveInstallment
+                  ? t("أدخل قيمة قسط اليوم أو اتركها تلقائية", "Enter installment amount or leave auto", "किश्त राशि लिखें या खाली छोड़ें")
+                  : t("أدخل قيمة الفاتورة الكاملة", "Enter full invoice amount", "पूरे बिल की राशि दर्ज करें")
+              }
+              disabled={!isEditable}
+              value={paid}
+              onChange={(e) => setPaid(e.target.value === "" ? "" : parseFloat(e.target.value))}
+              className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
+                !isEditable 
+                  ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
+                  : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-600"
+              }`}
+              style={{ color: "#000000" }}
+            />
+          </div>
+        </div>
+
+        {/* Live installment breakdown and queue alert */}
+        {stats && (
+          <div className="bg-white/95 rounded-lg border border-slate-200 p-2.5 space-y-2 text-[10px] mt-2">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-slate-600 font-mono">
+              <div className="flex justify-between border-b border-slate-100 pb-0.5">
+                <span className="text-slate-500 font-sans">{t("الفاتورة الإجمالية:", "Total Invoice:", "कुल बिल:")}</span>
+                <span className="font-bold text-slate-800">{stats.totalOriginal.toFixed(1)} {t("ر", "SAR", "रियाल")}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-100 pb-0.5">
+                <span className="text-slate-500 font-sans">{t("السقف اليومي:", "Daily Cap:", "दैनिक सीमा:")}</span>
+                <span className="font-bold text-slate-800">{stats.cap} {t("ر/يوم", "SAR/day", "रियाल/दिन")}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-100 pb-0.5">
+                <span className="text-slate-500 font-sans">{t("مصروف اليوم الفعلي:", "Today's Deduct:", "आज का ख़र्च:")}</span>
+                <span className="font-bold text-blue-700">{stats.deduct.toFixed(1)} {t("ر", "SAR", "रियाل")}</span>
+              </div>
+              <div className="flex justify-between border-b border-slate-100 pb-0.5">
+                <span className="text-slate-500 font-sans">{t("المتبقي للغد:", "Remaining:", "बकाया:")}</span>
+                <span className={`font-bold ${stats.remaining > 0 ? "text-amber-700" : "text-emerald-700"}`}>
+                  {stats.remaining.toFixed(1)} {t("ر", "SAR", "रियाल")}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
+              <span>{t("الأيام المتبقية:", "Days Left:", "बाकी दिन:")}</span>
+              <span className="font-bold font-mono text-slate-700">{stats.daysLeft} {t("يوم", "days", "दिन")}</span>
+            </div>
+
+            {/* Warning if invoice exceeds cap */}
+            {stats.exceedsCap && (
+              <div className="bg-amber-50 text-amber-900 border border-amber-200 rounded p-1.5 text-[9px] leading-relaxed">
+                ⚠️ {t(
+                  `الفاتورة أكبر من السقف اليومي (${stats.cap} ر). سيقوم النظام بجدولتها وصرفها بالتقسيط المجدول تلقائياً.`,
+                  `Invoice exceeds daily cap (${stats.cap} SAR). Scheduled auto-installments will be applied.`,
+                  `बिल दैनिक सीमा (${stats.cap} रियाल) से अधिक है। सिस्टम इसे किश्तों में बाँटेगा।`
+                )}
+              </div>
+            )}
+
+            {/* Alert if new invoice queued before previous installment finishes */}
+            {hasActiveInstallment && entryType === "invoice" && (
+              <div className="bg-blue-50 text-blue-900 border border-blue-200 rounded p-1.5 text-[9px] leading-relaxed">
+                🚨 {t(
+                  "تنبيه: لم ينتهِ القسط السابق! سيتم إدراج هذه الفاتورة الجديدة تلقائياً بعد استهلاك الأقساط الحالية وفق القواعد وحد القسط.",
+                  "Alert: Previous installment not finished! New invoice will queue automatically after current installments.",
+                  "सूचना: पिछली किश्त समाप्त नहीं हुई है! वर्तमान किश्तों के बाद यह नया बिल कतार में जुड़ेगा।"
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -346,16 +669,16 @@ export default function SecondAccountantTab({
         mada3: dev3Mada,
         visa3: dev3Visa,
         extra_pos_devices: extraDevicesClean,
-        // Suppliers - Any entered positive amount is registered as an invoice so it integrates seamlessly into the installment schedule and queue
+        // Suppliers - Properly tag as payment (installment deduction) or invoice (new bill with auto-scheduling)
         makhzan: valMakhzan,
         pepsi_paid: valPepsi,
-        pepsi_type: valPepsi > 0 ? "invoice" : (existingEntry?.pepsi_type || "payment"),
+        pepsi_type: carryovers.some(c => c.key === "pepsi" && c.carry > 0) ? pepsiType : "invoice",
         plastic_paid: valPlastic,
-        plastic_type: valPlastic > 0 ? "invoice" : (existingEntry?.plastic_type || "payment"),
+        plastic_type: carryovers.some(c => c.key === "plastic" && c.carry > 0) ? plasticType : "invoice",
         sauces_paid: valSauces,
-        sauces_type: valSauces > 0 ? "invoice" : (existingEntry?.sauces_type || "payment"),
+        sauces_type: carryovers.some(c => c.key === "sauces" && c.carry > 0) ? saucesType : "invoice",
         diesel_paid: valDiesel,
-        diesel_type: valDiesel > 0 ? "invoice" : (existingEntry?.diesel_type || "payment"),
+        diesel_type: carryovers.some(c => c.key === "diesel" && c.carry > 0) ? dieselType : "invoice",
         // Delivery
         delivery_count: rawDeliveryCount,
         delivery_rate: deliveryRate,
@@ -1114,136 +1437,52 @@ export default function SecondAccountantTab({
             </div>
 
             {/* 5. Pepsi: بيبسي ومشروبات */}
-            <div className="space-y-1.5 bg-slate-50/70 p-4 rounded-xl border border-slate-200/60">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-black text-slate-800">
-                  <span>{t("بيبسي ومشروبات", "Pepsi & Beverages", "पेप्सी और पेय पदार्थ (Pepsi)")}</span>
-                </label>
-                <span className="text-[9px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded">
-                  {t("مشروبات", "Beverages", "कोल्ड ड्रिंक्स")}
-                </span>
-              </div>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                disabled={!isEditable}
-                value={pepsiPaid}
-                onChange={(e) => setPepsiPaid(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
-                  !isEditable 
-                    ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
-                    : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                }`}
-                style={{ color: "#000000" }}
-              />
-              <p className="text-[9px] text-slate-500">
-                {t(
-                  "تُنقل كفاتورة مورد لحساب المدير وتخضع للتقسيط اليومي التلقائي، وتُضاف لجدولة الأقساط إذا وُجد قسط سابق.",
-                  "Transferred as supplier invoice to manager and scheduled for auto-installments, queuing after existing installments.",
-                  "सप्लायर बिल के तौर पर मैनेजर को जाएगा और रोज़ाना की किश्तों में जुड़ेगा।"
-                )}
-              </p>
-            </div>
+            {renderSupplierInstallmentCard(
+              "pepsi",
+              t("بيبسي ومشروبات", "Pepsi & Beverages", "पेप्सी और पेय पदार्थ (Pepsi)"),
+              t("مشروبات", "Beverages", "कोल्ड ड्रिंक्स"),
+              "bg-blue-100 text-blue-800",
+              pepsiPaid,
+              setPepsiPaid,
+              pepsiType,
+              setPepsiType
+            )}
 
             {/* 6. Packaging: صقر للتغليف */}
-            <div className="space-y-1.5 bg-slate-50/70 p-4 rounded-xl border border-slate-200/60">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-black text-slate-800">
-                  <span>{t("صقر للتغليف", "Saqr Packaging", "सक्र पैकेजिंग (Saqr Packaging)")}</span>
-                </label>
-                <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.5 rounded">
-                  {t("بلاستيكات", "Packaging", "प्लास्टिक/डिब्बे")}
-                </span>
-              </div>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                disabled={!isEditable}
-                value={plasticPaid}
-                onChange={(e) => setPlasticPaid(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
-                  !isEditable 
-                    ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
-                    : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                }`}
-                style={{ color: "#000000" }}
-              />
-              <p className="text-[9px] text-slate-500">
-                {t(
-                  "تُنقل كفاتورة مورد (بلاستيك ومغلفات) لحساب المدير وتخضع للتقسيط اليومي التلقائي والجدولة المستمرة.",
-                  "Transferred as packaging supplier invoice to manager and scheduled for continuous auto-installments.",
-                  "पैकिंग सप्लायर बिल के तौर पर मैनेजर को जाएगा और किश्तों में जुड़ेगा।"
-                )}
-              </p>
-            </div>
+            {renderSupplierInstallmentCard(
+              "plastic",
+              t("صقر للتغليف", "Saqr Packaging", "सक्र पैकेजिंग (Saqr Packaging)"),
+              t("بلاستيكات", "Packaging", "प्लास्टिक/डिब्बे"),
+              "bg-amber-100 text-amber-800",
+              plasticPaid,
+              setPlasticPaid,
+              plasticType,
+              setPlasticType
+            )}
 
             {/* 7. Sauces: الصلصات والمواد الأولية (أمل الرميح) */}
-            <div className="space-y-1.5 bg-slate-50/70 p-4 rounded-xl border border-slate-200/60">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-black text-slate-800">
-                  <span>{t("الصلصات والمواد الأولية (أمل الرميح)", "Sauces & Raw Materials (Amal Al-Romaih)", "सॉस और कच्चा माल - अमल अल-रुमैह (Sauces)")}</span>
-                </label>
-                <span className="text-[9px] bg-rose-100 text-rose-800 font-bold px-1.5 py-0.5 rounded">
-                  {t("صلصات", "Sauces", "सॉस")}
-                </span>
-              </div>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                disabled={!isEditable}
-                value={saucesPaid}
-                onChange={(e) => setSaucesPaid(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
-                  !isEditable 
-                    ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
-                    : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                }`}
-                style={{ color: "#000000" }}
-              />
-              <p className="text-[9px] text-slate-500">
-                {t(
-                  "تُنقل كفاتورة مورد لحساب المدير وتخضع للتقسيط اليومي التلقائي والجدولة المستمرة.",
-                  "Transferred as supplier invoice to manager and scheduled for continuous auto-installments.",
-                  "सप्लायर बिल के तौर पर मैनेजर को जाएगा और किश्तों में जुड़ेगा।"
-                )}
-              </p>
-            </div>
+            {renderSupplierInstallmentCard(
+              "sauces",
+              t("الصلصات والمواد الأولية (أمل الرميح)", "Sauces & Raw Materials (Amal Al-Romaih)", "सॉस और कच्चा माल - अमल अल-रुमैह (Sauces)"),
+              t("صلصات", "Sauces", "सॉस"),
+              "bg-rose-100 text-rose-800",
+              saucesPaid,
+              setSaucesPaid,
+              saucesType,
+              setSaucesType
+            )}
 
             {/* 8. Diesel: الديزل */}
-            <div className="space-y-1.5 bg-slate-50/70 p-4 rounded-xl border border-slate-200/60">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-black text-slate-800">
-                  <span>{t("الديزل", "Diesel Fuel", "डीज़ल (Diesel Fuel)")}</span>
-                </label>
-                <span className="text-[9px] bg-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded">
-                  {t("ديزل", "Diesel", "डीज़ल")}
-                </span>
-              </div>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                disabled={!isEditable}
-                value={dieselPaid}
-                onChange={(e) => setDieselPaid(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
-                  !isEditable 
-                    ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
-                    : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-600"
-                }`}
-                style={{ color: "#000000" }}
-              />
-              <p className="text-[9px] text-slate-500">
-                {t(
-                  "تُنقل كفاتورة ديزل لحساب المدير، وتوزع آلياً بين الفرعين وتخضع للتقسيط والجدولة المستمرة.",
-                  "Transferred as diesel invoice to manager, auto-split between branches and scheduled for installments.",
-                  "डीज़ल बिल के तौर पर मैनेजर को जाएगा, दोनों शाखाओं में बंटकर किश्तों में जुड़ेगा।"
-                )}
-              </p>
-            </div>
+            {renderSupplierInstallmentCard(
+              "diesel",
+              t("الديزل", "Diesel Fuel", "डीज़ल (Diesel Fuel)"),
+              t("ديزل", "Diesel", "डीज़ल"),
+              "bg-slate-200 text-slate-700",
+              dieselPaid,
+              setDieselPaid,
+              dieselType,
+              setDieselType
+            )}
           </div>
         </div>
 
