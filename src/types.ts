@@ -177,6 +177,9 @@ export interface Employee {
   requiredDepartureTime: string; // e.g. "01:00 AM"
   phone?: string;
   createdAt: string;
+  insuranceDeduction?: number; // خصم التأمينات الاجتماعية
+  unexcusedAbsenceDays?: number; // أيام الغياب بدون عذر
+  excusedAbsenceDays?: number; // أيام الغياب بعذر
 }
 
 export interface EmployeeAdvance {

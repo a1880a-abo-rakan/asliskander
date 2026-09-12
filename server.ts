@@ -57,17 +57,18 @@ function getAiClient(): GoogleGenAI | null {
 }
 
 // Helper to perform Gemini API generation with resilient retries for transient/503/404/quota errors
-async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 1000) {
+async function generateContentWithRetry(params: any, maxRetries = 3, delayMs = 500) {
   const aiClient = getAiClient();
   if (!aiClient) {
     throw new Error("لم يتم ضبط متغير البيئة (GEMINI_API_KEY) في خادم الاستضافة (Environment Variables)");
   }
   let attempt = 0;
-  // Dynamic fallback models list with standard official supported Gemini models
+  // Dynamic fallback models list prioritizing fast, multimodal flash models
   const modelsToTry = [
-    "gemini-2.5-flash",
-    "gemini-3.7-flash",
-    "gemini-2.5-pro"
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite"
   ];
 
   while (attempt <= maxRetries) {
@@ -2220,6 +2221,7 @@ async function startServer() {
     const from = req.query.from as string;
     const to = req.query.to as string;
     const status = req.query.status as string;
+    const excludeImage = req.query.excludeImage === "true";
     let invoices = await getTaxInvoices();
 
     if (from) invoices = invoices.filter((i) => i.date >= from);
@@ -2227,7 +2229,26 @@ async function startServer() {
     if (status) invoices = invoices.filter((i) => i.status === status);
 
     invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
+
+    if (excludeImage) {
+      invoices = invoices.map(inv => {
+        const { rawImage, ...rest } = inv;
+        return rest as TaxInvoice;
+      });
+    }
+
     res.json(invoices);
+  });
+
+  app.get("/api/tax-invoices/:id", async (req, res) => {
+    const rawId = req.params.id;
+    const decodedId = decodeURIComponent(rawId).trim();
+    const invoices = await getTaxInvoices();
+    const inv = invoices.find(i => i.id === rawId || i.id === decodedId);
+    if (!inv) {
+      return res.status(404).json({ error: "Invoice not found" });
+    }
+    res.json(inv);
   });
 
   app.post("/api/tax-invoices", async (req, res) => {
@@ -2369,7 +2390,7 @@ async function startServer() {
       const parseSingleImage = async (img: string, idx: number) => {
         try {
           // Extract mime type and base64 data
-          const matches = img.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+          const matches = img.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/s);
           let mimeType = "image/jpeg";
           let base64Data = img;
 
@@ -2377,6 +2398,9 @@ async function startServer() {
             mimeType = matches[1];
             base64Data = matches[2];
           }
+
+          // Clean whitespace, carriage returns and line feeds from base64 data
+          base64Data = base64Data.replace(/[\r\n\s]/g, "");
 
           // Highly precise prompt for absolute accuracy in OCR numbers and details
           const promptInstruction = "You are an expert OCR AI system specialized in Saudi Arabian tax invoices (ZATCA / هيئة الزكاة والضريبة والجمارك) and receipt analysis.\n\n" +
@@ -2399,7 +2423,7 @@ async function startServer() {
             "   - If individual line items cannot be determined, provide a single item with the invoice description and total amount.";
 
           const response = await generateContentWithRetry({
-            model: "gemini-2.5-flash",
+            model: "gemini-3.8-flash",
             contents: {
               parts: [
                 {
@@ -2643,6 +2667,11 @@ async function startServer() {
     const taxInvoicesTotalQ = Number(qTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
     const taxInvoicesTotalM = Number(mTaxInvoices.reduce((sum, i) => sum + (i.amount || 0), 0).toFixed(2));
 
+    const sanitizeInvoice = (inv: TaxInvoice) => {
+      const { rawImage, ...rest } = inv;
+      return rest;
+    };
+
     res.json({
       qStats: getStats(qData),
       mStats: getStats(mData),
@@ -2650,8 +2679,8 @@ async function startServer() {
       mExp: getExpensesBreakdown(mData, mTaxInvoices),
       qData,
       mData,
-      qTaxInvoices,
-      mTaxInvoices,
+      qTaxInvoices: qTaxInvoices.map(sanitizeInvoice),
+      mTaxInvoices: mTaxInvoices.map(sanitizeInvoice),
       taxInvoicesTotalQ,
       taxInvoicesTotalM
     });
@@ -2884,6 +2913,21 @@ async function startServer() {
       res.json({ success: true, employee: emp });
     } catch (err: any) {
       res.status(500).json({ error: "فشل حفظ بيانات الموظف" });
+    }
+  });
+
+  app.put("/api/employees/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const updated = req.body as Employee;
+      if (!updated || !updated.name || !updated.job || updated.salary === undefined) {
+        return res.status(400).json({ error: "الاسم والمهنة والراتب حقول مطلوبة" });
+      }
+      updated.id = id;
+      await saveEmployee(updated);
+      res.json({ success: true, employee: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: "فشل تحديث بيانات الموظف" });
     }
   });
 

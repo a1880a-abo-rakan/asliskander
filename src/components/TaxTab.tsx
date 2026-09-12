@@ -3901,14 +3901,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 </div>
 
                 {/* Left Column: Form Editor & Purchases Details */}
-                <div className="md:w-1/2 flex flex-col bg-slate-900 min-w-0">
-                  <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+                <div className="md:w-1/2 flex flex-col bg-slate-100 border-r border-slate-200 min-w-0 text-slate-900">
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
                     
                     {/* Invoice Meta Grid */}
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-3.5">
                       {/* Supplier/Company Custom Searchable Input */}
-                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                        <label className="block text-[10px] font-bold text-slate-400">اسم المورد / المؤسسة بالفاتورة:</label>
+                      <div className="space-y-1 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                        <label className="block text-xs font-bold text-slate-700">اسم المورد / المؤسسة بالفاتورة:</label>
                         <SearchableCompanyInput
                           value={pinv.company}
                           onChange={(val) => {
@@ -3918,13 +3918,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           }}
                           registeredCompanies={registeredCompanies}
                           onRegisterCompany={(name) => handleAddSupplier(name)}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
+                          className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                         />
                       </div>
 
                       {/* Invoice Date */}
-                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                        <label className="block text-[10px] font-bold text-slate-400">تاريخ الفاتورة المكتوب:</label>
+                      <div className="space-y-1 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                        <label className="block text-xs font-bold text-slate-700">تاريخ الفاتورة المكتوب:</label>
                         <input
                           type="date"
                           value={pinv.invoice_date}
@@ -3933,13 +3933,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].invoice_date = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                          className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                         />
                       </div>
 
                       {/* Invoice Serial Number */}
-                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                        <label className="block text-[10px] font-bold text-slate-400">رقم الفاتورة الأصيل (SERIAL):</label>
+                      <div className="space-y-1 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                        <label className="block text-xs font-bold text-slate-700">رقم الفاتورة الأصيل (SERIAL):</label>
                         <input
                           type="text"
                           value={pinv.invoice_no}
@@ -3948,14 +3948,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].invoice_no = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                          className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                           placeholder="Inv-XXXXXXXX"
                         />
                       </div>
 
                       {/* Total Gross Amount */}
-                      <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                        <label className="block text-[10px] font-bold text-indigo-400">المبلغ الإجمالي شامل الضريبة:</label>
+                      <div className="space-y-1 bg-emerald-50/80 p-3 rounded-xl border-2 border-emerald-500 shadow-2xs">
+                        <label className="block text-xs font-black text-emerald-900">المبلغ الإجمالي شامل الضريبة:</label>
                         <input
                           type="text"
                           inputMode="decimal"
@@ -3965,7 +3965,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             updated[pinvIdx].amount = e.target.value;
                             setParsedInvoices(updated);
                           }}
-                          className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                          className="w-full px-3 py-1.5 text-base border-2 border-emerald-600 bg-white text-emerald-950 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-black shadow-xs text-left"
                         />
                       </div>
                     </div>
@@ -3976,13 +3976,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       const showWarning = simResult.matches && !ignoredSimilarities[`parsed-mod-${pinvIdx}-${simResult.similarName}`];
                       if (showWarning) {
                         return (
-                          <div className="p-3 bg-amber-950/45 border border-amber-800/60 rounded-xl text-xs text-amber-200 space-y-2 animate-fadeIn select-none">
-                            <div className="font-extrabold flex items-center gap-1.5 text-amber-300">
+                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2 animate-fadeIn select-none shadow-2xs">
+                            <div className="font-black flex items-center gap-1.5 text-amber-800">
                               <span>⚠️ مطابقة تلقائية لقرب الاسم:</span>
                               <span>هل تقصد المؤسسة المسجلة بالنظام؟</span>
                             </div>
-                            <p className="text-[11px] text-amber-400">
-                              الاسم المكتوب قريب من: <span className="font-black text-white underline">{simResult.similarName}</span>
+                            <p className="text-[11px] text-amber-800">
+                              الاسم المكتوب قريب من: <span className="font-black text-amber-950 underline">{simResult.similarName}</span>
                             </p>
                             <div className="flex gap-2">
                               <button
@@ -3992,7 +3992,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updated[pinvIdx].company = simResult.similarName;
                                   setParsedInvoices(updated);
                                 }}
-                                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-md text-[10px] cursor-pointer"
+                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-lg text-xs cursor-pointer shadow-xs"
                               >
                                 ✅ مطابقة وتوحيد كـ ({simResult.similarName})
                               </button>
@@ -4001,7 +4001,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 onClick={() => {
                                   setIgnoredSimilarities(prev => ({ ...prev, [`parsed-mod-${pinvIdx}-${simResult.similarName}`]: true }));
                                 }}
-                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-md text-[10px] cursor-pointer"
+                                className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold rounded-lg text-xs cursor-pointer"
                               >
                                 ❌ إبقاء الاسم الحالي
                               </button>
@@ -4013,10 +4013,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     })()}
 
                     {/* Tabular List of Extracted Purchase Items */}
-                    <div className="space-y-2 pt-3 border-t border-slate-800">
+                    <div className="space-y-2.5 pt-3 border-t border-slate-200">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-xs font-black text-slate-300 flex items-center gap-1">
-                          <Library className="w-4 h-4 text-indigo-400" />
+                        <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                          <Library className="w-4 h-4 text-indigo-600" />
                           <span>تفاصيل مصفوفة السلع والمشتريات المستخرجة ({pinv.items?.length || 0})</span>
                         </h4>
                         <button
@@ -4034,7 +4034,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             });
                             setParsedInvoices(updated);
                           }}
-                          className="px-2.5 py-1 text-[10px] font-black text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 border border-indigo-900 rounded-md flex items-center gap-1 cursor-pointer transition-all"
+                          className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center gap-1 cursor-pointer transition-all"
                         >
                           <Plus className="w-3.5 h-3.5" />
                           <span>إضافة مادة جديدة +</span>
@@ -4043,7 +4043,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
                       {/* Items Matrix */}
                       {(!pinv.items || pinv.items.length === 0) ? (
-                        <div className="p-4 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                        <div className="p-4 text-center text-slate-500 text-xs bg-white border border-dashed border-slate-300 rounded-xl">
                           لا توجد بنود وسلع مسجلة لهذه الفاتورة حتى الآن. يمكنك استخراجها أو إضافتها يدوياً.
                         </div>
                       ) : (
@@ -4051,11 +4051,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           {pinv.items.map((item, itemIdx) => (
                             <div 
                               key={itemIdx}
-                              className="flex flex-col sm:flex-row items-stretch gap-2 bg-slate-800/30 p-2.5 rounded-xl border border-slate-800 hover:border-slate-750 transition-all text-xs"
+                              className="flex flex-col sm:flex-row items-stretch gap-2 bg-white p-2.5 rounded-xl border border-slate-200 hover:border-slate-300 shadow-2xs transition-all text-xs"
                             >
                               {/* Item Description Name */}
                               <div className="flex-1 space-y-1">
-                                <label className="text-[9px] font-bold text-slate-500 block">اسم المادة / السلعة:</label>
+                                <label className="text-[10px] font-bold text-slate-700 block">اسم المادة / السلعة:</label>
                                 <input
                                   type="text"
                                   value={item.name}
@@ -4067,13 +4067,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                                  className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-950 font-bold placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-500"
                                 />
                               </div>
 
                               {/* Item Category */}
-                              <div className="w-full sm:w-[120px] space-y-1">
-                                <label className="text-[9px] font-bold text-pink-400 block">تصنيف السلعة للفرع:</label>
+                              <div className="w-full sm:w-[130px] space-y-1">
+                                <label className="text-[10px] font-bold text-purple-700 block">تصنيف السلعة للفرع:</label>
                                 <input
                                   type="text"
                                   value={item.category || ""}
@@ -4085,13 +4085,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
+                                  className="w-full px-2.5 py-1.5 bg-white border border-purple-200 focus:border-purple-600 rounded-lg text-purple-900 font-bold focus:outline-none placeholder-purple-300"
                                 />
                               </div>
 
                               {/* Qty */}
-                              <div className="w-full sm:w-[70px] space-y-1">
-                                <label className="text-[9px] font-bold text-slate-500 block">الكمية:</label>
+                              <div className="w-full sm:w-[80px] space-y-1">
+                                <label className="text-[10px] font-bold text-slate-700 block">الكمية:</label>
                                 <input
                                   type="text"
                                   value={item.qty}
@@ -4103,13 +4103,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
+                                  className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-950 font-mono font-bold text-center focus:outline-none focus:border-indigo-600"
                                 />
                               </div>
 
                               {/* Price */}
-                              <div className="w-full sm:w-[90px] space-y-1">
-                                <label className="text-[9px] font-bold text-slate-500 block">السعر (بضريبة):</label>
+                              <div className="w-full sm:w-[100px] space-y-1">
+                                <label className="text-[10px] font-black text-emerald-800 block">السعر (بضريبة):</label>
                                 <input
                                   type="number"
                                   step="0.01"
@@ -4122,7 +4122,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
+                                  className="w-full px-2 py-1.5 bg-white border-2 border-emerald-300 rounded-lg text-emerald-950 font-mono text-left font-black focus:outline-none focus:border-emerald-600 placeholder-slate-400"
                                 />
                               </div>
 
@@ -4137,7 +4137,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       setParsedInvoices(updated);
                                     }
                                   }}
-                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/20 rounded-lg transition-all cursor-pointer"
+                                  className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
                                   title="حذف هذا البند"
                                 >
                                   <Trash className="w-4 h-4" />
@@ -4151,7 +4151,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                   </div>
 
                   {/* Modal Column Footer Action Buttons */}
-                  <div className="p-4 bg-slate-800 border-t border-slate-700 flex items-center justify-between">
+                  <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between shadow-2xs">
                     <button
                       type="button"
                       onClick={() => {
@@ -4160,7 +4160,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         setAuditInvoiceId(null);
                         onShowToast("🗑️ تم استبعاد وتجاهل الفاتورة المحددة");
                       }}
-                      className="px-4 py-2 bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
                     >
                       <Trash className="w-4 h-4" />
                       <span>تجاهل واستبعاد الفاتورة</span>
@@ -4170,7 +4170,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       <button
                         type="button"
                         onClick={() => setAuditInvoiceId(null)}
-                        className="px-4 py-2 bg-slate-700 hover:bg-slate-650 border border-slate-600 text-slate-200 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
                       >
                         إغلاق المعاينة الضريبية
                       </button>
@@ -4190,7 +4190,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           setAuditInvoiceId(null);
                           onShowToast("✅ تم اعتماد تفاصيل المطابقة البصرية وتعديل محتوى الفاتورة بنجاح!");
                         }}
-                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg border border-indigo-500 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
                       >
                         <Check className="w-4 h-4" />
                         <span>اعتماد ومطابقة الفاتورة البصرية 👍</span>
@@ -4340,26 +4340,26 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               </div>
 
               {/* Left Column: Form Editor & Purchases Details */}
-              <div className="md:w-1/2 flex flex-col bg-slate-900 min-w-0">
-                <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+              <div className="md:w-1/2 flex flex-col bg-slate-100 border-r border-slate-200 min-w-0 text-slate-900">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
                   
                   {/* Top Clerk Banner */}
-                  <div className="bg-slate-800/60 border border-slate-700/80 rounded-xl p-3 flex items-center justify-between text-xs text-slate-300">
+                  <div className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs text-slate-700 shadow-2xs">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-indigo-400 block">مسؤول الإدخال الأول:</span>
-                      <span className="font-extrabold text-slate-100">👤 {previewInvoice.createdBy || "غير معروف"}</span>
+                      <span className="text-[10px] uppercase font-bold text-indigo-600 block">مسؤول الإدخال الأول:</span>
+                      <span className="font-extrabold text-slate-900">👤 {previewInvoice.createdBy || "غير معروف"}</span>
                     </div>
                     <div className="text-left">
-                      <span className="text-[10px] uppercase font-bold text-indigo-400 block">فرع التسجيل:</span>
-                      <span className="font-extrabold text-slate-100">📍 {previewInvoice.branch}</span>
+                      <span className="text-[10px] uppercase font-bold text-indigo-600 block">فرع التسجيل:</span>
+                      <span className="font-extrabold text-slate-900">📍 {previewInvoice.branch}</span>
                     </div>
                   </div>
 
                   {/* Invoice Meta Grid */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3.5">
                     {/* Supplier/Company Custom Searchable Input */}
-                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                      <label className="block text-[10px] font-bold text-slate-400">اسم المورد / المؤسسة بالفاتورة:</label>
+                    <div className="space-y-1 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                      <label className="block text-xs font-bold text-slate-700">اسم المورد / المؤسسة بالفاتورة:</label>
                       <SearchableCompanyInput
                         value={previewInvoice.company}
                         onChange={(val) => {
@@ -4367,40 +4367,40 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         }}
                         registeredCompanies={registeredCompanies}
                         onRegisterCompany={(name) => handleAddSupplier(name)}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 hover:border-slate-600 focus:border-indigo-500 rounded-md focus:outline-none font-bold text-slate-100"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                       />
                     </div>
 
                     {/* Invoice Date */}
-                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                      <label className="block text-[10px] font-bold text-slate-400">تاريخ الفاتورة المكتوب:</label>
+                    <div className="space-y-1 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                      <label className="block text-xs font-bold text-slate-700">تاريخ الفاتورة المكتوب:</label>
                       <input
                         type="date"
                         value={previewInvoice.invoice_date || previewInvoice.date}
                         onChange={(e) => {
                           setPreviewInvoice({ ...previewInvoice, invoice_date: e.target.value });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                       />
                     </div>
 
                     {/* Invoice Serial Number */}
-                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                      <label className="block text-[10px] font-bold text-slate-400">رقم الفاتورة الأصيل (SERIAL):</label>
+                    <div className="space-y-1 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                      <label className="block text-xs font-bold text-slate-700">رقم الفاتورة الأصيل (SERIAL):</label>
                       <input
                         type="text"
                         value={previewInvoice.invoice_no || ""}
                         onChange={(e) => {
                           setPreviewInvoice({ ...previewInvoice, invoice_no: e.target.value });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-slate-700 bg-slate-800 rounded-md focus:outline-none focus:border-indigo-500 font-bold text-slate-100"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                         placeholder="Inv-XXXXXXXX"
                       />
                     </div>
 
                     {/* Total Gross Amount */}
-                    <div className="space-y-1 bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
-                      <label className="block text-[10px] font-bold text-indigo-400">المبلغ الإجمالي شامل الضريبة:</label>
+                    <div className="space-y-1 bg-emerald-50/80 p-3 rounded-xl border-2 border-emerald-500 shadow-2xs">
+                      <label className="block text-xs font-black text-emerald-900">المبلغ الإجمالي شامل الضريبة:</label>
                       <input
                         type="text"
                         inputMode="decimal"
@@ -4414,7 +4414,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             amount: isNaN(parsed) ? 0 : parsed
                           });
                         }}
-                        className="w-full px-3 py-1.5 text-xs border border-indigo-900/50 bg-indigo-950/40 text-indigo-300 rounded-md focus:outline-none focus:border-indigo-500 font-black"
+                        className="w-full px-3 py-1.5 text-base border-2 border-emerald-600 bg-white text-emerald-950 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-black shadow-xs text-left"
                       />
                     </div>
                   </div>
@@ -4425,13 +4425,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     const showWarning = simResult.matches && !ignoredSimilarities[`preview-mod-${previewInvoice.id}-${simResult.similarName}`];
                     if (showWarning) {
                       return (
-                        <div className="p-3 bg-amber-950/45 border border-amber-800/60 rounded-xl text-xs text-amber-200 space-y-2 animate-fadeIn select-none">
-                          <div className="font-extrabold flex items-center gap-1.5 text-amber-300">
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-2 animate-fadeIn select-none shadow-2xs">
+                          <div className="font-black flex items-center gap-1.5 text-amber-800">
                             <span>⚠️ مطابقة تلقائية لقرب الاسم:</span>
                             <span>هل تقصد المؤسسة المسجلة بالنظام؟</span>
                           </div>
-                          <p className="text-[11px] text-amber-400">
-                            الاسم المكتوب قريب من: <span className="font-black text-white underline">{simResult.similarName}</span>
+                          <p className="text-[11px] text-amber-800">
+                            الاسم المكتوب قريب من: <span className="font-black text-amber-950 underline">{simResult.similarName}</span>
                           </p>
                           <div className="flex gap-2">
                             <button
@@ -4439,7 +4439,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               onClick={() => {
                                 setPreviewInvoice({ ...previewInvoice, company: simResult.similarName });
                               }}
-                              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-md text-[10px] cursor-pointer"
+                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-lg text-xs cursor-pointer shadow-xs"
                             >
                               ✅ مطابقة وتوحيد كـ ({simResult.similarName})
                             </button>
@@ -4448,7 +4448,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               onClick={() => {
                                 setIgnoredSimilarities(prev => ({ ...prev, [`preview-mod-${previewInvoice.id}-${simResult.similarName}`]: true }));
                               }}
-                              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-md text-[10px] cursor-pointer"
+                              className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold rounded-lg text-xs cursor-pointer"
                             >
                               ❌ إبقاء الاسم الحالي
                             </button>
@@ -4460,10 +4460,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                   })()}
 
                   {/* Tabular List of Extracted Purchase Items */}
-                  <div className="space-y-2 pt-3 border-t border-slate-800">
+                  <div className="space-y-2.5 pt-3 border-t border-slate-200">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-black text-slate-300 flex items-center gap-1">
-                        <Library className="w-4 h-4 text-indigo-400" />
+                      <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                        <Library className="w-4 h-4 text-indigo-600" />
                         <span>تفاصيل مصفوفة السلع والمشتريات المستخرجة ({previewInvoice.items?.length || 0})</span>
                       </h4>
                       <button
@@ -4478,7 +4478,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           });
                           setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                         }}
-                        className="px-2.5 py-1 text-[10px] font-black text-indigo-400 hover:text-indigo-300 hover:bg-indigo-950/40 border border-indigo-900 rounded-md flex items-center gap-1 cursor-pointer transition-all"
+                        className="px-2.5 py-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center gap-1 cursor-pointer transition-all"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>إضافة مادة جديدة +</span>
@@ -4487,7 +4487,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
                     {/* Items Matrix */}
                     {(!previewInvoice.items || previewInvoice.items.length === 0) ? (
-                      <div className="p-4 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                      <div className="p-4 text-center text-slate-500 text-xs bg-white border border-dashed border-slate-300 rounded-xl">
                         لا توجد بنود وسلع مسجلة لهذه الفاتورة حتى الآن. يمكنك إضافتها يدوياً للتحقق والمطابقة.
                       </div>
                     ) : (
@@ -4495,11 +4495,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         {previewInvoice.items.map((item, itemIdx) => (
                           <div 
                             key={itemIdx}
-                            className="flex flex-col sm:flex-row items-stretch gap-2 bg-slate-800/30 p-2.5 rounded-xl border border-slate-800 hover:border-slate-750 transition-all text-xs"
+                            className="flex flex-col sm:flex-row items-stretch gap-2 bg-white p-2.5 rounded-xl border border-slate-200 hover:border-slate-300 shadow-2xs transition-all text-xs"
                           >
                             {/* Item Description Name */}
                             <div className="flex-1 space-y-1">
-                              <label className="text-[9px] font-bold text-slate-500 block">اسم المادة / السلعة:</label>
+                              <label className="text-[10px] font-bold text-slate-700 block">اسم المادة / السلعة:</label>
                               <input
                                 type="text"
                                 value={item.name || (item as any).product_name || ""}
@@ -4509,13 +4509,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], name: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-100 font-extrabold placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-950 font-bold placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-500"
                               />
                             </div>
 
                             {/* Item Category */}
-                            <div className="w-full sm:w-[120px] space-y-1">
-                              <label className="text-[9px] font-bold text-pink-400 block">تصنيف السلعة للفرع:</label>
+                            <div className="w-full sm:w-[130px] space-y-1">
+                              <label className="text-[10px] font-bold text-purple-700 block">تصنيف السلعة للفرع:</label>
                               <input
                                 type="text"
                                 value={item.category || ""}
@@ -4525,13 +4525,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], category: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-pink-900/40 focus:border-pink-500 rounded-md text-pink-300 font-semibold focus:outline-none placeholder-pink-900/50"
+                                className="w-full px-2.5 py-1.5 bg-white border border-purple-200 focus:border-purple-600 rounded-lg text-purple-900 font-bold focus:outline-none placeholder-purple-300"
                               />
                             </div>
 
                             {/* Qty */}
-                            <div className="w-full sm:w-[70px] space-y-1">
-                              <label className="text-[9px] font-bold text-slate-500 block">الكمية:</label>
+                            <div className="w-full sm:w-[80px] space-y-1">
+                              <label className="text-[10px] font-bold text-slate-700 block">الكمية:</label>
                               <input
                                 type="text"
                                 value={item.qty}
@@ -4541,13 +4541,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], qty: e.target.value };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-slate-300 font-mono text-center focus:outline-none"
+                                className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-950 font-mono font-bold text-center focus:outline-none focus:border-indigo-600"
                               />
                             </div>
 
                             {/* Price */}
-                            <div className="w-full sm:w-[90px] space-y-1">
-                              <label className="text-[9px] font-bold text-slate-500 block">السعر (بضريبة):</label>
+                            <div className="w-full sm:w-[100px] space-y-1">
+                              <label className="text-[10px] font-black text-emerald-800 block">السعر (بضريبة):</label>
                               <input
                                 type="number"
                                 step="0.01"
@@ -4558,7 +4558,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   updatedItems[itemIdx] = { ...updatedItems[itemIdx], price_with_tax: val === "" ? 0 : parseFloat(val) };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded-md text-indigo-400 font-mono text-left font-black focus:outline-none placeholder-slate-600"
+                                className="w-full px-2 py-1.5 bg-white border-2 border-emerald-300 rounded-lg text-emerald-950 font-mono text-left font-black focus:outline-none focus:border-emerald-600 placeholder-slate-400"
                               />
                             </div>
 
@@ -4570,7 +4570,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   const updatedItems = (previewInvoice.items || []).filter((_, i) => i !== itemIdx);
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
-                                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-950/20 rounded-lg transition-all cursor-pointer"
+                                className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
                                 title="حذف هذا البند"
                               >
                                 <Trash className="w-4 h-4" />
@@ -4584,11 +4584,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 </div>
 
                 {/* Modal Column Footer Action Buttons */}
-                <div className="p-4 bg-slate-800 border-t border-slate-700 flex items-center justify-between">
+                <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between shadow-2xs">
                   <button
                     type="button"
                     onClick={() => handleRejectPendingInvoice(previewInvoice.id, previewInvoice.company)}
-                    className="px-4 py-2 bg-rose-950/40 hover:bg-rose-900 border border-rose-900 text-rose-300 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <Trash className="w-4 h-4" />
                     <span>رفض وحذف الفاتورة المعلقة</span>
@@ -4598,7 +4598,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     <button
                       type="button"
                       onClick={() => setPreviewInvoice(null)}
-                      className="px-4 py-2 bg-slate-700 hover:bg-slate-650 border border-slate-600 text-slate-200 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
                     >
                       إغلاق المعاينة
                     </button>
@@ -4616,7 +4616,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         }
                         handleApprovePendingInvoice(previewInvoice);
                       }}
-                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 hover:shadow-lg border border-emerald-500 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
+                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 hover:shadow-lg text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5"
                     >
                       <Check className="w-4 h-4" />
                       <span>اعتماد ومطابقة الفاتورة البصرية 👍</span>

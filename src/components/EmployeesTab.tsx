@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { 
   Users, UserCheck, Clock, Coins, FileText, Plus, Trash2, 
-  Settings as SettingsIcon, AlertCircle, Calendar, Timer, CircleDollarSign, RefreshCw, Eye, Printer, FileEdit
+  Settings as SettingsIcon, AlertCircle, Calendar, Timer, CircleDollarSign, RefreshCw, Eye, Printer, FileEdit, X
 } from "lucide-react";
 import { Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation } from "../types";
 
@@ -133,6 +133,10 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
   const [empLimit, setEmpLimit] = useState<number>(25);
   const [empArrival, setEmpArrival] = useState("08:00");
   const [empDeparture, setEmpDeparture] = useState("16:00");
+  const [empInsurance, setEmpInsurance] = useState<number>(0);
+  const [empUnexcusedAbsence, setEmpUnexcusedAbsence] = useState<number>(0);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [isUpdatingEmp, setIsUpdatingEmp] = useState(false);
 
   // Forms States - Attendance
   const [attDate, setAttDate] = useState(() => new Date().toISOString().substring(0, 10));
@@ -229,7 +233,9 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
       advanceLimitPercent: Number(empLimit),
       requiredArrivalTime: empArrival,
       requiredDepartureTime: empDeparture,
-      phone: empPhone.trim()
+      phone: empPhone.trim(),
+      insuranceDeduction: Number(empInsurance) || 0,
+      unexcusedAbsenceDays: Number(empUnexcusedAbsence) || 0
     };
 
     try {
@@ -247,6 +253,8 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
         setEmpLimit(25);
         setEmpArrival("08:00");
         setEmpDeparture("16:00");
+        setEmpInsurance(0);
+        setEmpUnexcusedAbsence(0);
         loadAllData();
       } else {
         const err = await res.json();
@@ -254,6 +262,32 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
       }
     } catch (err) {
       onShowToast("❌ خطأ شبكة أثناء حفظ الموظف");
+    }
+  };
+
+  // Update Employee
+  const handleUpdateEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEmployee) return;
+    setIsUpdatingEmp(true);
+    try {
+      const res = await fetch(`/api/employees/${editingEmployee.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingEmployee)
+      });
+      if (res.ok) {
+        onShowToast(`✅ تم تحديث بيانات الموظف "${editingEmployee.name}" بنجاح`);
+        setEditingEmployee(null);
+        loadAllData();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        onShowToast(`❌ فشل التحديث: ${err.error || "خطأ غير معروف"}`);
+      }
+    } catch (err) {
+      onShowToast("❌ خطأ شبكة أثناء تحديث الموظف");
+    } finally {
+      setIsUpdatingEmp(false);
     }
   };
 
@@ -619,7 +653,14 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
       const largeCount = empAtt.filter(x => x.latenessCategory === "large").length;
       const severeCount = empAtt.filter(x => x.latenessCategory === "severe").length;
 
-      const netPayable = emp.salary - totalDeductions - totalAdvancesAmt;
+      const insuranceDeduction = Number(emp.insuranceDeduction) || 0;
+      const unexcusedAbsenceDays = Number(emp.unexcusedAbsenceDays) || 0;
+      const excusedAbsenceDays = Number(emp.excusedAbsenceDays) || 0;
+      const baseSalary = Number(emp.salary) || 0;
+      const dailyWage = baseSalary > 0 ? baseSalary / 30 : 0;
+      const absenceDeduction = Number((dailyWage * unexcusedAbsenceDays).toFixed(2));
+      const grandTotalDeductions = Number((totalDeductions + insuranceDeduction + absenceDeduction).toFixed(2));
+      const netPayable = Number((baseSalary - grandTotalDeductions - totalAdvancesAmt).toFixed(2));
 
       return {
         ...emp,
@@ -627,7 +668,11 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
         totalLatenessMins,
         latenessDeductions,
         totalViolationsDeductions,
-        totalDeductions,
+        insuranceDeduction,
+        unexcusedAbsenceDays,
+        excusedAbsenceDays,
+        absenceDeduction,
+        totalDeductions: grandTotalDeductions,
         totalAdvancesAmt,
         brokenDownLateness: { simpleCount, mediumCount, largeCount, severeCount },
         netPayable,
@@ -809,6 +854,31 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                   </div>
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">خصم التأمينات (ر.س)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={empInsurance}
+                      onChange={(e) => setEmpInsurance(Number(e.target.value) || 0)}
+                      className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">أيام غياب بدون عذر</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={empUnexcusedAbsence}
+                      onChange={(e) => setEmpUnexcusedAbsence(Number(e.target.value) || 0)}
+                      className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+
                 <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100 space-y-3">
                   <h4 className="text-[11px] font-bold text-slate-700">🕒 أوقات الحضور المطلوبة والانصراف (الدوام)</h4>
                   <div className="grid grid-cols-2 gap-3">
@@ -890,7 +960,14 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                           <td className="py-3.5 px-2 text-center font-bold text-emerald-800 font-mono">
                             {emp.advanceLimitPercent || 25}%
                           </td>
-                          <td className="py-3.5 px-2 text-center">
+                          <td className="py-3.5 px-2 text-center whitespace-nowrap">
+                            <button
+                              onClick={() => setEditingEmployee(emp)}
+                              className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 p-1.5 rounded-lg cursor-pointer transition-all inline-flex ml-1.5"
+                              title="تعديل بيانات الموظف والراتب"
+                            >
+                              <FileEdit className="w-3.5 h-3.5" />
+                            </button>
                             <button
                               onClick={() => handleDeleteEmployee(emp.id, emp.name)}
                               className="text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1.5 rounded-lg cursor-pointer transition-all inline-flex"
@@ -906,6 +983,150 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                 </div>
               )}
             </div>
+
+            {/* EDIT EMPLOYEE MODAL */}
+            {editingEmployee && (
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-6 max-w-lg w-full space-y-4 text-right">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                      <FileEdit className="w-4 h-4 text-indigo-600" />
+                      <span>تعديل بيانات الموظف: {editingEmployee.name}</span>
+                    </h3>
+                    <button
+                      onClick={() => setEditingEmployee(null)}
+                      className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleUpdateEmployee} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-700">اسم الموظف</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingEmployee.name}
+                        onChange={(e) => setEditingEmployee({ ...editingEmployee, name: e.target.value })}
+                        className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-700">المهنة</label>
+                        <input
+                          type="text"
+                          required
+                          value={editingEmployee.job}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, job: e.target.value })}
+                          className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-700">رقم الهاتف</label>
+                        <input
+                          type="text"
+                          value={editingEmployee.phone || ""}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, phone: e.target.value })}
+                          className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-700">الراتب الشهري (ر.س)</label>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          value={editingEmployee.salary}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, salary: Number(e.target.value) || 0 })}
+                          className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-700">حد السلفة (%)</label>
+                        <input
+                          type="number"
+                          required
+                          min={1}
+                          max={100}
+                          value={editingEmployee.advanceLimitPercent || 25}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, advanceLimitPercent: Number(e.target.value) || 25 })}
+                          className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-700">خصم التأمينات (ر.س)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={editingEmployee.insuranceDeduction || 0}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, insuranceDeduction: Number(e.target.value) || 0 })}
+                          className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-700">أيام غياب بدون عذر</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={editingEmployee.unexcusedAbsenceDays || 0}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, unexcusedAbsenceDays: Number(e.target.value) || 0 })}
+                          className="w-full text-right px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <span className="block text-[10px] text-slate-500 font-bold">موعد الحضور</span>
+                        <input
+                          type="time"
+                          required
+                          value={editingEmployee.requiredArrivalTime}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, requiredArrivalTime: e.target.value })}
+                          className="w-full text-center py-1.5 text-xs border border-slate-200 rounded-lg bg-white font-mono"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="block text-[10px] text-slate-500 font-bold">موعد الانصراف</span>
+                        <input
+                          type="time"
+                          required
+                          value={editingEmployee.requiredDepartureTime}
+                          onChange={(e) => setEditingEmployee({ ...editingEmployee, requiredDepartureTime: e.target.value })}
+                          className="w-full text-center py-1.5 text-xs border border-slate-200 rounded-lg bg-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        type="submit"
+                        disabled={isUpdatingEmp}
+                        className="flex-1 bg-slate-900 hover:bg-slate-800 text-white py-2.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50"
+                      >
+                        {isUpdatingEmp ? "جارٍ الحفظ..." : "حفظ التعديلات"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingEmployee(null)}
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 cursor-pointer"
+                      >
+                        إلغاء
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -211,17 +211,23 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     }
   };
 
+  const shiftDateStr = (dateStr: string, deltaDays: number): string => {
+    const parts = dateStr.split("-").map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    }
+    const dt = new Date(parts[0], parts[1] - 1, parts[2] + deltaDays);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  };
+
   const incrementDate = () => {
-    const current = new Date(date);
-    current.setDate(current.getDate() + 1);
-    const nextDateStr = current.toISOString().split("T")[0];
+    const nextDateStr = shiftDateStr(date, 1);
     handleDateChange(nextDateStr);
   };
 
   const decrementDate = () => {
-    const current = new Date(date);
-    current.setDate(current.getDate() - 1);
-    const prevDateStr = current.toISOString().split("T")[0];
+    const prevDateStr = shiftDateStr(date, -1);
     setDate(prevDateStr); // Normal date setting when moving backward
   };
 
@@ -753,9 +759,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
         onShowToast(`💾 تم تخزين موازنة اليوم بنجاح لفرع ${branch}!`);
         clearForm();
         
-        const tomorrow = new Date(date);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowStr = tomorrow.toISOString().split("T")[0];
+        const tomorrowStr = shiftDateStr(date, 1);
 
         // Fetch carryover list for upcoming day to verify remaining installments
         try {

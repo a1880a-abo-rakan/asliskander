@@ -65,12 +65,12 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
     try {
       // 1. Load Sales & Expenses statistics
       const resStats = await fetch(`/api/reports?from=${fromDate}&to=${toDate}`);
-      const stats = await resStats.ok ? await resStats.json() : null;
+      const stats = resStats.ok ? await resStats.json() : null;
       setReportData(stats);
 
-      // 2. Load Tax invoices in range
-      const resTax = await fetch(`/api/tax-invoices?from=${fromDate}&to=${toDate}`);
-      const taxList = await resTax.ok ? await resTax.json() : [];
+      // 2. Load Tax invoices in range (metadata only, excluding heavy images)
+      const resTax = await fetch(`/api/tax-invoices?from=${fromDate}&to=${toDate}&excludeImage=true`);
+      const taxList = resTax.ok ? await resTax.json() : [];
       setTaxData(taxList);
 
       // 3. Load System Settings
