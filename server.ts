@@ -19,27 +19,42 @@ if (fs.existsSync(CONFIG_PATH)) {
   try {
     firebaseConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
   } catch (err) {
-    console.warn("Could not parse firebase-applet-config.json, falling back to environment variables.", err);
+    console.warn("Could not parse firebase-applet-config.json, falling back to defaults.", err);
   }
 }
 
-if (!firebaseConfig) {
+if (!firebaseConfig || !firebaseConfig.projectId) {
   firebaseConfig = {
-    projectId: process.env.FIREBASE_PROJECT_ID || process.env.projectId,
-    appId: process.env.FIREBASE_APP_ID || process.env.appId,
-    apiKey: process.env.FIREBASE_API_KEY || process.env.apiKey,
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN || process.env.authDomain,
-    firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || process.env.firestoreDatabaseId,
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || process.env.storageBucket,
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || process.env.messagingSenderId,
+    projectId: process.env.FIREBASE_PROJECT_ID || process.env.projectId || "rising-haven-0v8b6",
+    appId: process.env.FIREBASE_APP_ID || process.env.appId || "1:409272108099:web:275f0ae6fec25ce83fc0f6",
+    apiKey: process.env.FIREBASE_API_KEY || process.env.apiKey || "AIzaSyC0C_UO7bcYn-TPkjXQRgk9xlPgAk1GwxE",
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN || process.env.authDomain || "rising-haven-0v8b6.firebaseapp.com",
+    firestoreDatabaseId: process.env.FIRESTORE_DATABASE_ID || process.env.firestoreDatabaseId || "ai-studio-cb271443-c698-46d3-8892-29b8dd346a32",
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || process.env.storageBucket || "rising-haven-0v8b6.firebasestorage.app",
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || process.env.messagingSenderId || "409272108099",
     measurementId: process.env.FIREBASE_MEASUREMENT_ID || process.env.measurementId || ""
   };
 }
 
-const appFirebase = initializeApp(firebaseConfig);
-const db = initializeFirestore(appFirebase, {
-  experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId || "(default)");
+// Global safety catchers to prevent unhandled errors from crashing the process
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception (prevented server exit):", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection (prevented server exit) at:", promise, "reason:", reason);
+});
+
+let appFirebase: any;
+let db: any;
+try {
+  appFirebase = initializeApp(firebaseConfig);
+  db = initializeFirestore(appFirebase, {
+    experimentalForceLongPolling: true,
+  }, firebaseConfig.firestoreDatabaseId || "(default)");
+} catch (fbErr) {
+  console.error("Firebase init error (using fallback):", fbErr);
+}
 
 
 // Initialize Gemini Client Lazily
@@ -3276,7 +3291,12 @@ async function startServer() {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const indexPath = path.join(distPath, "index.html");
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(200).send("Server is running. Please run build to generate client assets.");
+      }
     });
   }
 
