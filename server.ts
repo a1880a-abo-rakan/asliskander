@@ -626,9 +626,13 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
   }
 }
 
-async function getTaxInvoices(): Promise<TaxInvoice[]> {
-  if (taxInvoicesLoaded) {
-    return Array.from(taxInvoicesCache.values()).map(i => JSON.parse(JSON.stringify(i)));
+let taxInvoicesLastFetch = 0;
+const TAX_INVOICES_CACHE_TTL = 30000; // 30 seconds TTL for multi-client synchronicity
+
+async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
+  const isExpired = Date.now() - taxInvoicesLastFetch > TAX_INVOICES_CACHE_TTL;
+  if (taxInvoicesLoaded && !isExpired && !forceRefresh) {
+    return Array.from(taxInvoicesCache.values());
   }
   try {
     const snap = await getDocs(collection(db, "tax_invoices"));
@@ -641,13 +645,17 @@ async function getTaxInvoices(): Promise<TaxInvoice[]> {
           data.id = d.id;
         }
         list.push(data);
-        taxInvoicesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
+        taxInvoicesCache.set(data.id, cleanObject(data));
       }
     });
     taxInvoicesLoaded = true;
+    taxInvoicesLastFetch = Date.now();
     return list;
   } catch (err) {
     console.error("Error reading tax invoices from Firestore:", err);
+    if (taxInvoicesCache.size > 0) {
+      return Array.from(taxInvoicesCache.values());
+    }
     return [];
   }
 }
@@ -661,6 +669,11 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
         continue;
       }
       const cleanedNew = cleanObject(i);
+      // Safeguard against Firestore 1MB document limit for rawImage
+      if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 900000) {
+        console.warn(`[Firestore Warning] rawImage for invoice ${i.id} is very large (${cleanedNew.rawImage.length} chars). Truncating to prevent Firestore 1MB document limit rejection.`);
+        cleanedNew.rawImage = cleanedNew.rawImage.substring(0, 900000);
+      }
       const cached = taxInvoicesCache.get(i.id);
 
       if (cached && isDeepEqual(cleanedNew, cached)) {
@@ -673,10 +686,11 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
       console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new TaxInvoices`);
       await Promise.all(toWrite.map(async (item) => {
         await setDoc(doc(db, "tax_invoices", item.id), item.cleaned);
-        taxInvoicesCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
+        taxInvoicesCache.set(item.id, item.cleaned);
       }));
     }
     taxInvoicesLoaded = true;
+    taxInvoicesLastFetch = Date.now();
   } catch (err) {
     console.error("Error saving tax invoices to Firestore:", err);
   }
@@ -2233,26 +2247,52 @@ async function startServer() {
   });
 
   app.get("/api/tax-invoices", async (req, res) => {
-    const from = req.query.from as string;
-    const to = req.query.to as string;
-    const status = req.query.status as string;
-    const excludeImage = req.query.excludeImage === "true";
-    let invoices = await getTaxInvoices();
+    try {
+      const from = req.query.from as string;
+      const to = req.query.to as string;
+      const status = req.query.status as string;
+      const includeImage = req.query.includeImage === "true";
+      const fresh = req.query.fresh === "true";
+      let invoices = await getTaxInvoices(fresh);
 
-    if (from) invoices = invoices.filter((i) => i.date >= from);
-    if (to) invoices = invoices.filter((i) => i.date <= to);
-    if (status) invoices = invoices.filter((i) => i.status === status);
+      if (from && to) {
+        invoices = invoices.filter((i) => {
+          const d1 = i.date;
+          const d2 = i.invoice_date || i.date;
+          return (d1 >= from && d1 <= to) || (d2 >= from && d2 <= to);
+        });
+      } else if (from) {
+        invoices = invoices.filter((i) => (i.date >= from || (i.invoice_date && i.invoice_date >= from)));
+      } else if (to) {
+        invoices = invoices.filter((i) => (i.date <= to || (i.invoice_date && i.invoice_date <= to)));
+      }
 
-    invoices.sort((a, b) => (a.invoice_date || a.date).localeCompare(b.invoice_date || b.date));
+      if (status) {
+        invoices = invoices.filter((i) => {
+          if (status === "approved") {
+            return i.status === "approved" || !i.status;
+          }
+          return i.status === status;
+        });
+      }
 
-    if (excludeImage) {
-      invoices = invoices.map(inv => {
-        const { rawImage, ...rest } = inv;
-        return rest as TaxInvoice;
-      });
+      invoices.sort((a, b) => (b.invoice_date || b.date).localeCompare(a.invoice_date || a.date));
+
+      // CRITICAL FOR PERFORMANCE & RENDER STABILITY:
+      // Exclude heavy rawImage base64 payloads by default to keep response lightweight (~80KB vs ~200MB).
+      // When a single invoice image is needed for inspection, GET /api/tax-invoices/:id is called.
+      if (!includeImage) {
+        invoices = invoices.map(inv => {
+          const { rawImage, ...rest } = inv;
+          return rest as TaxInvoice;
+        });
+      }
+
+      res.json(invoices);
+    } catch (err: any) {
+      console.error("Error in GET /api/tax-invoices:", err);
+      res.status(500).json({ error: err.message });
     }
-
-    res.json(invoices);
   });
 
   app.get("/api/tax-invoices/:id", async (req, res) => {
@@ -2354,19 +2394,25 @@ async function startServer() {
       if (!data.date || data.amount === undefined) {
         return res.status(400).json({ error: "Required fields date and amount are missing" });
       }
+      const existingInvoices = await getTaxInvoices();
+      const existing = existingInvoices.find(i => i.id === id);
+
+      const rawImg = data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || "");
+      const fileTp = data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || "");
+
       const updatedInvoice: TaxInvoice = {
         id,
         date: data.date,
-        branch: data.branch || "القادسية",
-        company: data.company || "",
-        invoice_no: data.invoice_no || "",
-        invoice_date: data.invoice_date || "",
+        branch: data.branch || existing?.branch || "القادسية",
+        company: data.company || existing?.company || "",
+        invoice_no: data.invoice_no !== undefined ? data.invoice_no : (existing?.invoice_no || ""),
+        invoice_date: data.invoice_date || existing?.invoice_date || "",
         amount: parseFloat(data.amount),
-        items: Array.isArray(data.items) ? data.items : [],
-        createdBy: data.createdBy || "",
+        items: Array.isArray(data.items) ? data.items : (existing?.items || []),
+        createdBy: data.createdBy || existing?.createdBy || "",
         status: data.status || "approved",
-        rawImage: data.rawImage || "",
-        fileType: data.fileType || ""
+        rawImage: rawImg,
+        fileType: fileTp
       };
 
       // Save tax invoice and clean old purchases in parallel to maximize speed

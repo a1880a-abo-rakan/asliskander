@@ -681,7 +681,10 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   // Report filters
   const [from, setFrom] = useState(() => {
     const saved = sessionStorage.getItem("app_tax_report_from");
-    return saved ? saved : new Date().toISOString().split("T")[0];
+    if (saved) return saved;
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    return firstDay.toISOString().split("T")[0];
   });
   const [to, setTo] = useState(() => {
     const saved = sessionStorage.getItem("app_tax_report_to");
@@ -689,7 +692,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   });
   const [reportMode, setReportMode] = useState<"day" | "period" | "period_detailed">(() => {
     const saved = sessionStorage.getItem("app_tax_report_mode");
-    return (saved as any) ? (saved as any) : "day";
+    return (saved as any) ? (saved as any) : "period_detailed";
   });
 
   useEffect(() => {
@@ -777,7 +780,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         amount: parseFloat(v.amount as string) || 0,
         items: v.items || [],
         createdBy: currentUser?.username || "unknown",
-        status: (userRole === "مدخل فواتير" || userRole === "محاسب") ? "pending" : "approved"
+        status: userRole === "مدخل فواتير" ? "pending" : "approved"
       }));
 
       const res = await fetch("/api/tax-invoices", {
@@ -891,8 +894,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const loadPendingInvoices = async () => {
+    if (userRole !== "مدير") {
+      setPendingInvoices([]);
+      return;
+    }
     try {
-      const res = await fetch("/api/tax-invoices?status=pending");
+      const res = await fetch("/api/tax-invoices?status=pending&fresh=true");
       if (res.ok) {
         const pending: TaxInvoice[] = await res.json();
         cachedPendingInvoices = pending;
@@ -900,6 +907,21 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       }
     } catch (err) {
       console.error("Error loading pending invoices:", err);
+    }
+  };
+
+  const openInvoicePreview = async (inv: TaxInvoice) => {
+    setPreviewInvoice(inv);
+    if (!inv.rawImage) {
+      try {
+        const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`);
+        if (res.ok) {
+          const full = await res.json();
+          setPreviewInvoice((prev) => (prev?.id === inv.id ? full : prev));
+        }
+      } catch (err) {
+        console.error("Error fetching full invoice preview document:", err);
+      }
     }
   };
 
@@ -1008,16 +1030,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     try {
       const promises: Promise<any>[] = [
         loadCompanies(),
-        loadCarryovers()
+        loadCarryovers(),
+        loadPendingInvoices()
       ];
 
-      if (userRole === "مدير") {
-        promises.push(loadPendingInvoices());
-      }
-
-      const url = userRole === "مدخل فواتير"
-        ? "/api/tax-invoices"
-        : `/api/tax-invoices?from=${from}&to=${to}`;
+      const url = "/api/tax-invoices?fresh=true";
 
       promises.push(
         fetch(url)
@@ -1097,8 +1114,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const isInvoiceEditableByClerk = (inv: TaxInvoice) => {
-    if (userRole === "مدير") return true;
-    if (userRole !== "مدخل فواتير" && userRole !== "محاسب") return false;
+    if (userRole === "مدير" || userRole === "محاسب") return true;
+    if (userRole !== "مدخل فواتير") return false;
 
     // Get all invoices entered by this user
     const myInvs = invoices.filter(i => i.createdBy === currentUser?.username);
@@ -1145,8 +1162,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       onShowToast("⚠️ يرجى تحديد بعض الفواتير أولاً لحذفها");
       return;
     }
-    if (userRole !== "مدير") {
-      onShowToast("⚠️ صلاحيات المدير فقط لطلب الحذف!");
+    if (userRole !== "مدير" && userRole !== "محاسب") {
+      onShowToast("⚠️ صلاحيات المدير أو المحاسب فقط لطلب الحذف!");
       return;
     }
     setConfirmModal({
@@ -1181,8 +1198,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       onShowToast("⚠️ لا توجد فواتير ضريبية حالية لحذفها");
       return;
     }
-    if (userRole !== "مدير") {
-      onShowToast("⚠️ صلاحيات المدير فقط لطلب الحذف!");
+    if (userRole !== "مدير" && userRole !== "محاسب") {
+      onShowToast("⚠️ صلاحيات المدير أو المحاسب فقط لطلب الحذف!");
       return;
     }
     setConfirmModal({
@@ -1323,12 +1340,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   }, [branch, from, to, reportMode, dailyCashKeyTrigger]);
 
-  // Filter invoices to only show/count the ones matching the selected active branch and optionally company
+  // Filter invoices to only show/count the ones matching the selected active branch, company, and date range
   const filteredInvoices = invoices.filter((i) => {
-    const isApproved = i.status !== "pending" && i.status !== "rejected";
+    const isValid = i.status !== "rejected";
     const matchesBranch = i.branch === branch;
     const matchesCompany = !selectedCompanyFilter || selectedCompanyFilter === "الكل" || i.company === selectedCompanyFilter;
-    return isApproved && matchesBranch && matchesCompany;
+    const effDate = i.invoice_date || i.date;
+    const matchesDate = reportMode === "day"
+      ? (effDate === from || i.date === from)
+      : (!from || !to || (effDate >= from && effDate <= to) || (i.date >= from && i.date <= to));
+    return isValid && matchesBranch && matchesCompany && matchesDate;
   });
   const totalInvoicesAmount = filteredInvoices.reduce((s, i) => s + (i.amount || 0), 0);
   
@@ -1535,7 +1556,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           <div className="flex items-center justify-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => setPreviewInvoice(inv)}
+                              onClick={() => openInvoicePreview(inv)}
                               className="px-2.5 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 text-[11px] font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
                               title="معاينة محتويات الفاتورة بصرياً"
                             >
@@ -2212,7 +2233,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         amount: parseFloat(v.amount as string) || 0,
                         items: v.items || [],
                         createdBy: currentUser?.username || "unknown",
-                        status: (userRole === "مدخل فواتير" || userRole === "محاسب") ? "pending" : "approved",
+                        status: userRole === "مدخل فواتير" ? "pending" : "approved",
                         rawImage: v.rawImage || "",
                         fileType: v.fileType || ""
                       }));
@@ -2528,14 +2549,23 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         </form>
       </div>
 
-      {/* For Invoice clerks show a neat simple list of entered branch invoices to avoid confusion and double-entries */}
-      {(userRole === "مدخل فواتير" || (userRole === "محاسب" && currentUser?.canEnterInvoices)) && (() => {
+      {/* For Invoice clerks & Accountants show entered branch invoices list */}
+      {(userRole === "مدخل فواتير" || userRole === "محاسب" || userRole === "مدير") && (() => {
         const todayStr = new Date().toISOString().split("T")[0];
-        const myInvoices = invoices.filter(i => i.createdBy === currentUser?.username && i.date === todayStr);
-        const myInvoicesSorted = [...myInvoices].sort((a, b) => a.id.localeCompare(b.id));
+        const allCombined = [...invoices, ...pendingInvoices].filter((inv, idx, self) => self.findIndex(s => s.id === inv.id) === idx);
+        const branchInvoices = allCombined.filter(i => i.branch === branch);
+        
+        // For clerk, show their own or branch invoices for today/selected date. For accountant/manager, show all branch invoices
+        const myInvoices = userRole === "مدخل فواتير"
+          ? branchInvoices.filter(i => 
+              (i.createdBy === currentUser?.username || (!i.createdBy && i.branch === branch)) && 
+              (i.date === todayStr || i.invoice_date === todayStr || i.date === date || i.status === "pending")
+            )
+          : branchInvoices;
+        const myInvoicesSorted = [...myInvoices].sort((a, b) => (a.invoice_date || a.date || a.id).localeCompare(b.invoice_date || b.date || b.id));
         
         // Keep overall latest invoice check for permission logic
-        const overallInvoices = invoices.filter(i => i.createdBy === currentUser?.username);
+        const overallInvoices = allCombined.filter(i => i.createdBy === currentUser?.username);
         const overallSorted = [...overallInvoices].sort((a, b) => a.id.localeCompare(b.id));
         const latestInvoice = overallSorted[overallSorted.length - 1];
 
@@ -2547,7 +2577,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-indigo-700 font-extrabold" />
-                <h2 className="text-sm font-bold text-slate-800">الفواتير الضريبية التي قمت بإدخالها اليوم ({todayStr})</h2>
+                <h2 className="text-sm font-bold text-slate-800">
+                  {userRole === "محاسب" || userRole === "مدير" 
+                    ? `سجل فواتير فرع ${branch} (${displayInvoices.length} فاتورة)`
+                    : `الفواتير الضريبية التي قمت بإدخالها اليوم (${todayStr})`}
+                </h2>
               </div>
               <button
                 type="button"
@@ -2561,7 +2595,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </div>
 
             <p className="text-xs text-slate-500 font-medium leading-relaxed">
-              توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها لتاريخ اليوم المحدد <strong>({todayStr})</strong>. يُسمح لك بتعديل أو حذف <strong>الفاتورة الأحدث فقط</strong>. بمجرد قيامك بإدخال فاتورة تالية، تصبح الفاتورة السابقة مغلقة وتثبت تلقائياً في النظام لحماية البيانات.
+              {userRole === "محاسب" || userRole === "مدير"
+                ? `قائمة الفواتير الضريبية المسجلة لفرع ${branch} بإجمالي قدره ${totalAmount.toFixed(2)} ر.س.`
+                : `توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها لتاريخ اليوم المحدد (${todayStr}). يُسمح لك بتعديل أو حذف الفاتورة الأحدث فقط.`}
             </p>
 
             {displayInvoices.length === 0 ? (
@@ -2572,7 +2608,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     <span>جاري تحميل قائمة فواتيرك...</span>
                   </div>
                 ) : (
-                  `لم تقم بإدخال أي فواتير ضريبية في تاريخ ${todayStr} حتى الآن.`
+                  `لا توجد فواتير ضريبية مسجلة لفرع ${branch} حتى الآن.`
                 )}
               </div>
             ) : (
@@ -2601,45 +2637,73 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             {inv.amount.toFixed(2)} ر.س
                           </td>
                           <td className="p-3 text-center">
-                            {isLatest ? (
-                              <div className="flex items-center justify-center gap-1.5">
-                                <span className="text-[10px] text-indigo-700 font-bold bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1 animate-pulse">
-                                  🔓 الفاتورة الأحدث
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openInvoicePreview(inv)}
+                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                title="معاينة الفاتورة بصرياً"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>معاينة</span>
+                              </button>
+                              {userRole !== "محاسب" && (
+                                inv.status === "pending" ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                    ⏳ قيد المراجعة
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                    ✅ معتمدة
+                                  </span>
+                                )
+                              )}
+                              {isLatest || userRole === "محاسب" || userRole === "مدير" ? (
+                                <>
+                                  {isLatest && userRole === "مدخل فواتير" && (
+                                    <span className="text-[10px] text-indigo-700 font-bold bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                      الأحدث
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditInvoice(inv)}
+                                    className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                    title="تعديل الفاتورة"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                    <span>تعديل</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteInvoice(inv.id)}
+                                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                    title="حذف الفاتورة"
+                                  >
+                                    <Trash className="w-3 h-3" />
+                                    <span>حذف</span>
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2 py-0.5 rounded-md">
+                                  🔒 مثبتة
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => startEditInvoice(inv)}
-                                  className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                                  title="تعديل الفاتورة"
-                                >
-                                  <Edit className="w-3 h-3" />
-                                  <span>تعديل</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => deleteInvoice(inv.id)}
-                                  className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                                  title="حذف الفاتورة"
-                                >
-                                  <Trash className="w-3 h-3" />
-                                  <span>حذف</span>
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2.5 py-1 rounded-md flex items-center justify-center gap-1 w-max mx-auto">
-                                🔒 مغلق بالنظام
-                              </span>
-                            )}
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
                     })}
                     <tr className="bg-slate-50 text-slate-800 font-extrabold border-t border-slate-200">
-                      <td colSpan={4} className="p-3 text-right">إجمالي الفواتير التي قمت بإدخالها:</td>
+                      <td colSpan={4} className="p-3 text-right">
+                        {userRole === "محاسب" || userRole === "مدير" ? `إجمالي فواتير فرع ${branch}:` : "إجمالي الفواتير التي قمت بإدخالها:"}
+                      </td>
                       <td className="p-3 text-left font-extrabold text-indigo-700 font-mono">
                         {totalAmount.toFixed(2)} ر.س
                       </td>
-                      <td></td>
+                      <td className="p-3 text-center text-[10px] text-slate-500">
+                        {displayInvoices.length} فواتير
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -3036,7 +3100,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       {(() => {
                         const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
                         
-                        const invoiceDatesSet = new Set<string>(filteredInvoices.map((inv) => inv.date));
+                        const invoiceDatesSet = new Set<string>();
+                        filteredInvoices.forEach((inv) => {
+                          const eff = inv.invoice_date || inv.date;
+                          if (eff) invoiceDatesSet.add(eff);
+                          if (inv.date) invoiceDatesSet.add(inv.date);
+                        });
                         const allUniqueDates = getDatesInRange(from, to).filter(dateStr => invoiceDatesSet.has(dateStr));
 
                         if (allUniqueDates.length === 0) {
@@ -3062,7 +3131,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               };
 
                               const dayInvoices = filteredInvoices.filter(
-                                (inv) => inv.date === dateStr
+                                (inv) => (inv.invoice_date || inv.date) === dateStr
                               );
                               const dayInvoicesTotal = dayInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
                               const dayCash = getDailyCash(dateStr);
@@ -3272,7 +3341,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 totalPos += d.pos_net || 0;
                                 totalCash += getDailyCash(dateStr);
                                 const dayInvs = filteredInvoices.filter(
-                                  (inv) => inv.date === dateStr
+                                  (inv) => (inv.invoice_date || inv.date) === dateStr
                                 );
                                 totalInvs += dayInvs.reduce((sum, inv) => sum + (inv.amount || 0), 0);
                               });
