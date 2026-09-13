@@ -894,10 +894,12 @@ async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
     const snap = await getDocs(collection(db, "tax_registered_companies"));
     const list: TaxCompany[] = [];
     snap.forEach((d) => {
-      const data = d.data() as TaxCompany;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
+      const data = d.data() as Partial<TaxCompany>;
+      if (data && typeof data.name === "string" && data.name.trim()) {
+        list.push({
+          id: data.id || d.id,
+          name: data.name.trim(),
+        });
       }
     });
 
@@ -906,14 +908,15 @@ async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
       const invoices = await getTaxInvoices();
       const uniqueNames = Array.from(new Set(invoices.map((i) => i.company).filter(Boolean)));
       for (const name of uniqueNames) {
+        if (!name || typeof name !== "string") continue;
         const id = `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const comp: TaxCompany = { id, name };
+        const comp: TaxCompany = { id, name: name.trim() };
         await setDoc(doc(db, "tax_registered_companies", id), comp);
         list.push(comp);
       }
     }
 
-    list.sort((a, b) => a.name.localeCompare(b.name, "ar"));
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
     return list;
   } catch (err) {
     console.error("Error reading tax registered companies from Firestore:", err);
@@ -3131,9 +3134,15 @@ async function startServer() {
           };
         } catch (err: any) {
           console.error(`Error parsing image at index ${idx}:`, err);
+          let friendlyError = err.message || "فشل قراءة تفاصيل الصورة";
+          if (friendlyError.includes("dunning") || friendlyError.includes("Lightning") || friendlyError.includes("PERMISSION_DENIED")) {
+            friendlyError = "خطأ في حساب Google Cloud الخاص بمفتاح الذكاء الاصطناعي: تعليق أو فشل في سداد الفوترة (Lightning dunning decision is deny). يرجى تحديث بطاقة الدفع في حساب Google Cloud أو استخراج مفتاح API جديد من Google AI Studio.";
+          } else if (friendlyError.includes("API_KEY_INVALID") || friendlyError.includes("API key not valid")) {
+            friendlyError = "مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) غير صالح. يرجى التأكد من المفتاح في متغيرات البيئة.";
+          }
           return {
             success: false,
-            error: err.message || "فشل قراءة تفاصيل الصورة",
+            error: friendlyError,
             company: "فاتورة",
             invoice_no: "",
             invoice_date: "",
