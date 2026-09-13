@@ -29,7 +29,9 @@ import {
   X,
   Eye,
   Bell,
-  BellRing
+  BellRing,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 
 interface TaxTabProps {
@@ -712,13 +714,30 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   const getDailyCash = (dateStr: string) => {
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
-    if (saved !== null) return parseFloat(saved) || 0;
+    if (saved !== null && saved !== "") {
+      const parsed = parseFloat(saved);
+      if (!isNaN(parsed)) return parsed;
+    }
+    // Fallback directly to the entered daily sales cash_net recorded in the system for this date & branch
+    const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
+    const realD = branchDays.find((b: any) => b.date === dateStr);
+    if (realD && typeof realD.cash_net === "number") {
+      return realD.cash_net;
+    }
     return 0;
   };
 
   const getDailyCashDisplayValue = (dateStr: string) => {
     const saved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
-    if (saved !== null) return saved;
+    if (saved !== null && saved !== "") {
+      return saved;
+    }
+    // Fallback directly to display the entered daily sales cash_net recorded in the system
+    const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
+    const realD = branchDays.find((b: any) => b.date === dateStr);
+    if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
+      return String(realD.cash_net);
+    }
     return "";
   };
 
@@ -738,6 +757,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [isTaxCalculated, setIsTaxCalculated] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
+  const [isBranchInvoicesExpanded, setIsBranchInvoicesExpanded] = useState<boolean>(false);
 
   useEffect(() => {
     setSelectedInvoiceIds([]);
@@ -1094,10 +1114,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       // We don't overwrite or divide/split anything over the days. We just approve the calculation.
       const dates = getDatesInRange(from, to);
       let totalDailyCash = 0;
+      const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
       dates.forEach(dateStr => {
         const dSaved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
-        if (dSaved !== null) {
+        if (dSaved !== null && dSaved !== "") {
           totalDailyCash += parseFloat(dSaved) || 0;
+        } else {
+          const realD = branchDays.find((b: any) => b.date === dateStr);
+          if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
+            totalDailyCash += realD.cash_net;
+          }
         }
       });
       setCashInput(totalDailyCash);
@@ -1309,36 +1335,50 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   // Sync cash input memory for this branch and date range
   useEffect(() => {
+    const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
     if (reportMode === "day") {
       const savedDailyKey = `tax_cash_${branch}_${from}_${from}`;
       const saved = localStorage.getItem(savedDailyKey);
-      if (saved !== null) {
+      if (saved !== null && saved !== "") {
         setTempCashInput(saved);
         setCashInput(parseFloat(saved) || 0);
         setIsTaxCalculated(true);
       } else {
-        setTempCashInput("");
-        setCashInput(0);
-        setIsTaxCalculated(false);
+        const realD = branchDays.find((b: any) => b.date === from);
+        if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
+          setTempCashInput(String(realD.cash_net));
+          setCashInput(realD.cash_net);
+          setIsTaxCalculated(true);
+        } else {
+          setTempCashInput("");
+          setCashInput(0);
+          setIsTaxCalculated(false);
+        }
       }
     } else {
-      // For period and period_detailed, we sum up the independently entered daily values
+      // For period and period_detailed, we sum up the independently entered daily values or use recorded cash
       const dates = getDatesInRange(from, to);
       let totalDailyCash = 0;
       let hasAnyDaily = false;
       dates.forEach(dateStr => {
         const dSaved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
-        if (dSaved !== null) {
+        if (dSaved !== null && dSaved !== "") {
           totalDailyCash += parseFloat(dSaved) || 0;
           hasAnyDaily = true;
+        } else {
+          const realD = branchDays.find((b: any) => b.date === dateStr);
+          if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
+            totalDailyCash += realD.cash_net;
+            hasAnyDaily = true;
+          }
         }
       });
 
-      setTempCashInput(String(totalDailyCash));
+      setTempCashInput(totalDailyCash > 0 ? String(totalDailyCash) : "");
       setCashInput(totalDailyCash);
       setIsTaxCalculated(hasAnyDaily);
     }
-  }, [branch, from, to, reportMode, dailyCashKeyTrigger]);
+  }, [branch, from, to, reportMode, dailyCashKeyTrigger, reportRawData]);
 
   // Filter invoices to only show/count the ones matching the selected active branch, company, and date range
   const filteredInvoices = invoices.filter((i) => {
@@ -2573,140 +2613,232 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         const totalAmount = displayInvoices.reduce((acc, inv) => acc + inv.amount, 0);
 
         return (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-150 p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Receipt className="w-5 h-5 text-indigo-700 font-extrabold" />
-                <h2 className="text-sm font-bold text-slate-800">
-                  {userRole === "محاسب" || userRole === "مدير" 
-                    ? `سجل فواتير فرع ${branch} (${displayInvoices.length} فاتورة)`
-                    : `الفواتير الضريبية التي قمت بإدخالها اليوم (${todayStr})`}
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={loadTaxReport}
-                disabled={loading}
-                className="text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg p-2 transition-all flex items-center justify-center cursor-pointer disabled:opacity-50 font-bold text-xs gap-1"
+          <div className="bg-white rounded-xl shadow-sm border border-slate-150 p-5 space-y-4 print:hidden">
+            {/* Header with Title, Summary, and Collapse/Expand Toggle */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+              <div 
+                className="flex items-center gap-2.5 cursor-pointer select-none group"
+                onClick={() => setIsBranchInvoicesExpanded(prev => !prev)}
+                title={isBranchInvoicesExpanded ? "انقر للطي" : "انقر للانسدال وعرض الفواتير"}
               >
-                <Search className="w-3.5 h-3.5" />
-                تحديث القائمة
-              </button>
+                <div className="p-2 rounded-lg bg-indigo-50 text-indigo-700 group-hover:bg-indigo-100 transition-colors">
+                  <Receipt className="w-5 h-5 font-extrabold" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-sm font-bold text-slate-800 group-hover:text-indigo-700 transition-colors">
+                      {userRole === "محاسب" || userRole === "مدير" 
+                        ? `سجل فواتير فرع ${branch}`
+                        : `الفواتير الضريبية التي قمت بإدخالها اليوم (${todayStr})`}
+                    </h2>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-100/70 text-indigo-800 border border-indigo-200">
+                      {displayInvoices.length} فاتورة
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      {totalAmount.toFixed(2)} ر.س
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {isBranchInvoicesExpanded ? "القائمة منسدلة ومعروضة بالتفصيل" : "القائمة مطوية حالياً كوضع افتراضي — انقر للانسدال"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={loadTaxReport}
+                  disabled={loading}
+                  className="text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg px-3 py-2 transition-all flex items-center justify-center cursor-pointer disabled:opacity-50 font-bold text-xs gap-1.5"
+                  title="تحديث البيانات من الخادم"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>تحديث</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsBranchInvoicesExpanded(prev => !prev)}
+                  className={`px-3.5 py-2 rounded-lg transition-all flex items-center justify-center cursor-pointer font-bold text-xs gap-1.5 shadow-xs ${
+                    isBranchInvoicesExpanded 
+                      ? "bg-slate-200 hover:bg-slate-300 text-slate-800" 
+                      : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                  }`}
+                >
+                  {isBranchInvoicesExpanded ? (
+                    <>
+                      <ChevronUp className="w-4 h-4" />
+                      <span>طي القائمة</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4" />
+                      <span>عرض وسرد الفواتير</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
-            <p className="text-xs text-slate-500 font-medium leading-relaxed">
-              {userRole === "محاسب" || userRole === "مدير"
-                ? `قائمة الفواتير الضريبية المسجلة لفرع ${branch} بإجمالي قدره ${totalAmount.toFixed(2)} ر.س.`
-                : `توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها لتاريخ اليوم المحدد (${todayStr}). يُسمح لك بتعديل أو حذف الفاتورة الأحدث فقط.`}
-            </p>
+            {/* Collapsed State Teaser Banner */}
+            {!isBranchInvoicesExpanded && (
+              <div 
+                onClick={() => setIsBranchInvoicesExpanded(true)}
+                className="bg-slate-50/80 hover:bg-indigo-50/40 border border-dashed border-slate-200 hover:border-indigo-300 rounded-xl p-3.5 text-center cursor-pointer transition-all flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
+              >
+                <div className="flex items-center gap-2 text-slate-600">
+                  <span className="text-slate-400">ℹ️</span>
+                  <span>تم طي قائمة الفواتير ({displayInvoices.length} فاتورة) تلقائياً للحفاظ على سهولة وسرعة تصفح الصفحة.</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsBranchInvoicesExpanded(true);
+                  }}
+                  className="text-indigo-700 hover:text-indigo-800 font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <span>فتح وسرد الفواتير</span>
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
-            {displayInvoices.length === 0 ? (
-              <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-slate-500 font-medium text-xs">
-                {loading ? (
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
-                    <span>جاري تحميل قائمة فواتيرك...</span>
+            {/* Expanded Content */}
+            {isBranchInvoicesExpanded && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                  {userRole === "محاسب" || userRole === "مدير"
+                    ? `قائمة الفواتير الضريبية المسجلة لفرع ${branch} بإجمالي قدره ${totalAmount.toFixed(2)} ر.س.`
+                    : `توضح هذه القائمة الفواتير الضريبية التي قمت بإدخالها لتاريخ اليوم المحدد (${todayStr}). يُسمح لك بتعديل أو حذف الفاتورة الأحدث فقط.`}
+                </p>
+
+                {displayInvoices.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200 text-slate-500 font-medium text-xs">
+                    {loading ? (
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                        <span>جاري تحميل قائمة فواتيرك...</span>
+                      </div>
+                    ) : (
+                      `لا توجد فواتير ضريبية مسجلة لفرع ${branch} حتى الآن.`
+                    )}
                   </div>
                 ) : (
-                  `لا توجد فواتير ضريبية مسجلة لفرع ${branch} حتى الآن.`
+                  <>
+                    <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs max-h-[600px] overflow-y-auto">
+                      <table className="w-full text-right text-xs border-collapse">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 shadow-3xs">
+                            <th className="p-3 text-right">المورد / المؤسسة</th>
+                            <th className="p-3 text-center">الفرع</th>
+                            <th className="p-3 text-center">رقم الفاتورة</th>
+                            <th className="p-3 text-center">تاريخ الفاتورة</th>
+                            <th className="p-3 text-left">مبلـغ الفاتورة</th>
+                            <th className="p-3 text-center">حالة الفاتورة والتحكم</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {displayInvoices.map((inv) => {
+                            const isLatest = latestInvoice && inv.id === latestInvoice.id;
+                            return (
+                              <tr key={inv.id} className={`hover:bg-slate-50/50 ${isLatest ? 'bg-indigo-50/10' : ''}`}>
+                                <td className="p-3 font-extrabold text-slate-800">{inv.company}</td>
+                                <td className="p-3 text-center font-bold text-slate-600">{inv.branch}</td>
+                                <td className="p-3 text-center font-mono text-slate-500">{inv.invoice_no || "—"}</td>
+                                <td className="p-3 text-center font-mono text-slate-600">{inv.invoice_date || inv.date}</td>
+                                <td className="p-3 text-left font-extrabold text-indigo-950 font-mono">
+                                  {inv.amount.toFixed(2)} ر.س
+                                </td>
+                                <td className="p-3 text-center">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => openInvoicePreview(inv)}
+                                      className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                      title="معاينة الفاتورة بصرياً"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      <span>معاينة</span>
+                                    </button>
+                                    {userRole !== "محاسب" && (
+                                      inv.status === "pending" ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                          ⏳ قيد المراجعة
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                          ✅ معتمدة
+                                        </span>
+                                      )
+                                    )}
+                                    {isLatest || userRole === "محاسب" || userRole === "مدير" ? (
+                                      <>
+                                        {isLatest && userRole === "مدخل فواتير" && (
+                                          <span className="text-[10px] text-indigo-700 font-bold bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                            الأحدث
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => startEditInvoice(inv)}
+                                          className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                          title="تعديل الفاتورة"
+                                        >
+                                          <Edit className="w-3 h-3" />
+                                          <span>تعديل</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => deleteInvoice(inv.id)}
+                                          className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                                          title="حذف الفاتورة"
+                                        >
+                                          <Trash className="w-3 h-3" />
+                                          <span>حذف</span>
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2 py-0.5 rounded-md">
+                                        🔒 مثبتة
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="bg-slate-50 text-slate-800 font-extrabold border-t border-slate-200">
+                            <td colSpan={4} className="p-3 text-right">
+                              {userRole === "محاسب" || userRole === "مدير" ? `إجمالي فواتير فرع ${branch}:` : "إجمالي الفواتير التي قمت بإدخالها:"}
+                            </td>
+                            <td className="p-3 text-left font-extrabold text-indigo-700 font-mono">
+                              {totalAmount.toFixed(2)} ر.س
+                            </td>
+                            <td className="p-3 text-center text-[10px] text-slate-500">
+                              {displayInvoices.length} فواتير
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Bottom collapse button for convenience when browsing long list */}
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-xs text-slate-500 font-medium">
+                        معروض حالياً {displayInvoices.length} فاتورة مسجلة
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsBranchInvoicesExpanded(false)}
+                        className="text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                        <span>طي القائمة والرجوع للأعلى</span>
+                      </button>
+                    </div>
+                  </>
                 )}
-              </div>
-            ) : (
-              <div className="overflow-x-auto border border-slate-150 rounded-xl bg-white shadow-3xs">
-                <table className="w-full text-right text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 shadow-3xs">
-                      <th className="p-3 text-right">المورد / المؤسسة</th>
-                      <th className="p-3 text-center">الفرع</th>
-                      <th className="p-3 text-center">رقم الفاتورة</th>
-                      <th className="p-3 text-center">تاريخ الفاتورة</th>
-                      <th className="p-3 text-left">مبلـغ الفاتورة</th>
-                      <th className="p-3 text-center">حالة الفاتورة والتحكم</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {displayInvoices.map((inv) => {
-                      const isLatest = latestInvoice && inv.id === latestInvoice.id;
-                      return (
-                        <tr key={inv.id} className={`hover:bg-slate-50/50 ${isLatest ? 'bg-indigo-50/10' : ''}`}>
-                          <td className="p-3 font-extrabold text-slate-800">{inv.company}</td>
-                          <td className="p-3 text-center font-bold text-slate-600">{inv.branch}</td>
-                          <td className="p-3 text-center font-mono text-slate-500">{inv.invoice_no || "—"}</td>
-                          <td className="p-3 text-center font-mono text-slate-600">{inv.invoice_date || inv.date}</td>
-                          <td className="p-3 text-left font-extrabold text-indigo-950 font-mono">
-                            {inv.amount.toFixed(2)} ر.س
-                          </td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => openInvoicePreview(inv)}
-                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                                title="معاينة الفاتورة بصرياً"
-                              >
-                                <Eye className="w-3 h-3" />
-                                <span>معاينة</span>
-                              </button>
-                              {userRole !== "محاسب" && (
-                                inv.status === "pending" ? (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                                    ⏳ قيد المراجعة
-                                  </span>
-                                ) : (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                                    ✅ معتمدة
-                                  </span>
-                                )
-                              )}
-                              {isLatest || userRole === "محاسب" || userRole === "مدير" ? (
-                                <>
-                                  {isLatest && userRole === "مدخل فواتير" && (
-                                    <span className="text-[10px] text-indigo-700 font-bold bg-indigo-100 px-2 py-0.5 rounded-md flex items-center gap-1">
-                                      الأحدث
-                                    </span>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => startEditInvoice(inv)}
-                                    className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                                    title="تعديل الفاتورة"
-                                  >
-                                    <Edit className="w-3 h-3" />
-                                    <span>تعديل</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => deleteInvoice(inv.id)}
-                                    className="px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                                    title="حذف الفاتورة"
-                                  >
-                                    <Trash className="w-3 h-3" />
-                                    <span>حذف</span>
-                                  </button>
-                                </>
-                              ) : (
-                                <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-2 py-0.5 rounded-md">
-                                  🔒 مثبتة
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="bg-slate-50 text-slate-800 font-extrabold border-t border-slate-200">
-                      <td colSpan={4} className="p-3 text-right">
-                        {userRole === "محاسب" || userRole === "مدير" ? `إجمالي فواتير فرع ${branch}:` : "إجمالي الفواتير التي قمت بإدخالها:"}
-                      </td>
-                      <td className="p-3 text-left font-extrabold text-indigo-700 font-mono">
-                        {totalAmount.toFixed(2)} ر.س
-                      </td>
-                      <td className="p-3 text-center text-[10px] text-slate-500">
-                        {displayInvoices.length} فواتير
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
               </div>
             )}
           </div>
@@ -2720,73 +2852,146 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         {/* Dynamic style injection specifically optimized for clean print outputs of this report */}
         <style dangerouslySetInnerHTML={{ __html: `
           @media print {
-            header, nav, form, button, .print\\:hidden, #toast-container, [role="alert"], aside, footer {
+            /* 1. Hide all non-report elements: headers, navigation, sidebars, buttons, modals, forms, and alerts */
+            header, nav, aside, footer, form, button, input[type="file"], select,
+            .print\\:hidden, #toast-container, [role="alert"] {
               display: none !important;
               visibility: hidden !important;
-              opacity: 0 !important;
               height: 0 !important;
-              overflow: hidden !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              border: none !important;
             }
+
+            /* 2. Isolation: hide everything in body by default, keep only report visible */
+            body > * {
+              visibility: hidden !important;
+            }
+            #printable-tax-report-area,
+            #printable-tax-report-area * {
+              visibility: visible !important;
+            }
+
+            /* Ensure elements inside report marked with print:hidden are strictly hidden */
+            #printable-tax-report-area .print\\:hidden {
+              display: none !important;
+              visibility: hidden !important;
+            }
+
             body, html {
-              background: white !important;
-              color: black !important;
+              background: #ffffff !important;
+              color: #000000 !important;
               margin: 0 !important;
               padding: 0 !important;
               height: auto !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
+
+            /* A4 portrait page with approximately 1.15 cm (11.5mm) margins as requested */
             @page {
               size: A4 portrait;
-              margin: 15mm 15mm 15mm 15mm;
+              margin: 11.5mm;
             }
+
             #printable-tax-report-area {
               display: block !important;
               border: none !important;
               box-shadow: none !important;
-              padding: 10mm 12mm !important;
+              padding: 0 !important;
               margin: 0 !important;
               width: 100% !important;
               max-width: 100% !important;
-              visibility: visible !important;
+              background: #ffffff !important;
             }
-            #printable-tax-report-area * {
-              visibility: visible !important;
-            }
+
+            /* High-legibility black border ink-saving printable tables */
             #printable-tax-report-area table {
               width: 100% !important;
               border-collapse: collapse !important;
-              font-size: 8px !important;
+              border: 1.5px solid #000000 !important;
+              margin: 0 !important;
+              page-break-inside: auto;
             }
+
+            #printable-tax-report-area tr {
+              page-break-inside: avoid;
+              page-break-after: auto;
+            }
+
+            #printable-tax-report-area thead {
+              display: table-header-group;
+            }
+
+            /* Large, legible text in table cells with crisp black borders */
             #printable-tax-report-area th, 
             #printable-tax-report-area td {
-              padding: 3px 4px !important;
-              font-size: 8px !important;
-              line-height: 1.15 !important;
-              border-color: #475569 !important; /* darker borders for maximum legibility */
+              padding: 4px 6px !important;
+              font-size: 11px !important;
+              line-height: 1.25 !important;
+              border: 1px solid #000000 !important;
+              color: #000000 !important;
+              background-color: transparent !important;
             }
+
             #printable-tax-report-area th {
               background-color: #f1f5f9 !important;
               color: #000000 !important;
               font-weight: 850 !important;
+              font-size: 11.5px !important;
+              border: 1px solid #000000 !important;
+              border-bottom: 2px solid #000000 !important;
             }
+
+            /* Prominent bold separator line dividing each day from the other */
+            #printable-tax-report-area .day-separator-row td,
+            #printable-tax-report-area tr.day-separator-row td,
+            #printable-tax-report-area td.day-separator-cell {
+              border-bottom: 2.5px solid #000000 !important;
+            }
+
+            /* Totals row thick divider lines */
+            #printable-tax-report-area .totals-row td,
+            #printable-tax-report-area tr.totals-row td {
+              border-top: 2.5px solid #000000 !important;
+              border-bottom: 2.5px solid #000000 !important;
+              font-weight: 900 !important;
+              font-size: 11.5px !important;
+              background-color: #f8fafc !important;
+              color: #000000 !important;
+            }
+
+            /* Ink saving: reset colored background fills to transparent */
             #printable-tax-report-area .bg-slate-50,
             #printable-tax-report-area .bg-slate-100,
+            #printable-tax-report-area .bg-slate-150,
+            #printable-tax-report-area .bg-slate-200,
             #printable-tax-report-area .bg-indigo-50\\/20,
-            #printable-tax-report-area .bg-emerald-50\\/10 {
+            #printable-tax-report-area .bg-emerald-50\\/10,
+            #printable-tax-report-area .bg-emerald-50\\/20,
+            #printable-tax-report-area .bg-rose-50\\/10 {
               background-color: transparent !important;
             }
+
             #printable-tax-report-area h3 {
-              font-size: 11px !important;
-              margin-bottom: 2px !important;
+              font-size: 15px !important;
+              font-weight: 900 !important;
+              color: #000000 !important;
+              margin-bottom: 3px !important;
             }
+
             #printable-tax-report-area p {
-              font-size: 8.5px !important;
+              font-size: 11px !important;
+              color: #000000 !important;
             }
+
             #printable-tax-report-area .text-xs,
             #printable-tax-report-area .text-sm {
-              font-size: 8px !important;
+              font-size: 11px !important;
             }
+
             #printable-tax-report-area input {
-              display: none !important; /* hide inputs on print completely */
+              display: none !important;
             }
           }
         `}} />
@@ -3062,38 +3267,40 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             </div>
 
             {/* 2. Official Ink-saving Printable Comprehensive Tax Ledger Table (أعمدة وصفوف للطباعة على ورقة واحدة) */}
-            <div className="bg-white border border-slate-350 rounded-xl overflow-hidden shadow-2xs mt-4 print:border-slate-400">
+            <div className="bg-white border-2 border-black rounded-xl overflow-hidden shadow-2xs mt-4 print:border-none print:shadow-none print:m-0 print:p-0">
               
               {/* Header block optimized for light-ink print outputs */}
-              <div className="p-4 bg-slate-50/50 border-b border-slate-300 text-center space-y-1 print:bg-white print:border-b-2">
-                <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
+              <div className="p-4 bg-white border-b-2 border-black text-center space-y-1 print:p-2 print:border-b-2 print:border-black">
+                <h3 className="text-sm sm:text-base font-black text-slate-900 tracking-tight print:text-base print:text-black">
                   تقرير ضريبة القيمة المضافة الموحد الشامل - منشأة فرع {branch}
                 </h3>
-                <p className="text-[10px] text-slate-500 font-bold">
+                <p className="text-xs text-slate-700 font-bold print:text-xs print:text-black">
                   {reportMode === "day" ? `كشف حركة اليوم المالي: ${from}` : `كشف حركة الفترة الزمنية المعتمدة: من ${from} إلى ${to}`}
                 </p>
-                <div className="text-[9px] text-slate-400 font-semibold font-mono flex items-center justify-center gap-2 mt-1">
+                <div className="text-[10px] text-slate-600 font-bold font-mono flex items-center justify-center gap-2 mt-1 print:text-[10px] print:text-black">
                   <span>تاريخ استخراج النشرة: {new Date().toLocaleDateString('ar-EG')}</span>
                   <span>|</span>
                   <span>العملة الرسمية المعبر عنها: ريال سعودي (SAR)</span>
+                  <span>|</span>
+                  <span>مقاس الورق: A4</span>
                 </div>
               </div>
 
-              <div className="p-4 overflow-x-auto print:overflow-visible scrollbar-thin">
+              <div className="p-4 overflow-x-auto print:p-0 print:overflow-visible scrollbar-thin">
                 {reportMode === "period_detailed" ? (
-                  <table className="w-full text-right text-xs border-collapse">
+                  <table className="w-full text-right text-xs border-collapse border border-black print:border-black">
                     <thead>
-                      <tr className="bg-slate-100/80 border-b border-slate-300 text-slate-800 font-extrabold print:bg-slate-50 print:border-b-2">
-                        <th className="p-3 border-l border-slate-300 text-center w-32">التاريخ واليوم</th>
-                        <th className="p-3 border-l border-slate-300 text-left w-24">دخل الشبكة (نقاط البيع)</th>
-                        <th className="p-3 border-l border-slate-300 text-center w-28 print:p-1">دخل الكاش</th>
-                        <th className="p-3 border-l border-slate-300 text-left w-28 bg-slate-50/40">مجموع الدخل الكلي (1)</th>
-                        <th className="p-3 border-l border-slate-300 text-right">اسم المؤسسة / المورد</th>
-                        <th className="p-3 border-l border-slate-300 text-center w-24">رقم الفاتورة</th>
-                        <th className="p-3 border-l border-slate-300 text-center w-24">تاريخ الفاتورة</th>
-                        <th className="p-3 border-l border-slate-300 text-left w-24">مبلغ الفاتورة (2)</th>
-                        <th className="p-3 border-l border-slate-300 text-left w-28 bg-slate-50/20">صافي الفرق الخاضع (1-2)</th>
-                        <th className="p-3 text-left w-28 bg-emerald-50/10 text-emerald-950 font-black">الضريبة 15%</th>
+                      <tr className="bg-slate-100 border-b-2 border-black text-slate-900 font-black print:bg-slate-100 print:text-black print:border-b-2 print:border-black">
+                        <th className="p-2.5 border border-black text-center w-32 font-black">التاريخ واليوم</th>
+                        <th className="p-2.5 border border-black text-left w-24 font-black">دخل الشبكة (نقاط البيع)</th>
+                        <th className="p-2.5 border border-black text-center w-28 print:p-1 font-black">دخل الكاش</th>
+                        <th className="p-2.5 border border-black text-left w-28 font-black">مجموع الدخل الكلي (1)</th>
+                        <th className="p-2.5 border border-black text-right font-black">اسم المؤسسة / المورد</th>
+                        <th className="p-2.5 border border-black text-center w-24 font-black">رقم الفاتورة</th>
+                        <th className="p-2.5 border border-black text-center w-24 font-black">تاريخ الفاتورة</th>
+                        <th className="p-2.5 border border-black text-left w-24 font-black">مبلغ الفاتورة (2)</th>
+                        <th className="p-2.5 border border-black text-left w-28 font-black">صافي الفرق الخاضع (1-2)</th>
+                        <th className="p-2.5 border border-black text-left w-28 font-black">الضريبة 15%</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3111,7 +3318,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         if (allUniqueDates.length === 0) {
                           return (
                             <tr>
-                              <td colSpan={10} className="p-8 text-center text-slate-400 font-medium border-b border-slate-200">
+                              <td colSpan={10} className="p-8 text-center text-slate-600 font-bold border border-black print:text-black">
                                 لا توجد سجلات يومية أو فواتير ضريبية مسجلة للفترة الزمنية المحددة.
                               </td>
                             </tr>
@@ -3144,21 +3351,21 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 return [
                                   <tr 
                                     key={d.id || d.date} 
-                                    className="border-b border-slate-300 font-medium hover:bg-slate-50/20 bg-white"
+                                    className="day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black font-medium hover:bg-slate-50/20 bg-white"
                                   >
                                     {/* 1. Date & Day */}
-                                    <td className="p-3 text-center border-l border-slate-300 font-bold bg-slate-50/60 font-mono text-slate-800">
-                                      <div>{d.date}</div>
-                                      <div className="text-[10px] text-slate-500 font-bold mt-0.5">{getArabicDayName(d.date)}</div>
+                                    <td className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-bold font-mono text-slate-900 print:text-black">
+                                      <div className="font-bold">{d.date}</div>
+                                      <div className="text-[10px] text-slate-700 print:text-black font-bold mt-0.5">{getArabicDayName(d.date)}</div>
                                     </td>
                                     
                                     {/* 2. POS Net */}
-                                    <td className="p-3 text-left border-l border-slate-300 font-bold text-slate-900">
+                                    <td className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-bold font-mono text-slate-900 print:text-black">
                                       {(d.pos_net || 0).toFixed(2)} ر
                                     </td>
                                     
                                     {/* 3. Daily Cash Input */}
-                                    <td className="p-3 text-center border-l border-slate-300 print:p-1">
+                                    <td className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black print:p-1">
                                       <div className="flex items-center justify-center gap-1.5 print:hidden">
                                         <input
                                           type="number"
@@ -3178,45 +3385,45 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                         />
                                         <span className="text-[9px] text-slate-400 font-bold">ر</span>
                                       </div>
-                                      <span className="hidden print:inline font-bold font-mono text-slate-700">
+                                      <span className="hidden print:inline font-bold font-mono text-black">
                                         {dayCash.toFixed(2)} ر
                                       </span>
                                     </td>
                                     
                                     {/* 4. Total Sales */}
-                                    <td className="p-3 text-left border-l border-slate-300 font-extrabold text-slate-950 bg-slate-50/30">
+                                    <td className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-extrabold font-mono text-slate-950 print:text-black">
                                       {dayTotalSales.toFixed(2)} ر
                                     </td>
                                     
                                     {/* 5. Company Name (Supplier) */}
-                                    <td className="p-3 text-center border-l border-slate-300 text-slate-400 font-medium">
+                                    <td className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black text-slate-500 print:text-black font-medium">
                                       لا توجد فواتير
                                     </td>
                                     
                                     {/* 6. Invoice No */}
-                                    <td className="p-3 text-center border-l border-slate-300 text-slate-400">
+                                    <td className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black text-slate-500 print:text-black">
                                       —
                                     </td>
                                     
                                     {/* 7. Invoice Date */}
-                                    <td className="p-3 text-center border-l border-slate-300 text-slate-400 font-mono">
+                                    <td className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black text-slate-500 print:text-black font-mono">
                                       —
                                     </td>
                                     
                                     {/* 8. Invoice Amount */}
-                                    <td className="p-3 text-left border-l border-slate-300 text-slate-400">
+                                    <td className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black text-slate-500 print:text-black font-mono">
                                       0.00 ر
                                     </td>
                                     
                                     {/* 9. Difference */}
-                                    <td className="p-3 text-left border-l border-slate-300 font-extrabold bg-slate-50/10">
-                                      <span className={dayNetDifference >= 0 ? "text-emerald-700" : "text-rose-600"}>
+                                    <td className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-extrabold font-mono text-slate-900 print:text-black">
+                                      <span className={dayNetDifference >= 0 ? "text-emerald-800 print:text-black" : "text-rose-700 print:text-black"}>
                                         {dayNetDifference.toFixed(2)} ر
                                       </span>
                                     </td>
                                     
                                     {/* 10. Daily VAT */}
-                                    <td className="p-3 text-left font-black bg-emerald-50/10 text-emerald-800">
+                                    <td className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-black font-mono text-slate-900 print:text-black">
                                       {dayVat.toFixed(2)} ر
                                     </td>
                                   </tr>
@@ -3225,34 +3432,33 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
                               return dayInvoices.map((inv, idx) => {
                                 const isFirst = idx === 0;
+                                const isLast = idx === dayInvoices.length - 1;
                                 return (
                                   <tr 
                                     key={inv.id} 
-                                    className={`border-b border-slate-300 font-medium hover:bg-slate-50/20 ${
-                                      idx % 2 === 1 ? 'bg-slate-50/10' : 'bg-white'
-                                    }`}
+                                    className={`${isLast ? 'day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black' : 'border-b border-black'} font-medium hover:bg-slate-50/20 bg-white`}
                                   >
                                     {/* 1-4. Daily metrics merged for this day */}
                                     {isFirst && (
                                       <>
                                         <td 
                                           rowSpan={maxSpan}
-                                          className="p-3 text-center border-l border-slate-300 font-bold bg-slate-50/60 font-mono text-slate-800 align-middle"
+                                          className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-bold font-mono text-slate-900 print:text-black align-middle"
                                         >
-                                          <div>{d.date}</div>
-                                          <div className="text-[10px] text-slate-500 font-bold mt-0.5">{getArabicDayName(d.date)}</div>
+                                          <div className="font-bold">{d.date}</div>
+                                          <div className="text-[10px] text-slate-700 print:text-black font-bold mt-0.5">{getArabicDayName(d.date)}</div>
                                         </td>
                                         
                                         <td 
                                           rowSpan={maxSpan}
-                                          className="p-3 text-left border-l border-slate-300 font-bold text-slate-900 align-middle"
+                                          className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-bold font-mono text-slate-900 print:text-black align-middle"
                                         >
                                           {(d.pos_net || 0).toFixed(2)} ر
                                         </td>
                                         
                                         <td 
                                           rowSpan={maxSpan}
-                                          className="p-3 text-center border-l border-slate-300 print:p-1 align-middle"
+                                          className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black print:p-1 align-middle"
                                         >
                                           <div className="flex items-center justify-center gap-1.5 print:hidden">
                                             <input
@@ -3273,14 +3479,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                             />
                                             <span className="text-[9px] text-slate-400 font-bold">ر</span>
                                           </div>
-                                          <span className="hidden print:inline font-bold font-mono text-slate-700">
+                                          <span className="hidden print:inline font-bold font-mono text-black">
                                             {dayCash.toFixed(2)} ر
                                           </span>
                                         </td>
                                         
                                         <td 
                                           rowSpan={maxSpan}
-                                          className="p-3 text-left border-l border-slate-300 font-extrabold text-slate-950 bg-slate-50/30 align-middle"
+                                          className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-extrabold font-mono text-slate-950 print:text-black align-middle"
                                         >
                                           {dayTotalSales.toFixed(2)} ر
                                         </td>
@@ -3288,19 +3494,19 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                     )}
                                     
                                     {/* 5-8. Individual Invoice columns */}
-                                    <td className="p-3 text-right border-l border-slate-300 text-slate-800 font-bold">
+                                    <td className={`p-2.5 text-right border border-black text-slate-900 print:text-black font-bold ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
                                       {inv.company}
                                     </td>
                                     
-                                    <td className="p-3 text-center border-l border-slate-300 font-mono text-slate-550">
+                                    <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
                                       {inv.invoice_no || "—"}
                                     </td>
                                     
-                                    <td className="p-3 text-center border-l border-slate-300 font-mono text-slate-500">
+                                    <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
                                       {inv.invoice_date || inv.date}
                                     </td>
                                     
-                                    <td className="p-3 text-left border-l border-slate-300 font-bold text-slate-750 font-mono">
+                                    <td className={`p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
                                       {inv.amount.toFixed(2)} ر
                                     </td>
                                     
@@ -3309,16 +3515,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       <>
                                         <td 
                                           rowSpan={maxSpan}
-                                          className="p-3 text-left border-l border-slate-300 font-extrabold align-middle"
+                                          className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-extrabold font-mono align-middle"
                                         >
-                                          <span className={dayNetDifference >= 0 ? "text-emerald-700 font-extrabold" : "text-rose-600 font-extrabold"}>
+                                          <span className={dayNetDifference >= 0 ? "text-emerald-800 print:text-black font-extrabold" : "text-rose-700 print:text-black font-extrabold"}>
                                             {dayNetDifference.toFixed(2)} ر
                                           </span>
                                         </td>
                                         
                                         <td 
                                           rowSpan={maxSpan}
-                                          className="p-3 text-left font-black bg-emerald-50/10 text-emerald-800 align-middle"
+                                          className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-black font-mono text-slate-900 print:text-black align-middle"
                                         >
                                           {dayVat.toFixed(2)} ر
                                         </td>
@@ -3351,19 +3557,19 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               const vatCombined = netDiffCombined * (15 / 115);
 
                               return (
-                                <tr className="bg-slate-100 border-t-2 border-b-2 border-slate-300 font-bold text-slate-800 text-xs">
-                                  <td className="p-3 text-center border-l border-slate-300 font-extrabold bg-slate-150">الـمـجـمـوع الـكـلـي لـفـتـرة {allUniqueDates.length} أيام في الكشف</td>
-                                  <td className="p-3 text-left border-l border-slate-300 text-slate-900 font-extrabold font-mono">{totalPos.toFixed(2)} ر</td>
-                                  <td className="p-3 text-left border-l border-slate-300 text-slate-700 font-extrabold bg-slate-50 font-mono">{totalCash.toFixed(2)} ر</td>
-                                  <td className="p-3 text-left border-l border-slate-300 text-indigo-950 font-black bg-indigo-50/20 font-mono">{totalSalesCombined.toFixed(2)} ر</td>
-                                  <td colSpan={3} className="p-3 text-center border-l border-slate-300 text-slate-400 bg-slate-50">—</td>
-                                  <td className="p-3 text-left border-l border-slate-300 text-rose-700 font-extrabold font-mono">{totalInvs.toFixed(2)} ر</td>
-                                  <td className="p-3 text-left border-l border-slate-300 font-black text-slate-900 bg-slate-50 font-mono">
-                                    <span className={netDiffCombined >= 0 ? "text-emerald-700 font-black" : "text-rose-600 font-black"}>
+                                <tr className="totals-row bg-slate-100 border-t-2 border-b-2 border-black font-black text-slate-900 print:text-black text-xs print:text-xs">
+                                  <td className="p-2.5 text-center border border-black font-black bg-slate-200 print:bg-slate-100">الـمـجـمـوع الـكـلـي لـفـتـرة {allUniqueDates.length} أيام في الكشف</td>
+                                  <td className="p-2.5 text-left border border-black font-black font-mono">{totalPos.toFixed(2)} ر</td>
+                                  <td className="p-2.5 text-left border border-black font-black font-mono">{totalCash.toFixed(2)} ر</td>
+                                  <td className="p-2.5 text-left border border-black font-black font-mono">{totalSalesCombined.toFixed(2)} ر</td>
+                                  <td colSpan={3} className="p-2.5 text-center border border-black font-bold">—</td>
+                                  <td className="p-2.5 text-left border border-black font-black font-mono">{totalInvs.toFixed(2)} ر</td>
+                                  <td className="p-2.5 text-left border border-black font-black font-mono">
+                                    <span className={netDiffCombined >= 0 ? "text-emerald-800 print:text-black font-black" : "text-rose-700 print:text-black font-black"}>
                                       {netDiffCombined.toFixed(2)} ر
                                     </span>
                                   </td>
-                                  <td className="p-3 text-left font-black bg-emerald-50 text-emerald-950 text-sm font-mono">
+                                  <td className="p-2.5 text-left border border-black font-black font-mono">
                                     {vatCombined.toFixed(2)} ر
                                   </td>
                                 </tr>
@@ -3375,15 +3581,15 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     </tbody>
                   </table>
                 ) : (
-                  <table className="w-full text-right text-xs border-collapse">
+                  <table className="w-full text-right text-xs border-collapse border border-black print:border-black">
                     <thead>
-                      <tr className="bg-slate-100/80 border-b border-slate-300 text-slate-800 font-extrabold print:bg-slate-50 print:border-b-2">
-                        <th className="p-2 border-l border-slate-300 text-center w-28">تاريخ / فترة الضريبة</th>
-                        <th className="p-2 border-l border-slate-300 text-left w-28">مجموع دخل نقاط البيع</th>
-                        <th className="p-2 border-l border-slate-300 text-left w-24">دخل الكاش المدرج</th>
-                        <th className="p-2 border-l border-slate-300 text-left w-32 bg-slate-50/30">مجموع دخل الدورة (1)</th>
+                      <tr className="bg-slate-100 border-b-2 border-black text-slate-900 font-black print:bg-slate-100 print:text-black print:border-b-2 print:border-black">
+                        <th className="p-2.5 border border-black text-center w-28 font-black">تاريخ / فترة الضريبة</th>
+                        <th className="p-2.5 border border-black text-left w-28 font-black">مجموع دخل نقاط البيع</th>
+                        <th className="p-2.5 border border-black text-left w-24 font-black">دخل الكاش المدرج</th>
+                        <th className="p-2.5 border border-black text-left w-32 font-black">مجموع دخل الدورة (1)</th>
                         {userRole === "مدير" && (
-                          <th className="p-2 border-l border-slate-300 text-center w-12 print:hidden">
+                          <th className="p-2.5 border border-black text-center w-12 print:hidden">
                             <input
                               type="checkbox"
                               checked={filteredInvoices.length > 0 && filteredInvoices.every(inv => selectedInvoiceIds.includes(inv.id))}
@@ -3399,17 +3605,17 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                             />
                           </th>
                         )}
-                        <th className="p-2 border-l border-slate-300 text-center w-28">تاريخ الفاتورة</th>
-                        <th className="p-2 border-l border-slate-300 text-right">مورد الفاتورة (اسم المؤسسة)</th>
-                        <th className="p-2 border-l border-slate-300 text-center w-24">رقم الفاتورة</th>
-                        <th className="p-2 border-l border-slate-200 text-left w-24 bg-slate-50/20">مبلـغ الفاتورة (2)</th>
-                        <th className="p-2 text-center w-12 print:hidden">تعديل</th>
+                        <th className="p-2.5 border border-black text-center w-28 font-black">تاريخ الفاتورة</th>
+                        <th className="p-2.5 border border-black text-right font-black">مورد الفاتورة (اسم المؤسسة)</th>
+                        <th className="p-2.5 border border-black text-center w-24 font-black">رقم الفاتورة</th>
+                        <th className="p-2.5 border border-black text-left w-24 font-black">مبلـغ الفاتورة (2)</th>
+                        <th className="p-2.5 border border-black text-center w-12 print:hidden">تعديل</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredInvoices.length === 0 ? (
-                        <tr className="border-b border-slate-300 font-medium">
-                          <td className="p-2 text-center border-l border-slate-300 font-bold bg-slate-100/20">
+                        <tr className="border-b-2 border-black font-medium">
+                          <td className="p-2.5 text-center border border-black font-bold font-mono text-slate-900 print:text-black">
                             {reportMode === "day" ? (
                               <span className="font-mono">{from}</span>
                             ) : (
@@ -3419,18 +3625,18 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               </>
                             )}
                           </td>
-                          <td className="p-2 text-left border-l border-slate-300 font-bold text-slate-900">
+                          <td className="p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black">
                             {totalPosValue.toFixed(2)} ر
                           </td>
-                          <td className="p-2 text-left border-l border-slate-300 font-bold text-slate-600">
+                          <td className="p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black">
                             {cashInput.toFixed(2)} ر
                           </td>
-                          <td className="p-2 text-left border-l border-slate-300 font-extrabold text-slate-900 bg-slate-50/60">
+                          <td className="p-2.5 text-left border border-black font-extrabold font-mono text-slate-900 print:text-black">
                             {grandTotalWithInjectedCash.toFixed(2)} ر
                           </td>
                           
                           {/* Empty indicators for invoices */}
-                          <td colSpan={userRole === "مدير" ? 5 : 4} className="p-4 text-center text-slate-400 border-l border-slate-300 font-medium">
+                          <td colSpan={userRole === "مدير" ? 5 : 4} className="p-4 text-center text-slate-500 border border-black font-bold print:text-black">
                             {loading ? (
                               <div className="flex items-center justify-center gap-2 py-1 text-xs text-indigo-600 font-bold">
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -3440,50 +3646,50 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               "لا توجد فواتير ضريبية مستلمة أو مثبتة للفترة المحددة."
                             )}
                           </td>
-                          <td className="p-2 text-center print:hidden">—</td>
+                          <td className="p-2.5 text-center border border-black print:hidden">—</td>
                         </tr>
                       ) : (
                         filteredInvoices.map((inv, idx) => {
                           const isFirst = idx === 0;
+                          const isLastOfDate = (reportMode === "period" && (idx === filteredInvoices.length - 1 || (filteredInvoices[idx + 1] && (filteredInvoices[idx + 1].invoice_date || filteredInvoices[idx + 1].date) !== (inv.invoice_date || inv.date)))) || idx === filteredInvoices.length - 1;
+
                           return (
                             <tr 
                               key={inv.id} 
-                              className={`border-b border-slate-300 hover:bg-slate-50/10 font-medium ${
-                                idx % 2 === 1 ? 'bg-slate-50/30' : 'bg-white'
-                              }`}
+                              className={`${isLastOfDate ? 'day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black' : 'border-b border-black'} hover:bg-slate-50/10 font-medium bg-white`}
                             >
                               {/* Grouping aggregated revenue parameters onto the first row utilizing rowSpan */}
                               {isFirst && (
                                 <>
                                   <td 
                                     rowSpan={filteredInvoices.length} 
-                                    className="p-2 text-center border-l border-slate-300 bg-slate-50/50 align-middle font-bold text-slate-800"
+                                    className="p-2.5 text-center border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black align-middle font-bold text-slate-900 print:text-black font-mono"
                                   >
                                     {reportMode === "day" ? (
                                       <div className="font-mono">{from}</div>
                                     ) : (
                                       <>
                                         <div>من: {from}</div>
-                                        <div className="my-1.5 text-slate-400 font-normal">إلى:</div>
+                                        <div className="my-1.5 text-slate-600 font-normal">إلى:</div>
                                         <div>{to}</div>
                                       </>
                                     )}
                                   </td>
                                   <td 
                                     rowSpan={filteredInvoices.length} 
-                                    className="p-2 text-left border-l border-slate-300 align-middle font-bold text-slate-900"
+                                    className="p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black align-middle font-bold text-slate-900 print:text-black font-mono"
                                   >
                                     {totalPosValue.toFixed(2)} ر
                                   </td>
                                   <td 
                                     rowSpan={filteredInvoices.length} 
-                                    className="p-2 text-left border-l border-slate-300 align-middle font-bold text-slate-600"
+                                    className="p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black align-middle font-bold text-slate-900 print:text-black font-mono"
                                   >
                                     {cashInput.toFixed(2)} ر
                                   </td>
                                   <td 
                                     rowSpan={filteredInvoices.length} 
-                                    className="p-2 text-left border-l border-slate-300 align-middle font-extrabold text-indigo-950 bg-indigo-50/20"
+                                    className="p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black align-middle font-extrabold text-slate-900 print:text-black font-mono"
                                   >
                                     {grandTotalWithInjectedCash.toFixed(2)} ر
                                   </td>
@@ -3492,7 +3698,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
                               {/* Row specific invoice data */}
                               {userRole === "مدير" && (
-                                <td className="p-2 text-center border-l border-slate-300 print:hidden">
+                                <td className={`p-2.5 text-center border border-black print:hidden ${isLastOfDate ? 'border-b-2 border-b-black' : ''}`}>
                                   <input
                                     type="checkbox"
                                     checked={selectedInvoiceIds.includes(inv.id)}
@@ -3507,19 +3713,19 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   />
                                 </td>
                               )}
-                              <td className="p-2 text-center border-l border-slate-300 text-slate-500 font-mono">
+                              <td className={`p-2.5 text-center border border-black text-slate-900 print:text-black font-mono ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
                                 {inv.invoice_date || inv.date}
                               </td>
-                              <td className="p-2 text-right border-l border-slate-300 text-slate-800 font-bold">
+                              <td className={`p-2.5 text-right border border-black text-slate-900 print:text-black font-bold ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
                                 {inv.company}
                               </td>
-                              <td className="p-2 text-center border-l border-slate-300 font-mono text-slate-550">
+                              <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
                                 {inv.invoice_no || "—"}
                               </td>
-                              <td className="p-2 text-left border-l border-slate-300 font-bold text-slate-700 bg-slate-50/10">
+                              <td className={`p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
                                 {inv.amount.toFixed(2)} ر
                               </td>
-                              <td className="p-2 text-center print:hidden">
+                              <td className="p-2.5 text-center border border-black print:hidden">
                                 {userRole === "مدير" ? (
                                   <div className="flex items-center justify-center gap-2">
                                     <button
@@ -3551,41 +3757,41 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       )}
 
                       {/* Column totals and formulas according to bookkeeping guidelines */}
-                      <tr className="bg-slate-50/75 border-b border-slate-300 font-bold">
-                        <td colSpan={4} className="p-2 text-center border-l border-slate-300 text-slate-400 text-[10px] font-normal">نظام تجميع الوعاء الشامل</td>
-                        <td colSpan={userRole === "مدير" ? 4 : 3} className="p-2 text-right border-l border-slate-300 text-slate-700 bg-slate-100/50">
+                      <tr className="totals-row bg-slate-100 border-t-2 border-b-2 border-black font-bold">
+                        <td colSpan={4} className="p-2.5 text-center border border-black text-slate-700 print:text-black text-xs font-bold">نظام تجميع الوعاء الشامل</td>
+                        <td colSpan={userRole === "مدير" ? 4 : 3} className="p-2.5 text-right border border-black text-slate-900 print:text-black font-bold">
                           إجمالي فواتير ومشتريات الدورة المعتمدة (مجموع الفواتير) (2)
                         </td>
-                        <td className="p-2 text-left font-extrabold text-rose-700 border-l border-slate-300 bg-rose-50/10">
+                        <td className="p-2.5 text-left font-black font-mono text-slate-900 print:text-black border border-black">
                           {totalInvoicesAmount.toFixed(2)} ر
                         </td>
-                        <td className="print:hidden"></td>
+                        <td className="border border-black print:hidden"></td>
                       </tr>
 
                       {/* NET difference after deducting the aggregated income from the expenses */}
-                      <tr className="bg-slate-100/40 border-b border-slate-300 font-bold">
-                        <td colSpan={4} className="p-2 border-l border-slate-300"></td>
-                        <td colSpan={userRole === "مدير" ? 4 : 3} className="p-2 text-right border-l border-slate-300 text-slate-700">
+                      <tr className="totals-row bg-white border-b-2 border-black font-bold">
+                        <td colSpan={4} className="p-2.5 border border-black"></td>
+                        <td colSpan={userRole === "مدير" ? 4 : 3} className="p-2.5 text-right border border-black text-slate-900 print:text-black font-bold">
                           الفرق الصافي الخاضع للضريبة (خصم الفواتير من مجموع الدخل الموحد = الوعاء 1 - المصروف 2)
                         </td>
-                        <td className="p-2 text-left font-extrabold text-slate-900 border-l border-slate-300 bg-slate-50">
-                          <span className={grandDifference >= 0 ? "text-emerald-700" : "text-rose-600"}>
+                        <td className="p-2.5 text-left font-black font-mono text-slate-900 print:text-black border border-black">
+                          <span className={grandDifference >= 0 ? "text-emerald-800 print:text-black" : "text-rose-700 print:text-black"}>
                             {grandDifference.toFixed(2)} ر
                           </span>
                         </td>
-                        <td className="print:hidden"></td>
+                        <td className="border border-black print:hidden"></td>
                       </tr>
 
                       {/* VAT Computation Row */}
-                      <tr className="bg-slate-50 border-b-2 border-slate-300">
-                        <td colSpan={4} className="p-2 border-l border-slate-300 text-slate-400 text-[10px] font-normal print:text-[8px]">الضريبة 15% على الوعاء الصافي للفرق</td>
-                        <td colSpan={userRole === "مدير" ? 4 : 3} className="p-2 text-right border-l border-slate-300 text-slate-800 font-bold text-sm">
-                          مبلغ ضريبة القيمة المضافة المستحقة المقررة على الفرق
+                      <tr className="totals-row bg-slate-100 border-b-2 border-black">
+                        <td colSpan={4} className="p-2.5 border border-black text-slate-700 print:text-black text-[10px] font-bold">الضريبة 15% على الوعاء الصافي للفرق</td>
+                        <td colSpan={userRole === "مدير" ? 4 : 3} className="p-2.5 text-right border border-black text-slate-900 print:text-black font-black text-sm">
+                          مبلغ ضريبة القيمة المضافة المستحقة المقررة على الفرق (15%)
                         </td>
-                        <td className="p-2 text-left font-extrabold text-sm text-emerald-800 border-l border-slate-300 bg-emerald-50/20 border-2 border-emerald-500/20">
+                        <td className="p-2.5 text-left font-black text-sm text-slate-900 print:text-black border border-black font-mono">
                           {grandVat.toFixed(2)} ر
                         </td>
-                        <td className="print:hidden"></td>
+                        <td className="border border-black print:hidden"></td>
                       </tr>
                     </tbody>
                   </table>
@@ -3593,14 +3799,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               </div>
 
               {/* Informative, ink-saving accounting footer and sign off fields for business legitimacy */}
-              <div className="p-4 bg-white text-[9px] text-slate-500 leading-relaxed text-right font-medium">
+              <div className="p-4 bg-white text-[10px] text-slate-800 print:text-black leading-relaxed text-right font-medium border-t-2 border-black print:border-black">
                 <p>
-                  * <strong>ملاحظة محاسبية وإدارية:</strong> يصدر هذا الكشف بشكل مالي شامل لأغراض تصفية الفاقد الضريبي والمطابقة مع الهيئة العامة للزكاة والضريبة والجمارك. كافة البنود الواردة تم تجميعها من خلال ربط مباشر لأجهزة الدفع (نقاط بيع سلة/مدى) للفترة المحددة مع المنصرف اليدوي المسجل، وخصم مطالبات المشتريات ومصروفات المواد الأولية والخدمات للفرع بشكل دقيق.
+                  * <strong>ملاحظة محاسبية وإدارية:</strong> يصدر هذا الكشف المالي الرسمي لأغراض تصفية الفاقد الضريبي والمطابقة مع الهيئة العامة للزكاة والضريبة والجمارك. كافة البنود الواردة تم تجميعها من خلال ربط مباشر لأجهزة الدفع (نقاط بيع سلة/مدى) للفترة المحددة مع المنصرف النقدي للفرع، وخصم مطالبات المشتريات ومصروفات المواد الأولية للفرع.
                 </p>
-                <div className="flex justify-between items-center mt-4 pt-3 border-t border-slate-205">
+                <div className="flex justify-between items-center mt-4 pt-3 border-t-2 border-black text-xs font-bold text-slate-900 print:text-black">
                   <span>إمضاء مراجع الحسابات للفرع: _____________________</span>
-                  <span>اعتماد الإدارة الضريبية للشركة: _____________________</span>
-                  <span className="font-mono text-slate-400">الفرع النشط: {branch} (A4 LANDSCAPE)</span>
+                  <span>اعتماد الإدارة الضريبية: _____________________</span>
+                  <span className="font-mono">الفرع: {branch} (A4)</span>
                 </div>
               </div>
             </div>
@@ -3618,7 +3824,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       {/* Reusable Polish Safe Custom Confirm Dialog Modal */}
       {confirmModal.show && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity duration-300">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity duration-300 print:hidden">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-150 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200" dir="rtl" text-right="true">
             {/* Modal Header */}
             <div className="p-5 flex items-start gap-4 bg-rose-50 border-b border-rose-100">
@@ -3670,7 +3876,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       {/* Dynamic Pop-up Edit Invoice Modal for "مدير" */}
       {editModal.show && editModal.invoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity duration-300">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs transition-opacity duration-300 print:hidden">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-150 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-right" dir="rtl">
             {/* Modal Header */}
             <div className="p-5 flex items-start gap-4 bg-indigo-50 border-b border-indigo-100">
@@ -3839,7 +4045,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         const pinvIdx = parsedInvoices.findIndex(p => p.tempId === auditInvoiceId);
 
         return (
-          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
+          <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305 print:hidden" dir="rtl">
             <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
               
               {/* Modal Header */}
@@ -4276,7 +4482,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
       {/* Immersive Visual Inspection & Preview Modal for Manager (Same system as Manager Audit Modal) */}
       {previewInvoice && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305" dir="rtl">
+        <div className="fixed inset-0 z-55 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md transition-opacity duration-305 print:hidden" dir="rtl">
           <div className="bg-slate-900 border border-slate-800 text-slate-100 rounded-2xl shadow-2xl max-w-7xl w-full h-[95vh] sm:h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             
             {/* Modal Header */}

@@ -240,10 +240,16 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
     }
 
     let calculatedTotalCash = 0;
+    const branchDays = (br === "القادسية" ? reportData?.qData : reportData?.mData) || [];
     dateList.forEach((dateStr) => {
       const savedDaily = localStorage.getItem(`tax_cash_${br}_${dateStr}_${dateStr}`);
-      if (savedDaily !== null) {
+      if (savedDaily !== null && savedDaily !== "") {
         calculatedTotalCash += parseFloat(savedDaily) || 0;
+      } else {
+        const realD = branchDays.find((b: any) => b.date === dateStr);
+        if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
+          calculatedTotalCash += realD.cash_net;
+        }
       }
     });
 
