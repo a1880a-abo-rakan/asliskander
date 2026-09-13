@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { DailyEntry, Settings } from "../types";
+import CategoryInstallmentInvoicesDropdown from "./CategoryInstallmentInvoicesDropdown";
 import { 
   Building2, Calendar, DollarSign, CreditCard, ShoppingCart, 
   Truck, Save, CheckCircle2, Clock, AlertCircle, Plus, Trash2, 
@@ -303,6 +304,8 @@ export default function SecondAccountantTab({
           deduct,
           remaining,
           totalOriginal: liveAddedAmt,
+          activeOriginal: liveAddedAmt,
+          queuedAmount: 0,
           daysPassed: deduct > 0 ? 1 : 0,
           daysLeft,
           exceedsCap: liveAddedAmt > currentCap
@@ -313,18 +316,23 @@ export default function SecondAccountantTab({
 
     // There is an active carryover in progress
     const prevCarry = item.carry || 0;
+    const baseActiveOriginal = (item as any).activeOriginal || item.totalOriginal || prevCarry;
+    const baseQueuedAmount = (item as any).queuedAmount || 0;
 
     let deduct = 0;
     let remaining = prevCarry;
-    let totalOriginal = item.totalOriginal || prevCarry;
+    let activeOriginal = baseActiveOriginal;
+    let queuedAmount = baseQueuedAmount;
     let daysPassed = item.daysPassed || 0;
 
     if (entryType === 'invoice') {
       // New invoice being added
       if (liveAddedAmt > 0) {
-        totalOriginal = Number(((item.totalOriginal || 0) + liveAddedAmt).toFixed(2));
+        queuedAmount = Number((baseQueuedAmount + liveAddedAmt).toFixed(2));
+        activeOriginal = baseActiveOriginal;
+
         const totalBalance = Number((prevCarry + liveAddedAmt).toFixed(2));
-        deduct = Math.min(totalBalance, currentCap);
+        deduct = Math.min(prevCarry, currentCap);
         remaining = Number((totalBalance - deduct).toFixed(2));
       } else {
         // empty invoice entered - fallback to auto-deducting previous carryover
@@ -353,7 +361,9 @@ export default function SecondAccountantTab({
       cap: currentCap,
       deduct,
       remaining,
-      totalOriginal,
+      totalOriginal: activeOriginal,
+      activeOriginal,
+      queuedAmount,
       daysPassed: deduct > 0 ? daysPassed + 1 : daysPassed,
       daysLeft,
       exceedsCap: entryType === 'invoice' && liveAddedAmt > currentCap
@@ -389,20 +399,28 @@ export default function SecondAccountantTab({
               </span>
             </div>
 
-            {/* Installment Status Pill */}
-            {hasActiveInstallment ? (
-              <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                <span>{t("قسط نشط", "Active", "किश्त चालू")}</span>
-                <span className="font-mono font-black">{carryItem?.carry.toFixed(0)}</span>
-                <span className="text-[8px] opacity-80">{t("ر", "SAR", "रियाल")}</span>
-              </span>
-            ) : (
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
-                <Check className="w-3 h-3 text-emerald-600" />
-                <span>{t("تم السداد", "Cleared", "कोई किश्त नहीं")}</span>
-              </span>
-            )}
+            {/* Installment Status Pill & 30 Invoices History Dropdown */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <CategoryInstallmentInvoicesDropdown
+                branch={branch}
+                category={key}
+                categoryName={title}
+                userRole={userRole}
+              />
+              {hasActiveInstallment ? (
+                <span className="text-[10px] bg-amber-100 text-amber-900 border border-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                  <span>{t("قسط نشط", "Active", "किश्त चालू")}</span>
+                  <span className="font-mono font-black">{carryItem?.carry.toFixed(0)}</span>
+                  <span className="text-[8px] opacity-80">{t("ر", "SAR", "रियाل")}</span>
+                </span>
+              ) : (
+                <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 whitespace-nowrap">
+                  <Check className="w-3 h-3 text-emerald-600" />
+                  <span>{t("تم السداد", "Cleared", "कोई किश्त नहीं")}</span>
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Mode Selector (Pay Installment vs Full New Invoice) */}
@@ -488,9 +506,13 @@ export default function SecondAccountantTab({
         {stats && (
           <div className="bg-white/95 rounded-lg border border-slate-200 p-2.5 space-y-2 text-[10px] mt-2">
             <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-slate-600 font-mono">
+              <div className={`flex justify-between border-b border-slate-100 pb-0.5 ${stats.queuedAmount > 0 ? "bg-amber-50 text-amber-900 px-1 rounded font-bold" : ""}`}>
+                <span className="font-sans">{t("فاتورة على الدور:", "Queued Invoice:", "कतार में बिल:")}</span>
+                <span className="font-bold">{stats.queuedAmount.toFixed(1)} {t("ر", "SAR", "रियाल")}</span>
+              </div>
               <div className="flex justify-between border-b border-slate-100 pb-0.5">
-                <span className="text-slate-500 font-sans">{t("الفاتورة الإجمالية:", "Total Invoice:", "कुल बिल:")}</span>
-                <span className="font-bold text-slate-800">{stats.totalOriginal.toFixed(1)} {t("ر", "SAR", "रियाल")}</span>
+                <span className="text-slate-500 font-sans">{t("الفاتورة الأصلية المتراكمة:", "Active Invoice:", "सक्रिय बिल:")}</span>
+                <span className="font-bold text-slate-800">{stats.activeOriginal.toFixed(1)} {t("ر", "SAR", "रियाل")}</span>
               </div>
               <div className="flex justify-between border-b border-slate-100 pb-0.5">
                 <span className="text-slate-500 font-sans">{t("السقف اليومي:", "Daily Cap:", "दैनिक सीमा:")}</span>

@@ -502,12 +502,41 @@ function isDeepEqual(obj1: any, obj2: any): boolean {
   return obj1 === obj2;
 }
 
+const DATA_BACKUP_DIR = path.join(process.cwd(), "data");
+if (!fs.existsSync(DATA_BACKUP_DIR)) {
+  try {
+    fs.mkdirSync(DATA_BACKUP_DIR, { recursive: true });
+  } catch {}
+}
+
+const DAYS_BACKUP_FILE = path.join(DATA_BACKUP_DIR, "days_backup.json");
+function loadDaysFromFile(): DailyEntry[] {
+  try {
+    if (fs.existsSync(DAYS_BACKUP_FILE)) {
+      const content = fs.readFileSync(DAYS_BACKUP_FILE, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn("Could not read local days backup file:", err);
+  }
+  return [];
+}
+
+function saveDaysToFile(days: DailyEntry[]): void {
+  try {
+    fs.writeFileSync(DAYS_BACKUP_FILE, JSON.stringify(days, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Could not write local days backup file:", err);
+  }
+}
+
 async function getDays(): Promise<DailyEntry[]> {
   if (daysLoaded) {
     return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
   }
   try {
-    const snap = await getDocs(collection(db, "days"));
+    const snap = await withTimeout(getDocs(collection(db, "days")), 6000);
     const list: DailyEntry[] = [];
     daysCache.clear();
     snap.forEach((d) => {
@@ -521,11 +550,30 @@ async function getDays(): Promise<DailyEntry[]> {
         daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
+    if (list.length > 0) {
+      saveDaysToFile(list);
+    } else {
+      const localDays = loadDaysFromFile();
+      localDays.forEach(d => {
+        if (d && d.id) {
+          daysCache.set(d.id, JSON.parse(JSON.stringify(cleanObject(d))));
+          list.push(d);
+        }
+      });
+    }
     daysLoaded = true;
     return list;
   } catch (err) {
-    console.error("Error reading days from Firestore:", err);
-    return [];
+    console.warn("Could not read days from Firestore, loading from local backup:", err);
+    const localDays = loadDaysFromFile();
+    daysCache.clear();
+    localDays.forEach(d => {
+      if (d && d.id) {
+        daysCache.set(d.id, JSON.parse(JSON.stringify(cleanObject(d))));
+      }
+    });
+    daysLoaded = true;
+    return localDays;
   }
 }
 
@@ -548,15 +596,26 @@ async function saveDays(days: DailyEntry[]): Promise<void> {
     }
 
     if (toWrite.length > 0) {
-      console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new DailyEntries`);
-      await Promise.all(toWrite.map(async (item) => {
-        await setDoc(doc(db, "days", item.id), item.cleaned);
+      console.log(`[Days Save] Persisting ${toWrite.length} modified/new DailyEntries`);
+      // Update cache in-memory immediately
+      toWrite.forEach((item) => {
         daysCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
+      });
+      // Persist to disk backup
+      saveDaysToFile(Array.from(daysCache.values()));
+
+      // Best effort write to Firestore with silent catch so permission errors don't crash stream
+      await Promise.all(toWrite.map(async (item) => {
+        try {
+          await withTimeout(setDoc(doc(db, "days", item.id), item.cleaned), 4000);
+        } catch {
+          // Handled - local copy and in-memory cache are safe
+        }
       }));
     }
     daysLoaded = true;
   } catch (err) {
-    console.error("Error saving days to Firestore:", err);
+    console.error("Error saving days:", err);
   }
 }
 
@@ -622,8 +681,8 @@ async function getInstallmentInvoices(): Promise<InstallmentInvoice[]> {
       saveInvoicesToFile(list);
       return list;
     }
-  } catch {
-    // Fall back to local file or collection
+  } catch (err: any) {
+    console.warn("Could not read installment_invoices from Firestore settings, using local backup:", err?.message || err);
   }
 
   // 2. Secondary: Load from local backup file if available
@@ -643,33 +702,8 @@ async function getInstallmentInvoices(): Promise<InstallmentInvoice[]> {
     return localList;
   }
 
-  // 3. Fallback: Check collection("installment_invoices") if rules permit, catching permission errors silently
-  try {
-    const snap = await getDocs(collection(db, "installment_invoices"));
-    const list: InstallmentInvoice[] = [];
-    invoicesCache.clear();
-    snap.forEach((d) => {
-      const data = d.data() as InstallmentInvoice;
-      if (data) {
-        if (!data.id) data.id = d.id;
-        list.push(data);
-        invoicesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
-      }
-    });
-    invoicesLoaded = true;
-    if (list.length > 0) {
-      saveInvoicesToFile(list);
-      setDoc(doc(db, "settings", "installment_invoices"), {
-        list: cleanObject(list),
-        updatedAt: new Date().toISOString()
-      }).catch(() => {});
-    }
-    return list;
-  } catch {
-    // Permission error or offline: mark loaded to avoid re-triggering repeatedly
-    invoicesLoaded = true;
-    return Array.from(invoicesCache.values()).map(inv => JSON.parse(JSON.stringify(inv)));
-  }
+  invoicesLoaded = true;
+  return Array.from(invoicesCache.values()).map(inv => JSON.parse(JSON.stringify(inv)));
 }
 
 async function saveInstallmentInvoices(invoices: InstallmentInvoice[]): Promise<void> {
@@ -685,7 +719,7 @@ async function saveInstallmentInvoices(invoices: InstallmentInvoice[]): Promise<
   // 1. Save to local file backup
   saveInvoicesToFile(allInvoices);
 
-  // 2. Save entire list to doc(db, "settings", "installment_invoices") (allowed by rules)
+  // 2. Save entire list to doc(db, "settings", "installment_invoices") (allowed by Firestore rules)
   try {
     await withTimeout(setDoc(doc(db, "settings", "installment_invoices"), {
       list: cleanObject(allInvoices),
@@ -693,18 +727,6 @@ async function saveInstallmentInvoices(invoices: InstallmentInvoice[]): Promise<
     }), 8000);
   } catch (err: any) {
     console.error("Error saving installment_invoices to Firestore (settings):", err?.message || err);
-  }
-
-  // 3. Best-effort individual docs in installment_invoices collection (silent catch)
-  try {
-    const toWrite = invoices.filter(inv => inv && inv.id).map(inv => ({ id: inv.id, cleaned: cleanObject(inv) }));
-    if (toWrite.length > 0) {
-      await Promise.all(toWrite.map(item => 
-        setDoc(doc(db, "installment_invoices", item.id), item.cleaned).catch(() => {})
-      ));
-    }
-  } catch {
-    // Ignore collection-level write errors
   }
 }
 
@@ -720,12 +742,6 @@ async function deleteInstallmentInvoice(id: string): Promise<void> {
     }), 8000);
   } catch (err: any) {
     console.error("Error updating installment_invoices in Firestore:", err?.message || err);
-  }
-
-  try {
-    await deleteDoc(doc(db, "installment_invoices", id)).catch(() => {});
-  } catch {
-    // Ignore collection-level delete errors
   }
 }
 
@@ -774,9 +790,13 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
 
     if (toWrite.length > 0) {
       console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new SharedDiesels`);
-      await Promise.all(toWrite.map(async (item) => {
-        await setDoc(doc(db, "diesel", item.id), item.cleaned);
+      toWrite.forEach(item => {
         dieselsCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
+      });
+      await Promise.all(toWrite.map(async (item) => {
+        try {
+          await withTimeout(setDoc(doc(db, "diesel", item.id), item.cleaned), 4000);
+        } catch {}
       }));
     }
     dieselsLoaded = true;
@@ -1139,9 +1159,13 @@ async function savePurchase(p: Purchase): Promise<void> {
       return;
     }
     console.log(`[Firestore Optimization] Saving modified/new Purchase: ${p.id}`);
-    await withTimeout(setDoc(doc(db, "purchases", p.id), cleanedNew));
     purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanedNew)));
     purchasesLoaded = true;
+    try {
+      await withTimeout(setDoc(doc(db, "purchases", p.id), cleanedNew), 4000);
+    } catch {
+      // Memory cache is safe
+    }
   } catch (err) {
     console.error("Error saving purchase to Firestore:", err);
   }
@@ -1710,6 +1734,19 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
       } else if (inv.status === "queued") {
         inv.wasDelayed = true;
         inv.delayReason = `نعم، في قائمة الانتظار حالياً حتى اكتمال سداد الفاتورة السابقة`;
+      } else if (inv.status === "active") {
+        // Active invoice whose deduction has not started yet in the recorded days
+        const priorCompleted = catInvoices.find(other => other.id !== inv.id && (other.status === "completed" || other.completedDate) && (other.completedDate || "") >= inv.date);
+        if (priorCompleted) {
+          inv.wasDelayed = true;
+          const nextStart = priorCompleted.completedDate ? addDaysToDate(priorCompleted.completedDate, 1) : inv.date;
+          inv.actualStartDate = nextStart;
+          inv.delayReason = `نعم، دخلت أثناء سداد فاتورة ${priorCompleted.date}، وبدء سدادها الفعلي بتاريخ ${nextStart}`;
+        } else {
+          inv.wasDelayed = false;
+          inv.actualStartDate = inv.date;
+          inv.delayReason = `لا، بدأ السداد فوراً بتاريخ الفاتورة (${inv.date})`;
+        }
       } else if (inv.status === "completed") {
         inv.wasDelayed = inv.completedDate && inv.completedDate > inv.date ? (inv.wasDelayed || false) : false;
         inv.delayReason = inv.wasDelayed ? (inv.delayReason || "نعم، تأخر البدء لوجود فاتورة سابقة") : "لا، بدأ السداد فوراً ومسددة";
@@ -2023,6 +2060,7 @@ async function startServer() {
 
     const settings = await getSettings();
     const allDays = await getDays();
+    const allInvoices = await getInstallmentInvoices();
     
     // Filter by branch
     let filtered = allDays.filter((d) => d.branch === branch);
@@ -2047,6 +2085,9 @@ async function startServer() {
       cap: number;
       daysLeft: number;
       totalOriginal: number;
+      activeOriginal: number;
+      queuedAmount: number;
+      queuedCount: number;
       daysPassed: number;
       startDate: string;
       endDate: string;
@@ -2111,49 +2152,44 @@ async function startServer() {
     categories.forEach((cat) => {
       const latestCarryNext = latest[cat.nextKey] || 0;
       if (latestCarryNext > 0) {
-        // Trace back to calculate original sum and elapsed days
-        let totalOriginal = 0;
+        // Find installment invoices for this branch and category (on or before reference date)
+        const catInvs = allInvoices.filter(
+          inv => inv.branch === branch && inv.category === cat.key && (dateQuery ? inv.date <= dateQuery : true)
+        );
+        catInvs.sort((a, b) => a.date.localeCompare(b.date) || (a.enteredAt || "").localeCompare(b.enteredAt || ""));
+
+        // Open invoices with unpaid balance
+        const openInvs = catInvs.filter(inv => inv.remainingAmount > 0);
+        // Active invoice: the first open invoice (or one with status === 'active')
+        const activeInv = openInvs.length > 0 ? openInvs[0] : catInvs.find(inv => inv.status === "active");
+        // Queued invoices: invoices entered while previous invoice was still ongoing
+        const queuedInvs = openInvs.length > 1 
+          ? openInvs.slice(1) 
+          : catInvs.filter(inv => inv.status === "queued" && inv.id !== activeInv?.id);
+
+        // USER RULE: Only active invoice currently being deducted appears in activeOriginal / totalOriginal
+        const activeOriginal = activeInv ? activeInv.originalAmount : latestCarryNext;
+        const queuedAmount = queuedInvs.reduce((sum, inv) => sum + (inv.originalAmount || 0), 0);
+        const queuedCount = queuedInvs.length;
+
+        // Trace days passed and start date for active invoice run
+        let startDate = activeInv?.date || latest.date;
         let daysPassed = 0;
-        let startDate = latest.date;
-        let maxCarry = 0;
 
         for (let i = 0; i < filtered.length; i++) {
           const entry = filtered[i];
-          const entryNext = entry[cat.nextKey] || 0;
-          const entryPrev = entry[cat.prevKey] || 0;
-          const entryPaid = entry[cat.paidKey] || 0;
           const entryDeduct = entry[cat.deductKey] || 0;
-          const entryType = (entry as any)[cat.key + "_type"];
-          const entryCap = (entry as any)[cat.key + "_cap"] || cat.cap;
-
-          if (entryNext > 0 || entryPaid > 0 || entryPrev > 0 || entryDeduct > 0) {
-            maxCarry = Math.max(maxCarry, entryPrev, entryNext);
-
-            // A payment is a supply invoice when explicitly categorized as such,
-            // or when beginning the chain, or when the payment size is larger than the daily floor limits.
-            const isNewInvoice = entryType === "invoice" || (entryPrev === 0 && entryPaid > 0) || (entryPaid > entryCap && entryType !== "payment");
-
-            if (isNewInvoice && entryPaid > 0) {
-              totalOriginal += entryPaid;
-            }
-
-            if (entryDeduct > 0) {
-              daysPassed += 1;
-            }
-
-            startDate = entry.date; // Bubble back to oldest entry of the run
-            
-            // If we reached the absolute start of this run, stop searching
-            if (entryPrev === 0) {
-              break;
-            }
-          } else {
-            break;
+          if (entryDeduct > 0 && entry.date >= startDate) {
+            daysPassed += 1;
           }
         }
 
-        // Bound original invoice by the maximum carried over/saved amount we observed in this run to ensure integrity
-        totalOriginal = Math.max(totalOriginal, maxCarry);
+        if (daysPassed === 0) {
+          for (let i = 0; i < filtered.length; i++) {
+            if ((filtered[i][cat.deductKey] || 0) > 0) daysPassed += 1;
+            if ((filtered[i][cat.prevKey] || 0) === 0) break;
+          }
+        }
 
         const daysLeft = Math.ceil(latestCarryNext / cat.cap);
         const estEnd = new Date(latest.date);
@@ -2166,7 +2202,10 @@ async function startServer() {
           carry: latestCarryNext,
           cap: cat.cap,
           daysLeft,
-          totalOriginal: totalOriginal,
+          totalOriginal: activeOriginal, // Only active invoice currently being deducted
+          activeOriginal,
+          queuedAmount,
+          queuedCount,
           daysPassed,
           startDate,
           endDate,
@@ -2475,6 +2514,13 @@ async function startServer() {
 
     if (!branch) {
       return res.status(400).json({ error: "Branch is required" });
+    }
+
+    // Ensure FIFO simulation and actual start/end dates are freshly computed
+    try {
+      await recalculateCarryOvers(branch);
+    } catch (recalcErr) {
+      console.warn("Could not recalculate before fetching invoices:", recalcErr);
     }
 
     const allInvoices = await getInstallmentInvoices();

@@ -482,6 +482,8 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
           deduct,
           remaining,
           totalOriginal: liveAddedAmt,
+          activeOriginal: liveAddedAmt,
+          queuedAmount: 0,
           daysPassed: deduct > 0 ? 1 : 0,
           daysLeft,
           exceedsCap: liveAddedAmt > currentCap
@@ -492,18 +494,25 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
     // There is an active carryover in progress
     const prevCarry = item.carry || 0;
+    const baseActiveOriginal = (item as any).activeOriginal || item.totalOriginal || prevCarry;
+    const baseQueuedAmount = (item as any).queuedAmount || 0;
 
     let deduct = 0;
     let remaining = prevCarry;
-    let totalOriginal = item.totalOriginal || prevCarry;
+    let activeOriginal = baseActiveOriginal;
+    let queuedAmount = baseQueuedAmount;
     let daysPassed = item.daysPassed || 0;
 
     if (entryType === 'invoice') {
       // New invoice being added
       if (liveAddedAmt > 0) {
-        totalOriginal = Number(((item.totalOriginal || 0) + liveAddedAmt).toFixed(2));
+        // User entered a new invoice while the previous invoice has not finished!
+        // This goes into "فاتورة على الدور"
+        queuedAmount = Number((baseQueuedAmount + liveAddedAmt).toFixed(2));
+        activeOriginal = baseActiveOriginal;
+
         const totalBalance = Number((prevCarry + liveAddedAmt).toFixed(2));
-        deduct = Math.min(totalBalance, currentCap);
+        deduct = Math.min(prevCarry, currentCap);
         remaining = Number((totalBalance - deduct).toFixed(2));
       } else {
         // empty invoice entered - fallback to auto-deducting previous carryover
@@ -515,7 +524,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
       if (liveAddedAmt > 0) {
         // Manual payment specified
         deduct = Math.min(liveAddedAmt, prevCarry);
-         remaining = Number((prevCarry - deduct).toFixed(2));
+        remaining = Number((prevCarry - deduct).toFixed(2));
       } else {
         // No input: automatic deduction up to current cap
         deduct = Math.min(prevCarry, currentCap);
@@ -532,7 +541,9 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
       cap: currentCap,
       deduct,
       remaining,
-      totalOriginal,
+      totalOriginal: activeOriginal,
+      activeOriginal,
+      queuedAmount,
       daysPassed: deduct > 0 ? daysPassed + 1 : daysPassed,
       daysLeft,
       exceedsCap: entryType === 'invoice' && liveAddedAmt > currentCap
@@ -1628,9 +1639,22 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 }
                 return (
                   <div className="bg-white border border-slate-150 p-2 rounded-lg text-right space-y-1 text-[10px] leading-relaxed shadow-sm">
+                    <div className={`flex justify-between items-center py-0.5 px-1 rounded transition-colors ${
+                      stats.queuedAmount > 0 
+                        ? "bg-amber-50 text-amber-900 border border-amber-200/80 font-bold" 
+                        : "text-slate-500"
+                    }`}>
+                      <span className="flex items-center gap-1">
+                        {stats.queuedAmount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                        <span>فاتورة على الدور:</span>
+                      </span>
+                      <span className={`font-mono ${stats.queuedAmount > 0 ? "font-extrabold text-amber-800" : "font-bold text-slate-600"}`}>
+                        {stats.queuedAmount.toFixed(2)} ر
+                      </span>
+                    </div>
                     <div className="flex justify-between items-center text-slate-500">
                       <span>الفاتورة الأصلية المتراكمة:</span>
-                      <span className="font-extrabold text-slate-700 font-mono">{stats.totalOriginal.toFixed(2)} ر</span>
+                      <span className="font-extrabold text-slate-700 font-mono">{stats.activeOriginal.toFixed(2)} ر</span>
                     </div>
                     {stats.hasPrev && (
                       <div className="flex justify-between items-center text-slate-500">
@@ -1664,7 +1688,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                     )}
                     {pepsiType === 'invoice' && stats.hasPrev && (
                       <div className="bg-amber-50 text-amber-805 p-1.5 rounded text-[9px] border border-amber-150 leading-normal">
-                        🚨 تنبيه: لم ينتهِ القسط السابق! سيتم إدراج هذه الفاتورة الجديدة تلقائياً بعد استهلاك الأقساط الحالية.
+                        🚨 تنبيه: لم ينتهِ القسط السابق! تم إدراج هذه الفاتورة الجديدة كـ "فاتورة على الدور" ({valPepsiPaid.toFixed(2)} ر) وستبدأ بالاستقطاع تلقائياً بعد اكتمال سداد الفاتورة الحالية.
                       </div>
                     )}
                   </div>
@@ -1773,9 +1797,22 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 }
                 return (
                   <div className="bg-white border border-slate-150 p-2 rounded-lg text-right space-y-1 text-[10px] leading-relaxed shadow-sm">
+                    <div className={`flex justify-between items-center py-0.5 px-1 rounded transition-colors ${
+                      stats.queuedAmount > 0 
+                        ? "bg-amber-50 text-amber-900 border border-amber-200/80 font-bold" 
+                        : "text-slate-500"
+                    }`}>
+                      <span className="flex items-center gap-1">
+                        {stats.queuedAmount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                        <span>فاتورة على الدور:</span>
+                      </span>
+                      <span className={`font-mono ${stats.queuedAmount > 0 ? "font-extrabold text-amber-800" : "font-bold text-slate-600"}`}>
+                        {stats.queuedAmount.toFixed(2)} ر
+                      </span>
+                    </div>
                     <div className="flex justify-between items-center text-slate-500">
                       <span>الفاتورة الأصلية المتراكمة:</span>
-                      <span className="font-extrabold text-slate-700 font-mono">{stats.totalOriginal.toFixed(2)} ر</span>
+                      <span className="font-extrabold text-slate-700 font-mono">{stats.activeOriginal.toFixed(2)} ر</span>
                     </div>
                     {stats.hasPrev && (
                       <div className="flex justify-between items-center text-slate-500">
@@ -1809,7 +1846,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                     )}
                     {plasticType === 'invoice' && stats.hasPrev && (
                       <div className="bg-amber-50 text-amber-805 p-1.5 rounded text-[9px] border border-amber-150 leading-normal">
-                        🚨 تنبيه: لم ينتهِ القسط السابق! سيتم ضم هذه الفاتورة الجديدة تلقائياً بعد استهلاك الأقساط الحالية.
+                        🚨 تنبيه: لم ينتهِ القسط السابق! تم إدراج هذه الفاتورة الجديدة كـ "فاتورة على الدور" ({valPlasticPaid.toFixed(2)} ر) وستبدأ بالاستقطاع تلقائياً بعد اكتمال سداد الفاتورة الحالية.
                       </div>
                     )}
                   </div>
@@ -1940,9 +1977,22 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 }
                 return (
                   <div className="bg-white border border-slate-150 p-2 rounded-lg text-right space-y-1 text-[10px] leading-relaxed shadow-sm">
+                    <div className={`flex justify-between items-center py-0.5 px-1 rounded transition-colors ${
+                      stats.queuedAmount > 0 
+                        ? "bg-amber-50 text-amber-900 border border-amber-200/80 font-bold" 
+                        : "text-slate-500"
+                    }`}>
+                      <span className="flex items-center gap-1">
+                        {stats.queuedAmount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                        <span>فاتورة على الدور:</span>
+                      </span>
+                      <span className={`font-mono ${stats.queuedAmount > 0 ? "font-extrabold text-amber-800" : "font-bold text-slate-600"}`}>
+                        {stats.queuedAmount.toFixed(2)} ر
+                      </span>
+                    </div>
                     <div className="flex justify-between items-center text-slate-500">
                       <span>الفاتورة الأصلية المتراكمة:</span>
-                      <span className="font-extrabold text-slate-700 font-mono">{stats.totalOriginal.toFixed(2)} ر</span>
+                      <span className="font-extrabold text-slate-700 font-mono">{stats.activeOriginal.toFixed(2)} ر</span>
                     </div>
                     {stats.hasPrev && (
                       <div className="flex justify-between items-center text-slate-500">
@@ -1976,7 +2026,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                     )}
                     {saucesType === 'invoice' && stats.hasPrev && (
                       <div className="bg-amber-50 text-amber-805 p-1.5 rounded text-[9px] border border-amber-150 leading-normal">
-                        🚨 تنبيه: لم ينتهِ القسط السابق! سيتم ضم هذه الفاتورة الجديدة تلقائياً بعد استهلاك الأقساط الحالية.
+                        🚨 تنبيه: لم ينتهِ القسط السابق! تم إدراج هذه الفاتورة الجديدة كـ "فاتورة على الدور" ({valSaucesPaid.toFixed(2)} ر) وستبدأ بالاستقطاع تلقائياً بعد اكتمال سداد الفاتورة الحالية.
                       </div>
                     )}
                   </div>
@@ -2107,9 +2157,22 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                 }
                 return (
                   <div className="bg-white border border-slate-150 p-2 rounded-lg text-right space-y-1 text-[10px] leading-relaxed shadow-sm">
+                    <div className={`flex justify-between items-center py-0.5 px-1 rounded transition-colors ${
+                      stats.queuedAmount > 0 
+                        ? "bg-amber-50 text-amber-900 border border-amber-200/80 font-bold" 
+                        : "text-slate-500"
+                    }`}>
+                      <span className="flex items-center gap-1">
+                        {stats.queuedAmount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                        <span>فاتورة على الدور:</span>
+                      </span>
+                      <span className={`font-mono ${stats.queuedAmount > 0 ? "font-extrabold text-amber-800" : "font-bold text-slate-600"}`}>
+                        {stats.queuedAmount.toFixed(2)} ر
+                      </span>
+                    </div>
                     <div className="flex justify-between items-center text-slate-500">
                       <span>الفاتورة الأصلية المتراكمة:</span>
-                      <span className="font-extrabold text-slate-700 font-mono">{stats.totalOriginal.toFixed(2)} ر</span>
+                      <span className="font-extrabold text-slate-700 font-mono">{stats.activeOriginal.toFixed(2)} ر</span>
                     </div>
                     {stats.hasPrev && (
                       <div className="flex justify-between items-center text-slate-500">
@@ -2143,7 +2206,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                     )}
                     {dieselType === 'invoice' && stats.hasPrev && (
                       <div className="bg-amber-50 text-amber-805 p-1.5 rounded text-[9px] border border-amber-150 leading-normal">
-                        🚨 تنبيه: لم ينتهِ القسط السابق! سيتم ضم هذه الفاتورة الجديدة تلقائياً بعد استهلاك الأقساط الحالية.
+                        🚨 تنبيه: لم ينتهِ القسط السابق! تم إدراج هذه الفاتورة الجديدة كـ "فاتورة على الدور" ({valDieselPaid.toFixed(2)} ر) وستبدأ بالاستقطاع تلقائياً بعد اكتمال سداد الفاتورة الحالية.
                       </div>
                     )}
                   </div>
