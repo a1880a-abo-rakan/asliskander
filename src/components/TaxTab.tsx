@@ -31,7 +31,8 @@ import {
   Bell,
   BellRing,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Save
 } from "lucide-react";
 
 interface TaxTabProps {
@@ -718,12 +719,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const parsed = parseFloat(saved);
       if (!isNaN(parsed)) return parsed;
     }
-    // Fallback directly to the entered daily sales cash_net recorded in the system for this date & branch
-    const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
-    const realD = branchDays.find((b: any) => b.date === dateStr);
-    if (realD && typeof realD.cash_net === "number") {
-      return realD.cash_net;
-    }
+    // Leaves blank/zero unless explicitly entered and approved by user
     return 0;
   };
 
@@ -732,13 +728,36 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     if (saved !== null && saved !== "") {
       return saved;
     }
-    // Fallback directly to display the entered daily sales cash_net recorded in the system
-    const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
-    const realD = branchDays.find((b: any) => b.date === dateStr);
-    if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
-      return String(realD.cash_net);
-    }
+    // Leaves empty by default as requested: user enters manually
     return "";
+  };
+
+  const saveDailyCash = async (dateStr: string, value: string) => {
+    const trimmed = (value || "").trim();
+    if (trimmed === "") {
+      localStorage.removeItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
+      try {
+        await fetch(`/api/tax-cash/${encodeURIComponent(`${branch}_${dateStr}`)}`, {
+          method: "DELETE"
+        });
+      } catch (err) {
+        console.error("Error deleting tax cash from server:", err);
+      }
+    } else {
+      const num = parseFloat(trimmed) || 0;
+      localStorage.setItem(`tax_cash_${branch}_${dateStr}_${dateStr}`, String(num));
+      try {
+        await fetch("/api/tax-cash", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch, date: dateStr, cash: num })
+        });
+      } catch (err) {
+        console.error("Error saving tax cash to server:", err);
+      }
+      onShowToast(`💾 تم حفظ دخل الكاش (${num.toFixed(2)} ر) لتاريخ ${dateStr} بنجاح!`);
+    }
+    setDailyCashKeyTrigger(prev => prev + 1);
   };
 
   const getArabicDayName = (dateStr: string) => {
@@ -1066,6 +1085,25 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
           .catch((err) => console.error("Error loading tax invoices:", err))
       );
 
+      // Load saved tax cash entries from database and sync to local state
+      promises.push(
+        fetch("/api/tax-cash?fresh=true")
+          .then(async (resCash) => {
+            if (resCash.ok) {
+              const cashList = await resCash.json();
+              if (Array.isArray(cashList)) {
+                cashList.forEach((entry: any) => {
+                  if (entry.branch && entry.date && (typeof entry.cash === "number" || typeof entry.cash === "string")) {
+                    localStorage.setItem(`tax_cash_${entry.branch}_${entry.date}_${entry.date}`, String(entry.cash));
+                  }
+                });
+                setDailyCashKeyTrigger(prev => prev + 1);
+              }
+            }
+          })
+          .catch((err) => console.error("Error loading tax cash from server:", err))
+      );
+
       if (userRole !== "مدخل فواتير") {
         promises.push(
           fetch(`/api/reports?from=${from}&to=${to}`)
@@ -1099,7 +1137,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   };
 
-  const handleCalculateTax = () => {
+  const handleCalculateTax = async () => {
     const cashVal = parseFloat(tempCashInput) || 0;
     
     if (reportMode === "day") {
@@ -1108,32 +1146,52 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       localStorage.setItem(savedDailyKey, String(cashVal));
       setCashInput(cashVal);
       setIsTaxCalculated(true);
-      onShowToast("💾 تم اعتماد دخل الكاش لليوم بنجاح!");
+      
+      try {
+        await fetch("/api/tax-cash", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch, date: from, cash: cashVal })
+        });
+      } catch (err) {
+        console.error("Error saving tax cash to server:", err);
+      }
+
+      onShowToast(`💾 تم حفظ واعتماد دخل الكاش لليوم (${cashVal.toFixed(2)} ر) بنجاح!`);
     } else {
-      // For period modes, the cash value is a dynamic sum of independent daily cash entries.
-      // We don't overwrite or divide/split anything over the days. We just approve the calculation.
+      // For period modes, the cash value is a dynamic sum of independent daily cash entries entered manually
       const dates = getDatesInRange(from, to);
       let totalDailyCash = 0;
-      const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
+      let hasAnySaved = false;
+      const savePromises: Promise<any>[] = [];
+
       dates.forEach(dateStr => {
         const dSaved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
         if (dSaved !== null && dSaved !== "") {
-          totalDailyCash += parseFloat(dSaved) || 0;
-        } else {
-          const realD = branchDays.find((b: any) => b.date === dateStr);
-          if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
-            totalDailyCash += realD.cash_net;
-          }
+          const val = parseFloat(dSaved) || 0;
+          totalDailyCash += val;
+          hasAnySaved = true;
+
+          savePromises.push(
+            fetch("/api/tax-cash", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ branch, date: dateStr, cash: val })
+            }).catch(e => console.error("Error saving daily cash:", e))
+          );
         }
       });
       setCashInput(totalDailyCash);
-      setIsTaxCalculated(totalDailyCash > 0);
+      setIsTaxCalculated(hasAnySaved);
       
-      // Save period metadata key just for consistency but without any division
       const savedCashKey = `tax_cash_${branch}_${from}_${to}`;
       localStorage.setItem(savedCashKey, String(totalDailyCash));
 
-      onShowToast("💾 تم اعتماد الحساب الضريبي للفترة بنجاح بناءً على مجموع الكاش اليومي!");
+      if (savePromises.length > 0) {
+        await Promise.all(savePromises);
+      }
+
+      onShowToast("💾 تم حفظ واعتماد الحساب الضريبي ودخل الكاش للفترة بنجاح!");
     }
 
     setDailyCashKeyTrigger(prev => prev + 1);
@@ -1335,7 +1393,6 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
   // Sync cash input memory for this branch and date range
   useEffect(() => {
-    const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
     if (reportMode === "day") {
       const savedDailyKey = `tax_cash_${branch}_${from}_${from}`;
       const saved = localStorage.getItem(savedDailyKey);
@@ -1344,41 +1401,28 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         setCashInput(parseFloat(saved) || 0);
         setIsTaxCalculated(true);
       } else {
-        const realD = branchDays.find((b: any) => b.date === from);
-        if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
-          setTempCashInput(String(realD.cash_net));
-          setCashInput(realD.cash_net);
-          setIsTaxCalculated(true);
-        } else {
-          setTempCashInput("");
-          setCashInput(0);
-          setIsTaxCalculated(false);
-        }
+        setTempCashInput("");
+        setCashInput(0);
+        setIsTaxCalculated(false);
       }
     } else {
-      // For period and period_detailed, we sum up the independently entered daily values or use recorded cash
+      // For period and period_detailed, we sum up only the manually saved daily cash entries
       const dates = getDatesInRange(from, to);
       let totalDailyCash = 0;
-      let hasAnyDaily = false;
+      let hasAnySaved = false;
       dates.forEach(dateStr => {
         const dSaved = localStorage.getItem(`tax_cash_${branch}_${dateStr}_${dateStr}`);
         if (dSaved !== null && dSaved !== "") {
           totalDailyCash += parseFloat(dSaved) || 0;
-          hasAnyDaily = true;
-        } else {
-          const realD = branchDays.find((b: any) => b.date === dateStr);
-          if (realD && typeof realD.cash_net === "number" && realD.cash_net > 0) {
-            totalDailyCash += realD.cash_net;
-            hasAnyDaily = true;
-          }
+          hasAnySaved = true;
         }
       });
 
-      setTempCashInput(totalDailyCash > 0 ? String(totalDailyCash) : "");
+      setTempCashInput(hasAnySaved ? String(totalDailyCash) : "");
       setCashInput(totalDailyCash);
-      setIsTaxCalculated(hasAnyDaily);
+      setIsTaxCalculated(hasAnySaved);
     }
-  }, [branch, from, to, reportMode, dailyCashKeyTrigger, reportRawData]);
+  }, [branch, from, to, reportMode, dailyCashKeyTrigger]);
 
   // Filter invoices to only show/count the ones matching the selected active branch, company, and date range
   const filteredInvoices = invoices.filter((i) => {
@@ -3237,6 +3281,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                           dates.forEach((dateStr) => {
                             localStorage.removeItem(`tax_cash_القادسية_${dateStr}_${dateStr}`);
                             localStorage.removeItem(`tax_cash_المروج_${dateStr}_${dateStr}`);
+                            fetch(`/api/tax-cash/${encodeURIComponent(`القادسية_${dateStr}`)}`, { method: "DELETE" }).catch(() => {});
+                            fetch(`/api/tax-cash/${encodeURIComponent(`المروج_${dateStr}`)}`, { method: "DELETE" }).catch(() => {});
                           });
                         } catch (err) {
                           console.error(err);
@@ -3371,7 +3417,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                           type="number"
                                           step="0.01"
                                           value={getDailyCashDisplayValue(d.date)}
-                                          placeholder="0.00"
+                                          placeholder="—"
                                           onChange={(e) => {
                                             const val = e.target.value;
                                             if (val === "") {
@@ -3381,8 +3427,26 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                             }
                                             setDailyCashKeyTrigger(prev => prev + 1);
                                           }}
-                                          className="w-24 px-2 py-1 text-center border border-slate-300 hover:border-slate-400 focus:border-indigo-600 rounded-lg text-slate-800 font-extrabold focus:outline-none text-xs bg-slate-50/30 font-mono placeholder-slate-300"
+                                          onBlur={(e) => {
+                                            saveDailyCash(d.date, e.target.value);
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                              saveDailyCash(d.date, (e.target as HTMLInputElement).value);
+                                            }
+                                          }}
+                                          className="w-20 px-2 py-1 text-center border border-slate-300 hover:border-slate-400 focus:border-indigo-600 rounded-lg text-slate-800 font-extrabold focus:outline-none text-xs bg-slate-50/30 font-mono placeholder-slate-400"
                                         />
+                                        <button
+                                          type="button"
+                                          title="حفظ دخل الكاش لهذا اليوم"
+                                          onClick={() => {
+                                            saveDailyCash(d.date, getDailyCashDisplayValue(d.date));
+                                          }}
+                                          className="p-1 text-slate-400 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors cursor-pointer"
+                                        >
+                                          <Save className="w-3.5 h-3.5" />
+                                        </button>
                                         <span className="text-[9px] text-slate-400 font-bold">ر</span>
                                       </div>
                                       <span className="hidden print:inline font-bold font-mono text-black">
@@ -3465,7 +3529,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                               type="number"
                                               step="0.01"
                                               value={getDailyCashDisplayValue(d.date)}
-                                              placeholder="0.00"
+                                              placeholder="—"
                                               onChange={(e) => {
                                                 const val = e.target.value;
                                                 if (val === "") {
@@ -3475,8 +3539,26 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                                 }
                                                 setDailyCashKeyTrigger(prev => prev + 1);
                                               }}
-                                              className="w-24 px-2 py-1 text-center border border-slate-300 hover:border-slate-400 focus:border-indigo-600 rounded-lg text-slate-800 font-extrabold focus:outline-none text-xs bg-slate-50/30 font-mono placeholder-slate-300"
+                                              onBlur={(e) => {
+                                                saveDailyCash(d.date, e.target.value);
+                                              }}
+                                              onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                  saveDailyCash(d.date, (e.target as HTMLInputElement).value);
+                                                }
+                                              }}
+                                              className="w-20 px-2 py-1 text-center border border-slate-300 hover:border-slate-400 focus:border-indigo-600 rounded-lg text-slate-800 font-extrabold focus:outline-none text-xs bg-slate-50/30 font-mono placeholder-slate-400"
                                             />
+                                            <button
+                                              type="button"
+                                              title="حفظ دخل الكاش لهذا اليوم"
+                                              onClick={() => {
+                                                saveDailyCash(d.date, getDailyCashDisplayValue(d.date));
+                                              }}
+                                              className="p-1 text-slate-400 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors cursor-pointer"
+                                            >
+                                              <Save className="w-3.5 h-3.5" />
+                                            </button>
                                             <span className="text-[9px] text-slate-400 font-bold">ر</span>
                                           </div>
                                           <span className="hidden print:inline font-bold font-mono text-black">

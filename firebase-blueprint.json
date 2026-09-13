@@ -329,6 +329,19 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "date", "branch", "pepsi", "sevenup", "dew", "citrus", "pepsi_diet", "sevenup_diet", "dew_diet", "citrus_diet"]
+    },
+    "TaxCash": {
+      "title": "TaxCash",
+      "description": "Manually entered and approved cash income for tax reports per branch and date",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Branch and date composite key (e.g. القادسية_2025-01-01)" },
+        "branch": { "type": "string", "description": "Branch name" },
+        "date": { "type": "string", "description": "Date formatted YYYY-MM-DD" },
+        "cash": { "type": "number", "description": "Cash income amount manually entered and approved" },
+        "updatedAt": { "type": "string", "description": "Timestamp of manual recording" }
+      },
+      "required": ["id", "branch", "date", "cash"]
     }
   },
   "firestore": {
@@ -387,6 +400,10 @@
     "drinks_entries": {
       "schema": "DrinksEntry",
       "description": "Drinks inventory tracking and reconciliation logs"
+    },
+    "tax_cash": {
+      "schema": "TaxCash",
+      "description": "Approved cash income entries for tax reports per branch and date"
     }
   }
 }

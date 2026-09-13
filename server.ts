@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry } from "./src/types";
+import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry } from "./src/types";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import "dotenv/config";
 
@@ -760,6 +760,83 @@ async function deleteTaxRegisteredCompany(id: string): Promise<void> {
     console.log(`[FIRESTORE DELETE] Completed deleteDoc call for ID: "${id}"`);
   } catch (err) {
     console.error("Error deleting tax registered company from Firestore:", err);
+    throw err;
+  }
+}
+
+const taxCashCache = new Map<string, TaxCashEntry>();
+let taxCashLoaded = false;
+let taxCashLastFetch = 0;
+const TAX_CASH_CACHE_TTL = 30000;
+
+async function getTaxCashList(forceRefresh = false): Promise<TaxCashEntry[]> {
+  const isExpired = Date.now() - taxCashLastFetch > TAX_CASH_CACHE_TTL;
+  if (taxCashLoaded && !isExpired && !forceRefresh) {
+    return Array.from(taxCashCache.values());
+  }
+  try {
+    const snap = await getDoc(doc(db, "settings", "tax_cash_records"));
+    if (snap.exists()) {
+      const data = snap.data();
+      taxCashCache.clear();
+      if (data && data.records && typeof data.records === "object") {
+        Object.values(data.records).forEach((r: any) => {
+          if (r && r.id) {
+            taxCashCache.set(r.id, r);
+          }
+        });
+      }
+    }
+    taxCashLoaded = true;
+    taxCashLastFetch = Date.now();
+    return Array.from(taxCashCache.values());
+  } catch (err) {
+    console.error("Error reading tax_cash from Firestore settings:", err);
+    return Array.from(taxCashCache.values());
+  }
+}
+
+async function saveTaxCashRecord(entry: TaxCashEntry): Promise<TaxCashEntry> {
+  const docId = entry.id || `${entry.branch}_${entry.date}`;
+  const cleaned: TaxCashEntry = {
+    id: docId,
+    branch: entry.branch,
+    date: entry.date,
+    cash: typeof entry.cash === "number" ? entry.cash : (parseFloat(String(entry.cash)) || 0),
+    updatedAt: new Date().toISOString()
+  };
+  taxCashCache.set(docId, cleaned);
+  
+  const recordsObj: Record<string, TaxCashEntry> = {};
+  taxCashCache.forEach((val, key) => {
+    recordsObj[key] = val;
+  });
+
+  try {
+    await setDoc(doc(db, "settings", "tax_cash_records"), {
+      records: recordsObj,
+      lastUpdated: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.error("Error saving tax_cash to Firestore settings:", err);
+    throw err;
+  }
+  return cleaned;
+}
+
+async function deleteTaxCashRecord(docId: string): Promise<void> {
+  taxCashCache.delete(docId);
+  const recordsObj: Record<string, TaxCashEntry> = {};
+  taxCashCache.forEach((val, key) => {
+    recordsObj[key] = val;
+  });
+  try {
+    await setDoc(doc(db, "settings", "tax_cash_records"), {
+      records: recordsObj,
+      lastUpdated: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.error("Error deleting tax_cash from Firestore settings:", err);
     throw err;
   }
 }
@@ -2242,6 +2319,60 @@ async function startServer() {
       res.json({ success: true });
     } catch (err: any) {
       console.error("Error in DELETE /api/tax-companies:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // TAX CASH ENDPOINTS
+  app.get("/api/tax-cash", async (req, res) => {
+    try {
+      const branch = req.query.branch as string;
+      const date = req.query.date as string;
+      const fresh = req.query.fresh === "true";
+      let list = await getTaxCashList(fresh);
+      if (branch) {
+        list = list.filter((item) => item.branch === branch);
+      }
+      if (date) {
+        list = list.filter((item) => item.date === date);
+      }
+      res.json(list);
+    } catch (err: any) {
+      console.error("Error in GET /api/tax-cash:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/tax-cash", async (req, res) => {
+    try {
+      const { branch, date, cash } = req.body;
+      if (!branch || !date) {
+        return res.status(400).json({ error: "Branch and date are required" });
+      }
+      const numCash = typeof cash === "number" ? cash : (parseFloat(String(cash)) || 0);
+      const docId = `${branch}_${date}`;
+      const record: TaxCashEntry = {
+        id: docId,
+        branch,
+        date,
+        cash: numCash,
+        updatedAt: new Date().toISOString()
+      };
+      const saved = await saveTaxCashRecord(record);
+      res.json({ success: true, record: saved });
+    } catch (err: any) {
+      console.error("Error in POST /api/tax-cash:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/tax-cash/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      await deleteTaxCashRecord(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error in DELETE /api/tax-cash:", err);
       res.status(500).json({ error: err.message });
     }
   });

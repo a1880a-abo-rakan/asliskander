@@ -140,6 +140,14 @@ export interface TaxInvoice {
   fileType?: string;
 }
 
+export interface TaxCashEntry {
+  id: string; // e.g. `${branch}_${date}`
+  branch: 'القادسية' | 'المروج';
+  date: string;
+  cash: number;
+  updatedAt?: string;
+}
+
 export interface Purchase {
   id: string;
   name: string; // اسم المنتج أو السلعة
