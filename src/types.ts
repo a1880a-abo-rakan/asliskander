@@ -317,5 +317,24 @@ export interface DrinksEntry {
   createdAt?: string;
 }
 
+export interface InstallmentInvoice {
+  id: string;
+  category: 'pepsi' | 'plastic' | 'sauces' | 'diesel';
+  branch: 'القادسية' | 'المروج';
+  date: string; // Invoice date formatted as YYYY-MM-DD
+  enteredAt: string; // Exact timestamp when recorded (ISO or formatted)
+  enteredBy: string; // "محاسب ثان" | "مدير" | username
+  originalAmount: number; // Original invoice gross sum
+  paidAmount: number; // Sum paid off so far
+  remainingAmount: number; // Balance left to be paid
+  status: 'active' | 'queued' | 'completed'; // active: currently deducting; queued: waiting for previous invoice to finish; completed: fully paid
+  completedDate?: string | null; // Date when final installment was settled
+  estimatedCompletionDate?: string | null; // Projected completion date based on ceiling
+  actualStartDate?: string | null; // Date when deduction actually began
+  wasDelayed?: boolean; // Whether start was delayed due to a prior active invoice
+  delayReason?: string; // Arabic explanation, e.g. "تم تأخير البدء لوجود فاتورة سابقة قيد السداد"
+  notes?: string;
+}
+
 
 

@@ -342,6 +342,27 @@
         "updatedAt": { "type": "string", "description": "Timestamp of manual recording" }
       },
       "required": ["id", "branch", "date", "cash"]
+    },
+    "InstallmentInvoice": {
+      "title": "InstallmentInvoice",
+      "description": "Supplier installment invoices queue and payment tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string", "enum": ["pepsi", "plastic", "sauces", "diesel"] },
+        "branch": { "type": "string" },
+        "date": { "type": "string" },
+        "enteredAt": { "type": "string" },
+        "enteredBy": { "type": "string" },
+        "originalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "remainingAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "queued", "completed"] },
+        "completedDate": { "type": "string" },
+        "estimatedCompletionDate": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "category", "branch", "date", "originalAmount", "status"]
     }
   },
   "firestore": {
@@ -404,6 +425,10 @@
     "tax_cash": {
       "schema": "TaxCash",
       "description": "Approved cash income entries for tax reports per branch and date"
+    },
+    "installment_invoices": {
+      "schema": "InstallmentInvoice",
+      "description": "Supplier installment invoices and payment status records"
     }
   }
 }

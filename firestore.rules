@@ -75,6 +75,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // 14. Installment Invoices rules
+    match /installment_invoices/{docId} {
+      allow read, write: if true;
+    }
+
     // Global Safety Net (Default Deny Catch All)
     match /{document=**} {
       allow read, write: if false;

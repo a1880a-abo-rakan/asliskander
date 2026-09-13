@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry } from "./src/types";
+import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry, InstallmentInvoice } from "./src/types";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import "dotenv/config";
 
@@ -567,6 +567,165 @@ async function deleteDay(id: string): Promise<void> {
     await deletePurchasesForDay(id);
   } catch (err) {
     console.error("Error deleting day from Firestore:", err);
+  }
+}
+
+// In-memory cache and file persistence for installment invoices
+const invoicesCache = new Map<string, InstallmentInvoice>();
+let invoicesLoaded = false;
+
+const INVOICES_BACKUP_DIR = path.join(process.cwd(), "data");
+const INVOICES_BACKUP_FILE = path.join(INVOICES_BACKUP_DIR, "installment_invoices.json");
+
+function loadInvoicesFromFile(): InstallmentInvoice[] {
+  try {
+    if (fs.existsSync(INVOICES_BACKUP_FILE)) {
+      const content = fs.readFileSync(INVOICES_BACKUP_FILE, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn("Could not read local installment invoices backup file:", err);
+  }
+  return [];
+}
+
+function saveInvoicesToFile(invoices: InstallmentInvoice[]): void {
+  try {
+    if (!fs.existsSync(INVOICES_BACKUP_DIR)) {
+      fs.mkdirSync(INVOICES_BACKUP_DIR, { recursive: true });
+    }
+    fs.writeFileSync(INVOICES_BACKUP_FILE, JSON.stringify(invoices, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Could not write local installment invoices backup file:", err);
+  }
+}
+
+async function getInstallmentInvoices(): Promise<InstallmentInvoice[]> {
+  if (invoicesLoaded) {
+    return Array.from(invoicesCache.values()).map(inv => JSON.parse(JSON.stringify(inv)));
+  }
+
+  // 1. Primary: Read from doc(db, "settings", "installment_invoices") - fully allowed by Firestore rules
+  try {
+    const snap = await getDoc(doc(db, "settings", "installment_invoices"));
+    if (snap.exists()) {
+      const data = snap.data();
+      const list: InstallmentInvoice[] = Array.isArray(data?.list) ? data.list : [];
+      invoicesCache.clear();
+      list.forEach((inv) => {
+        if (inv && inv.id) {
+          invoicesCache.set(inv.id, JSON.parse(JSON.stringify(cleanObject(inv))));
+        }
+      });
+      invoicesLoaded = true;
+      saveInvoicesToFile(list);
+      return list;
+    }
+  } catch {
+    // Fall back to local file or collection
+  }
+
+  // 2. Secondary: Load from local backup file if available
+  const localList = loadInvoicesFromFile();
+  if (localList.length > 0) {
+    invoicesCache.clear();
+    localList.forEach((inv) => {
+      if (inv && inv.id) {
+        invoicesCache.set(inv.id, JSON.parse(JSON.stringify(cleanObject(inv))));
+      }
+    });
+    invoicesLoaded = true;
+    setDoc(doc(db, "settings", "installment_invoices"), {
+      list: cleanObject(localList),
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+    return localList;
+  }
+
+  // 3. Fallback: Check collection("installment_invoices") if rules permit, catching permission errors silently
+  try {
+    const snap = await getDocs(collection(db, "installment_invoices"));
+    const list: InstallmentInvoice[] = [];
+    invoicesCache.clear();
+    snap.forEach((d) => {
+      const data = d.data() as InstallmentInvoice;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+        invoicesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
+      }
+    });
+    invoicesLoaded = true;
+    if (list.length > 0) {
+      saveInvoicesToFile(list);
+      setDoc(doc(db, "settings", "installment_invoices"), {
+        list: cleanObject(list),
+        updatedAt: new Date().toISOString()
+      }).catch(() => {});
+    }
+    return list;
+  } catch {
+    // Permission error or offline: mark loaded to avoid re-triggering repeatedly
+    invoicesLoaded = true;
+    return Array.from(invoicesCache.values()).map(inv => JSON.parse(JSON.stringify(inv)));
+  }
+}
+
+async function saveInstallmentInvoices(invoices: InstallmentInvoice[]): Promise<void> {
+  // Update in-memory cache
+  for (const inv of invoices) {
+    if (!inv || !inv.id) continue;
+    invoicesCache.set(inv.id, JSON.parse(JSON.stringify(cleanObject(inv))));
+  }
+  invoicesLoaded = true;
+
+  const allInvoices = Array.from(invoicesCache.values());
+
+  // 1. Save to local file backup
+  saveInvoicesToFile(allInvoices);
+
+  // 2. Save entire list to doc(db, "settings", "installment_invoices") (allowed by rules)
+  try {
+    await withTimeout(setDoc(doc(db, "settings", "installment_invoices"), {
+      list: cleanObject(allInvoices),
+      updatedAt: new Date().toISOString()
+    }), 8000);
+  } catch (err: any) {
+    console.error("Error saving installment_invoices to Firestore (settings):", err?.message || err);
+  }
+
+  // 3. Best-effort individual docs in installment_invoices collection (silent catch)
+  try {
+    const toWrite = invoices.filter(inv => inv && inv.id).map(inv => ({ id: inv.id, cleaned: cleanObject(inv) }));
+    if (toWrite.length > 0) {
+      await Promise.all(toWrite.map(item => 
+        setDoc(doc(db, "installment_invoices", item.id), item.cleaned).catch(() => {})
+      ));
+    }
+  } catch {
+    // Ignore collection-level write errors
+  }
+}
+
+async function deleteInstallmentInvoice(id: string): Promise<void> {
+  invoicesCache.delete(id);
+  const allInvoices = Array.from(invoicesCache.values());
+  saveInvoicesToFile(allInvoices);
+
+  try {
+    await withTimeout(setDoc(doc(db, "settings", "installment_invoices"), {
+      list: cleanObject(allInvoices),
+      updatedAt: new Date().toISOString()
+    }), 8000);
+  } catch (err: any) {
+    console.error("Error updating installment_invoices in Firestore:", err?.message || err);
+  }
+
+  try {
+    await deleteDoc(doc(db, "installment_invoices", id)).catch(() => {});
+  } catch {
+    // Ignore collection-level delete errors
   }
 }
 
@@ -1302,58 +1461,22 @@ async function autoRegisterInvoiceItemsAsPurchases(invoice: TaxInvoice, external
 
 
 
-// Helper for safe category-specific carryover calculations with payment vs invoice status
-function calculateCategoryCarryover(
-  entry: any,
-  prevCarry: number,
-  paid: number,
-  type: "payment" | "invoice" | undefined,
-  limit: number,
-  prevKey: string,
-  deductKey: string,
-  nextKey: string
-): number {
-  entry[prevKey] = Number(prevCarry.toFixed(2));
-  
-  let deduct = 0;
-  let nextCarry = 0;
-
-  if (prevCarry > 0) {
-    if (paid > 0) {
-      if (type === "invoice") {
-        // Adding a new supply invoice on top of previous carryover
-        const total = Number((paid + prevCarry).toFixed(2));
-        deduct = Number(Math.min(total, limit).toFixed(2));
-        nextCarry = Number((total - deduct).toFixed(2));
-      } else {
-        // Manual payment specified to pay off the carryover
-        // Capped by remaining carryover
-        deduct = Number(Math.min(paid, prevCarry).toFixed(2));
-        nextCarry = Number((prevCarry - deduct).toFixed(2));
-      }
-    } else {
-      // No manual payment/invoice entered: automatically deduct daily installment up to ceiling
-      deduct = Number(Math.min(prevCarry, limit).toFixed(2));
-      nextCarry = Number((prevCarry - deduct).toFixed(2));
-    }
-  } else {
-    // Fresh start (prevCarry === 0)
-    if (paid > 0) {
-      deduct = Number(Math.min(paid, limit).toFixed(2));
-      nextCarry = Number((paid - deduct).toFixed(2));
-    } else {
-      deduct = 0;
-      nextCarry = 0;
-    }
+function addDaysToDate(dateStr: string, days: number): string {
+  if (!dateStr || days <= 0) return dateStr;
+  try {
+    const parts = dateStr.split("-");
+    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    d.setDate(d.getDate() + days);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  } catch (e) {
+    return dateStr;
   }
-
-  entry[deductKey] = deduct;
-  entry[nextKey] = nextCarry;
-
-  return nextCarry;
 }
 
-// Recalculate ledger function to maintain sequential carry-overs
+// Recalculate ledger function to maintain sequential carry-overs with FIFO invoice queuing
 async function recalculateCarryOvers(branch: "القادسية" | "المروج"): Promise<void> {
   const settings = await getSettings();
   const allDays = await getDays();
@@ -1362,109 +1485,249 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
   const filtered = allDays.filter((d) => d.branch === branch);
   filtered.sort((a, b) => a.date.localeCompare(b.date));
 
-  let pepsi_carry = 0;
-  let plastic_carry = 0;
-  let sauces_carry = 0;
-  let diesel_carry = 0;
+  // Load all installment invoices
+  const allInvoices = await getInstallmentInvoices();
+  // Filter for this branch
+  let branchInvoices = allInvoices.filter(inv => inv.branch === branch);
+
+  const CATEGORIES = [
+    {
+      key: "pepsi" as const,
+      name: "بيبسي ومشروبات",
+      paidKey: "pepsi_paid" as const,
+      typeKey: "pepsi_type" as const,
+      prevKey: "pepsi_carry_prev" as const,
+      deductKey: "pepsi_deduct" as const,
+      nextKey: "pepsi_carry_next" as const,
+      capKey: "pepsi_cap" as const,
+      getCap: (s: Settings, b: "القادسية" | "المروج") =>
+        b === "القادسية" ? (s.سقف_بيبسي_قادسية || s.سقف_بيبسي || 400) : (s.سقف_بيبسي_مروج || s.سقف_بيبسي || 400)
+    },
+    {
+      key: "plastic" as const,
+      name: "صقر للتغليف",
+      paidKey: "plastic_paid" as const,
+      typeKey: "plastic_type" as const,
+      prevKey: "plastic_carry_prev" as const,
+      deductKey: "plastic_deduct" as const,
+      nextKey: "plastic_carry_next" as const,
+      capKey: "plastic_cap" as const,
+      getCap: (s: Settings, b: "القادسية" | "المروج") =>
+        b === "القادسية" ? (s.سقف_بلاستيك_قادسية || s.سقف_بلاستيك || 100) : (s.سقف_بلاستيك_مروج || s.سقف_بلاستيك || 100)
+    },
+    {
+      key: "sauces" as const,
+      name: "الصلصات والمواد الأولية",
+      paidKey: "sauces_paid" as const,
+      typeKey: "sauces_type" as const,
+      prevKey: "sauces_carry_prev" as const,
+      deductKey: "sauces_deduct" as const,
+      nextKey: "sauces_carry_next" as const,
+      capKey: "sauces_cap" as const,
+      getCap: (s: Settings, b: "القادسية" | "المروج") =>
+        b === "القادسية" ? (s.سقف_صلصات_قادسية || s.سقف_صلصات || 150) : (s.سقف_صلصات_مروج || s.سقف_صلصات || 150)
+    },
+    {
+      key: "diesel" as const,
+      name: "الديزل",
+      paidKey: "diesel_paid" as const,
+      typeKey: "diesel_type" as const,
+      prevKey: "diesel_carry_prev" as const,
+      deductKey: "diesel_deduct" as const,
+      nextKey: "diesel_carry_next" as const,
+      capKey: "diesel_cap" as const,
+      getCap: (s: Settings, b: "القادسية" | "المروج") =>
+        b === "القادسية" ? (s.سقف_ديزل_قادسية || 50) : (s.سقف_ديزل_مروج || 30)
+    },
+  ];
+
+  // 1. Sync invoices from daily entries for all categories
+  for (const cat of CATEGORIES) {
+    for (const d of filtered) {
+      const paidVal = Number(d[cat.paidKey]) || 0;
+      const entryType = d[cat.typeKey];
+      const autoId = `inv-${cat.key}-${branch}-${d.date}`;
+
+      if (paidVal > 0 && entryType === "invoice") {
+        const existing = branchInvoices.find(i => i.id === autoId || (i.date === d.date && i.category === cat.key));
+        if (existing) {
+          if (existing.originalAmount !== paidVal) {
+            existing.originalAmount = paidVal;
+          }
+          if (d.entered_by && (!existing.enteredBy || existing.enteredBy === "محاسب ثان")) {
+            existing.enteredBy = d.entered_by;
+          }
+        } else {
+          branchInvoices.push({
+            id: autoId,
+            category: cat.key,
+            branch,
+            date: d.date,
+            enteredAt: (d as any).createdAt || `${d.date}T12:00:00.000Z`,
+            enteredBy: d.entered_by || "محاسب ثان",
+            originalAmount: paidVal,
+            paidAmount: 0,
+            remainingAmount: paidVal,
+            status: "queued",
+            notes: d.notes || ""
+          });
+        }
+      } else if (paidVal === 0 || entryType !== "invoice") {
+        // If it was previously auto-created for this day, but now removed or switched to payment, remove it
+        branchInvoices = branchInvoices.filter(i => i.id !== autoId);
+      }
+    }
+  }
+
+  // Pre-calculate busy days and caps for each day entry
+  const cmpDays = settings.ايام_مقارنة || 7;
+  const dayRatios: number[] = [];
 
   for (let i = 0; i < filtered.length; i++) {
     const entry = filtered[i];
-
-    // Determine if today is a busy day (sales > last N days average * 1.25)
     let is_busy = false;
-    const cmpDays = settings.ايام_مقارنة || 7;
-    // previous N days total sales
     const prevDays = filtered.slice(Math.max(0, i - cmpDays), i);
     if (prevDays.length > 0) {
-      const avg = prevDays.reduce((sum, d) => sum + d.total_sales, 0) / prevDays.length;
+      const avg = prevDays.reduce((sum, d) => sum + (d.total_sales || 0), 0) / prevDays.length;
       if (entry.total_sales > avg * 1.25) {
         is_busy = true;
       }
     }
-
     const ratio = is_busy ? (1 + (settings.زيادة_عالي || 25) / 100) : 1;
+    dayRatios[i] = ratio;
 
-    // Use branch-specific setting's ceiling for adaptivity to settings changes
-    const entry_pepsi_cap = branch === "القادسية"
-      ? (settings.سقف_بيبسي_قادسية || settings.سقف_بيبسي || 400)
-      : (settings.سقف_بيبسي_مروج || settings.سقف_بيبسي || 400);
+    entry.pepsi_cap = CATEGORIES[0].getCap(settings, branch);
+    entry.plastic_cap = CATEGORIES[1].getCap(settings, branch);
+    entry.sauces_cap = CATEGORIES[2].getCap(settings, branch);
+    entry.diesel_cap = CATEGORIES[3].getCap(settings, branch);
+  }
 
-    const entry_plastic_cap = branch === "القادسية"
-      ? (settings.سقف_بلاستيك_قادسية || settings.سقف_بلاستيك || 100)
-      : (settings.سقف_بلاستيك_مروج || settings.سقف_بلاستيك || 100);
+  // 2. Run sequential FIFO queue simulation for each category
+  const updatedInvoicesToSave: InstallmentInvoice[] = [];
 
-    const entry_sauces_cap = branch === "القادسية"
-      ? (settings.سقف_صلصات_قادسية || settings.سقف_صلصات || 150)
-      : (settings.سقف_صلصات_مروج || settings.سقف_صلصات || 150);
+  for (const cat of CATEGORIES) {
+    let catInvoices = branchInvoices.filter(i => i.category === cat.key);
+    // Sort chronologically by date ascending, then enteredAt ascending
+    catInvoices.sort((a, b) => a.date.localeCompare(b.date) || (a.enteredAt || "").localeCompare(b.enteredAt || ""));
 
-    const entry_diesel_cap = branch === "القادسية" ? (settings.سقف_ديزل_قادسية || 50) : (settings.سقف_ديزل_مروج || 30);
+    // Reset simulation state for all invoices in this category
+    for (const inv of catInvoices) {
+      inv.paidAmount = 0;
+      inv.remainingAmount = inv.originalAmount;
+      inv.status = "queued";
+      inv.completedDate = null;
+      inv.estimatedCompletionDate = null;
+      inv.actualStartDate = null;
+      inv.wasDelayed = false;
+      inv.delayReason = "";
+    }
 
-    // Save caps inside the entry
-    entry.pepsi_cap = entry_pepsi_cap;
-    entry.plastic_cap = entry_plastic_cap;
-    entry.sauces_cap = entry_sauces_cap;
-    entry.diesel_cap = entry_diesel_cap;
+    for (let i = 0; i < filtered.length; i++) {
+      const entry = filtered[i];
+      const ratio = dayRatios[i];
+      const baseCap = cat.getCap(settings, branch);
+      const limit = Number((baseCap * ratio).toFixed(2));
 
-    const limit_pepsi = entry_pepsi_cap * ratio;
-    const limit_plastic = entry_plastic_cap * ratio;
-    const limit_sauces = entry_sauces_cap * ratio;
-    const limit_diesel = entry_diesel_cap * ratio;
+      // Invoices that entered on or before today
+      const availableInvs = catInvoices.filter(inv => inv.date <= entry.date);
 
-    // 1. Pepsi carryover calculations
-    pepsi_carry = calculateCategoryCarryover(
-      entry,
-      pepsi_carry,
-      entry.pepsi_paid || 0,
-      entry.pepsi_type,
-      limit_pepsi,
-      "pepsi_carry_prev",
-      "pepsi_deduct",
-      "pepsi_carry_next"
-    );
+      // Carryover before today's deduction
+      const prevCarry = availableInvs.reduce((sum, inv) => sum + inv.remainingAmount, 0);
+      (entry as any)[cat.prevKey] = Number(prevCarry.toFixed(2));
 
-    // 2. Plastic carryover calculations
-    plastic_carry = calculateCategoryCarryover(
-      entry,
-      plastic_carry,
-      entry.plastic_paid || 0,
-      entry.plastic_type,
-      limit_plastic,
-      "plastic_carry_prev",
-      "plastic_deduct",
-      "plastic_carry_next"
-    );
+      // Find the currently active invoice: the first available invoice with remainingAmount > 0
+      const activeInv = availableInvs.find(inv => inv.remainingAmount > 0);
 
-    // 3. Sauces carryover calculations
-    sauces_carry = calculateCategoryCarryover(
-      entry,
-      sauces_carry,
-      entry.sauces_paid || 0,
-      entry.sauces_type,
-      limit_sauces,
-      "sauces_carry_prev",
-      "sauces_deduct",
-      "sauces_carry_next"
-    );
+      // Today's deduction requested
+      const paidVal = Number(entry[cat.paidKey]) || 0;
+      const entryType = entry[cat.typeKey];
 
-    // 4. Diesel carryover calculations
-    diesel_carry = calculateCategoryCarryover(
-      entry,
-      diesel_carry,
-      entry.diesel_paid || 0,
-      entry.diesel_type,
-      limit_diesel,
-      "diesel_carry_prev",
-      "diesel_deduct",
-      "diesel_carry_next"
-    );
+      let requestedDeduct = limit;
+      if (entryType === "payment" && paidVal > 0) {
+        requestedDeduct = paidVal;
+      }
 
-    // Re-verify sums
+      if (activeInv) {
+        activeInv.status = "active";
+        // USER RULE: Deduct ONLY from activeInv! Queued new invoices are NOT touched until activeInv finishes!
+        const deductAmt = Number(Math.min(requestedDeduct, activeInv.remainingAmount).toFixed(2));
+        if (deductAmt > 0 && !activeInv.actualStartDate) {
+          activeInv.actualStartDate = entry.date;
+        }
+
+        activeInv.remainingAmount = Number((activeInv.remainingAmount - deductAmt).toFixed(2));
+        activeInv.paidAmount = Number((activeInv.paidAmount + deductAmt).toFixed(2));
+
+        if (activeInv.remainingAmount === 0) {
+          activeInv.status = "completed";
+          activeInv.completedDate = entry.date;
+        }
+
+        (entry as any)[cat.deductKey] = deductAmt;
+      } else {
+        (entry as any)[cat.deductKey] = 0;
+      }
+
+      // Carryover remaining after today's deduction
+      const nextCarry = availableInvs.reduce((sum, inv) => sum + inv.remainingAmount, 0);
+      (entry as any)[cat.nextKey] = Number(nextCarry.toFixed(2));
+    }
+
+    // After all days processed, calculate estimatedCompletionDate and final statuses
+    const latestEntry = filtered[filtered.length - 1];
+    const latestDate = latestEntry ? latestEntry.date : new Date().toISOString().split("T")[0];
+    const latestCap = cat.getCap(settings, branch);
+
+    const openInvoices = catInvoices.filter(inv => inv.remainingAmount > 0);
+    if (openInvoices.length > 0) {
+      openInvoices[0].status = "active";
+      const activeDays = Math.max(1, Math.ceil(openInvoices[0].remainingAmount / latestCap));
+      openInvoices[0].estimatedCompletionDate = addDaysToDate(latestDate, activeDays);
+
+      let waitDays = activeDays;
+      for (let q = 1; q < openInvoices.length; q++) {
+        openInvoices[q].status = "queued";
+        const thisDays = Math.max(1, Math.ceil(openInvoices[q].remainingAmount / latestCap));
+        openInvoices[q].estimatedCompletionDate = addDaysToDate(latestDate, waitDays + thisDays);
+        waitDays += thisDays;
+      }
+    }
+
+    for (const inv of catInvoices) {
+      if (inv.remainingAmount === 0) {
+        inv.status = "completed";
+      }
+
+      // Check whether the start was delayed due to an earlier invoice
+      if (inv.actualStartDate) {
+        if (inv.actualStartDate > inv.date) {
+          inv.wasDelayed = true;
+          inv.delayReason = `نعم، تأخر البدء حتى ${inv.actualStartDate} لوجود فاتورة سابقة قيد السداد`;
+        } else {
+          inv.wasDelayed = false;
+          inv.delayReason = `لا، بدأ السداد فوراً بتاريخ الفاتورة (${inv.date})`;
+        }
+      } else if (inv.status === "queued") {
+        inv.wasDelayed = true;
+        inv.delayReason = `نعم، في قائمة الانتظار حالياً حتى اكتمال سداد الفاتورة السابقة`;
+      } else if (inv.status === "completed") {
+        inv.wasDelayed = inv.completedDate && inv.completedDate > inv.date ? (inv.wasDelayed || false) : false;
+        inv.delayReason = inv.wasDelayed ? (inv.delayReason || "نعم، تأخر البدء لوجود فاتورة سابقة") : "لا، بدأ السداد فوراً ومسددة";
+      }
+
+      updatedInvoicesToSave.push(inv);
+    }
+  }
+
+  // 3. Re-verify financial sums (sales, expenses, net) for each day
+  for (let i = 0; i < filtered.length; i++) {
+    const entry = filtered[i];
     const madaFee = (settings.رسوم_مدى || 0.8) / 100;
     const visaFee = (settings.رسوم_فيزا || 1.5) / 100;
 
     const mada_total = (entry.mada1 || 0) + (entry.mada2 || 0) + (entry.mada3 || 0);
     const visa_total = (entry.visa1 || 0) + (entry.visa2 || 0) + (entry.visa3 || 0);
-    
+
     entry.pos_net = Number((mada_total * (1 - madaFee) + visa_total * (1 - visaFee)).toFixed(2));
     const currentSarf = (entry.sarf !== undefined && entry.sarf !== null) ? entry.sarf : 350;
     entry.cash_net = Number(((entry.cash_box || 0) - currentSarf + (entry.cash_purchases || 0)).toFixed(2));
@@ -1475,14 +1738,14 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
 
     const correctExpensesTotal = (
       (entry.makhzan || 0) +
-      entry.pepsi_deduct +
-      entry.plastic_deduct +
-      entry.sauces_deduct +
+      (entry.pepsi_deduct || 0) +
+      (entry.plastic_deduct || 0) +
+      (entry.sauces_deduct || 0) +
       Math.max(entry.gas || 0, entry.pur_gas || 0) +
       Math.max(entry.vegetables || 0, entry.pur_veg || 0) +
       Math.max(entry.bread || 0, entry.pur_bread || 0) +
       Math.max(entry.grocery || 0, entry.pur_groc || 0) +
-      entry.diesel_deduct +
+      (entry.diesel_deduct || 0) +
       othersSum +
       purExtrasSum +
       (entry.fixed_deduct || 0)
@@ -1491,8 +1754,11 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
     entry.net_day = Number((entry.total_sales - correctExpensesTotal).toFixed(2));
   }
 
-  // Save only the calculated branch's days to avoid cross-branch race conditions or overwriting
-  await saveDays(filtered);
+  // Concurrently save days and installment invoices
+  await Promise.all([
+    saveDays(filtered),
+    saveInstallmentInvoices(updatedInvoicesToSave)
+  ]);
 }
 
 // --- WHATSAPP SYSTEM HELPERS ---
@@ -2196,6 +2462,90 @@ async function startServer() {
     await recalculateCarryOvers("القادسية");
     await recalculateCarryOvers("المروج");
 
+    res.json({ success: true });
+  });
+
+  // --- INSTALLMENT INVOICES QUEUE & HISTORY ENDPOINTS ---
+  app.get("/api/installment-invoices", async (req, res) => {
+    const branch = req.query.branch as "القادسية" | "المروج";
+    const category = req.query.category as string;
+    const limitParam = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const daysParam = parseInt(req.query.days as string, 10) || 40; // Default: last month and 10 days (40 days)
+    const allParam = req.query.all === "true" || !!limitParam;
+
+    if (!branch) {
+      return res.status(400).json({ error: "Branch is required" });
+    }
+
+    const allInvoices = await getInstallmentInvoices();
+    let branchInvoices = allInvoices.filter(inv => inv.branch === branch);
+    if (category) {
+      branchInvoices = branchInvoices.filter(inv => inv.category === category);
+    }
+
+    if (!allParam) {
+      // Calculate cutoff date: 40 days ago
+      const now = new Date();
+      now.setDate(now.getDate() - daysParam);
+      const cutoffDate = now.toISOString().split("T")[0];
+
+      // Include:
+      // 1. Any active or queued invoice (always visible until finished)
+      // 2. Any completed invoice whose completionDate >= cutoffDate OR date >= cutoffDate
+      branchInvoices = branchInvoices.filter(inv => {
+        if (inv.status !== "completed") return true;
+        if (inv.completedDate && inv.completedDate >= cutoffDate) return true;
+        if (inv.date && inv.date >= cutoffDate) return true;
+        return false;
+      });
+    }
+
+    // Sort newest first
+    branchInvoices.sort((a, b) => b.date.localeCompare(a.date) || (b.enteredAt || "").localeCompare(a.enteredAt || ""));
+
+    if (limitParam && limitParam > 0) {
+      branchInvoices = branchInvoices.slice(0, limitParam);
+    }
+
+    res.json(branchInvoices);
+  });
+
+  app.post("/api/installment-invoices", async (req, res) => {
+    const { category, branch, date, originalAmount, enteredBy, notes } = req.body;
+    if (!category || !branch || !date || !originalAmount) {
+      return res.status(400).json({ error: "Missing required invoice fields" });
+    }
+
+    const id = `inv-${category}-${branch}-${date}-${Date.now()}`;
+    const newInvoice: InstallmentInvoice = {
+      id,
+      category,
+      branch,
+      date,
+      enteredAt: new Date().toISOString(),
+      enteredBy: enteredBy || "محاسب ثان",
+      originalAmount: Number(originalAmount),
+      paidAmount: 0,
+      remainingAmount: Number(originalAmount),
+      status: "queued",
+      notes: notes || ""
+    };
+
+    await saveInstallmentInvoices([newInvoice]);
+    await recalculateCarryOvers(branch);
+
+    const updated = (await getInstallmentInvoices()).find(i => i.id === id);
+    res.json({ success: true, invoice: updated || newInvoice });
+  });
+
+  app.delete("/api/installment-invoices/:id", async (req, res) => {
+    const id = req.params.id;
+    const allInvs = await getInstallmentInvoices();
+    const target = allInvs.find(i => i.id === id);
+    if (target) {
+      await deleteInstallmentInvoice(id);
+      await recalculateCarryOvers(target.branch);
+    }
     res.json({ success: true });
   });
 

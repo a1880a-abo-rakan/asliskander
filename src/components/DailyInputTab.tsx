@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Settings, DailyEntry, ExtraPurchase, OtherExpense } from "../types";
 import ReorderTimerBanner from "./ReorderTimerBanner";
+import CategoryInstallmentInvoicesDropdown from "./CategoryInstallmentInvoicesDropdown";
 import { 
   Building, Calendar, DollarSign, CreditCard, ChevronRight, AlertCircle, 
   Trash, Save, Info, Plus, FileText, ChevronLeft, RefreshCw, TrendingDown,
@@ -1544,38 +1545,45 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
               {(() => {
                 const hasItem = carryovers.some(c => c.key === "pepsi");
-                if (!hasItem) {
-                  return (
-                    <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100">
-                      🟢 الرصيد مصفّر (مسموح فاتورة جديدة فقط)
-                    </div>
-                  );
-                }
                 return (
-                  <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPepsiType('payment');
-                        const pItem = carryovers.find(c => c.key === "pepsi");
-                        if (pItem) {
-                          setPepsiPaid(Math.min(pItem.carry, pItem.cap));
-                        }
-                      }}
-                      className={`py-1 rounded-md transition-all ${pepsiType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🟢 دفع قسط مالي
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPepsiType('invoice');
-                        setPepsiPaid("");
-                      }}
-                      className={`py-1 rounded-md transition-all ${pepsiType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🔵 فاتورة جديدة
-                    </button>
+                  <div className="flex items-center gap-1.5">
+                    {!hasItem ? (
+                      <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100 flex-1">
+                        🟢 الرصيد مصفّر (فاتورة جديدة)
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold flex-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPepsiType('payment');
+                            const pItem = carryovers.find(c => c.key === "pepsi");
+                            if (pItem) {
+                              setPepsiPaid(Math.min(pItem.carry, pItem.cap));
+                            }
+                          }}
+                          className={`py-1 rounded-md transition-all ${pepsiType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🟢 دفع قسط مالي
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPepsiType('invoice');
+                            setPepsiPaid("");
+                          }}
+                          className={`py-1 rounded-md transition-all ${pepsiType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🔵 فاتورة جديدة
+                        </button>
+                      </div>
+                    )}
+                    <CategoryInstallmentInvoicesDropdown
+                      branch={branch}
+                      category="pepsi"
+                      categoryName="بيبسي ومشروبات"
+                      userRole={userRole}
+                    />
                   </div>
                 );
               })()}
@@ -1682,38 +1690,45 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
               {(() => {
                 const hasItem = carryovers.some(c => c.key === "plastic");
-                if (!hasItem) {
-                  return (
-                    <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100">
-                      🟢 الرصيد مصفّر (مسموح فاتورة جديدة فقط)
-                    </div>
-                  );
-                }
                 return (
-                  <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPlasticType('payment');
-                        const pItem = carryovers.find(c => c.key === "plastic");
-                        if (pItem) {
-                          setPlasticPaid(Math.min(pItem.carry, pItem.cap));
-                        }
-                      }}
-                      className={`py-1 rounded-md transition-all ${plasticType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🟢 دفع قسط مالي
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPlasticType('invoice');
-                        setPlasticPaid("");
-                      }}
-                      className={`py-1 rounded-md transition-all ${plasticType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🔵 فاتورة جديدة
-                    </button>
+                  <div className="flex items-center gap-1.5">
+                    {!hasItem ? (
+                      <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100 flex-1">
+                        🟢 الرصيد مصفّر (فاتورة جديدة)
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold flex-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlasticType('payment');
+                            const pItem = carryovers.find(c => c.key === "plastic");
+                            if (pItem) {
+                              setPlasticPaid(Math.min(pItem.carry, pItem.cap));
+                            }
+                          }}
+                          className={`py-1 rounded-md transition-all ${plasticType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🟢 دفع قسط مالي
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlasticType('invoice');
+                            setPlasticPaid("");
+                          }}
+                          className={`py-1 rounded-md transition-all ${plasticType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🔵 فاتورة جديدة
+                        </button>
+                      </div>
+                    )}
+                    <CategoryInstallmentInvoicesDropdown
+                      branch={branch}
+                      category="plastic"
+                      categoryName="صقر للتغليف"
+                      userRole={userRole}
+                    />
                   </div>
                 );
               })()}
@@ -1842,38 +1857,45 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
               {(() => {
                 const hasItem = carryovers.some(c => c.key === "sauces");
-                if (!hasItem) {
-                  return (
-                    <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100">
-                      🟢 الرصيد مصفّر (مسموح فاتورة جديدة فقط)
-                    </div>
-                  );
-                }
                 return (
-                  <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSaucesType('payment');
-                        const pItem = carryovers.find(c => c.key === "sauces");
-                        if (pItem) {
-                          setSaucesPaid(Math.min(pItem.carry, pItem.cap));
-                        }
-                      }}
-                      className={`py-1 rounded-md transition-all ${saucesType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🟢 دفع قسط مالي
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSaucesType('invoice');
-                        setSaucesPaid("");
-                      }}
-                      className={`py-1 rounded-md transition-all ${saucesType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🔵 فاتورة جديدة
-                    </button>
+                  <div className="flex items-center gap-1.5">
+                    {!hasItem ? (
+                      <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100 flex-1">
+                        🟢 الرصيد مصفّر (فاتورة جديدة)
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold flex-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaucesType('payment');
+                            const pItem = carryovers.find(c => c.key === "sauces");
+                            if (pItem) {
+                              setSaucesPaid(Math.min(pItem.carry, pItem.cap));
+                            }
+                          }}
+                          className={`py-1 rounded-md transition-all ${saucesType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🟢 دفع قسط مالي
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaucesType('invoice');
+                            setSaucesPaid("");
+                          }}
+                          className={`py-1 rounded-md transition-all ${saucesType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🔵 فاتورة جديدة
+                        </button>
+                      </div>
+                    )}
+                    <CategoryInstallmentInvoicesDropdown
+                      branch={branch}
+                      category="sauces"
+                      categoryName="الصلصات والمواد الأولية"
+                      userRole={userRole}
+                    />
                   </div>
                 );
               })()}
@@ -2002,38 +2024,45 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
               {(() => {
                 const hasItem = carryovers.some(c => c.key === "diesel");
-                if (!hasItem) {
-                  return (
-                    <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100">
-                      🟢 الرصيد مصفّر (مسموح فاتورة جديدة فقط)
-                    </div>
-                  );
-                }
                 return (
-                  <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDieselType('payment');
-                        const pItem = carryovers.find(c => c.key === "diesel");
-                        if (pItem) {
-                          setDieselPaid(Math.min(pItem.carry, pItem.cap));
-                        }
-                      }}
-                      className={`py-1 rounded-md transition-all ${dieselType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🟢 دفع قسط مالي
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDieselType('invoice');
-                        setDieselPaid("");
-                      }}
-                      className={`py-1 rounded-md transition-all ${dieselType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                    >
-                      🔵 فاتورة جديدة
-                    </button>
+                  <div className="flex items-center gap-1.5">
+                    {!hasItem ? (
+                      <div className="bg-emerald-50/70 text-emerald-800 p-1.5 rounded-lg text-center font-bold text-[10px] border border-emerald-100 flex-1">
+                        🟢 الرصيد مصفّر (فاتورة جديدة)
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-100 rounded-lg text-[10px] font-bold flex-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDieselType('payment');
+                            const pItem = carryovers.find(c => c.key === "diesel");
+                            if (pItem) {
+                              setDieselPaid(Math.min(pItem.carry, pItem.cap));
+                            }
+                          }}
+                          className={`py-1 rounded-md transition-all ${dieselType === 'payment' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🟢 دفع قسط مالي
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDieselType('invoice');
+                            setDieselPaid("");
+                          }}
+                          className={`py-1 rounded-md transition-all ${dieselType === 'invoice' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🔵 فاتورة جديدة
+                        </button>
+                      </div>
+                    )}
+                    <CategoryInstallmentInvoicesDropdown
+                      branch={branch}
+                      category="diesel"
+                      categoryName="الديزل"
+                      userRole={userRole}
+                    />
                   </div>
                 );
               })()}
