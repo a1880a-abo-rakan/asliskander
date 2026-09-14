@@ -282,6 +282,26 @@ const getDatesInRange = (startStr: string, endStr: string): string[] => {
   return dates;
 };
 
+// Safely normalize invoice items: item name belongs in 'name', and 'category' remains empty unless explicitly provided
+const normalizeInvoiceItems = (items?: any[]): TaxInvoiceItem[] => {
+  if (!Array.isArray(items)) return [];
+  return items.map((it) => {
+    let name = String(it.name || it.product_name || "").trim();
+    let category = String(it.category || "").trim();
+    if (!name && category) {
+      name = category;
+      category = "";
+    }
+    return {
+      ...it,
+      name,
+      category,
+      qty: it.qty !== undefined ? it.qty : "1 حبة",
+      price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
+    };
+  });
+};
+
 // Module-level caches for instant UI switching (Stale-While-Revalidate)
 let cachedPendingInvoices: TaxInvoice[] = [];
 let cachedCarryovers: any[] = [];
@@ -549,7 +569,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                 originalObjectUrl: URL.createObjectURL(file),
                 fileType: file.type,
                 isRetrying: false,
-                items: r.items || []
+                items: normalizeInvoiceItems(r.items)
               };
               setParsedInvoices((prev) => [...prev, parsed]);
               if (r.success !== false) {
@@ -645,7 +665,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             amount: r.amount === 0 ? "" : r.amount,
             success: r.success !== false,
             error: r.error,
-            items: r.items || [],
+            items: normalizeInvoiceItems(r.items),
             isRetrying: false
           };
           setParsedInvoices(fresh);
@@ -941,8 +961,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const res = await fetch("/api/tax-invoices?status=pending&fresh=true");
       if (res.ok) {
         const pending: TaxInvoice[] = await res.json();
-        cachedPendingInvoices = pending;
-        setPendingInvoices(pending);
+        const normalized = pending.map(inv => ({
+          ...inv,
+          items: normalizeInvoiceItems(inv.items)
+        }));
+        cachedPendingInvoices = normalized;
+        setPendingInvoices(normalized);
       }
     } catch (err) {
       console.error("Error loading pending invoices:", err);
@@ -950,13 +974,20 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const openInvoicePreview = async (inv: TaxInvoice) => {
-    setPreviewInvoice(inv);
+    const normalizedInv = {
+      ...inv,
+      items: normalizeInvoiceItems(inv.items)
+    };
+    setPreviewInvoice(normalizedInv);
     if (!inv.rawImage) {
       try {
         const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`);
         if (res.ok) {
           const full = await res.json();
-          setPreviewInvoice((prev) => (prev?.id === inv.id ? full : prev));
+          setPreviewInvoice((prev) => (prev?.id === inv.id ? {
+            ...full,
+            items: normalizeInvoiceItems(full.items)
+          } : prev));
         }
       } catch (err) {
         console.error("Error fetching full invoice preview document:", err);
@@ -976,12 +1007,17 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     setInvoices((prev) => {
       const exists = prev.some((i) => i.id === inv.id);
       let updatedList;
+      const normalizedInv = {
+        ...inv,
+        items: normalizeInvoiceItems(inv.items),
+        status: "approved" as const
+      };
       if (exists) {
         updatedList = prev.map((i) =>
-          i.id === inv.id ? { ...inv, status: "approved" as const } : i
+          i.id === inv.id ? normalizedInv : i
         );
       } else {
-        updatedList = [...prev, { ...inv, status: "approved" as const }];
+        updatedList = [...prev, normalizedInv];
       }
       cachedInvoices = updatedList;
       return updatedList;
@@ -997,6 +1033,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     try {
       const updated = {
         ...inv,
+        items: normalizeInvoiceItems(inv.items),
         status: "approved" as const
       };
       const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`, {
@@ -1079,8 +1116,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         fetch(url)
           .then(async (resInvs) => {
             const invData = resInvs.ok ? await resInvs.json() : [];
-            cachedInvoices = invData;
-            setInvoices(invData);
+            const normalized = (Array.isArray(invData) ? invData : []).map((inv: any) => ({
+              ...inv,
+              items: normalizeInvoiceItems(inv.items)
+            }));
+            cachedInvoices = normalized;
+            setInvoices(normalized);
           })
           .catch((err) => console.error("Error loading tax invoices:", err))
       );
@@ -2165,13 +2206,18 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               <div className="flex-1 min-w-0">
                                 <input
                                   type="text"
-                                  value={item.name}
+                                  value={item.name || (item as any).product_name || (!item.name && item.category ? item.category : "")}
                                   placeholder="المادة (مثال: طماطم)"
                                   title="اسم المادة/السلعة لنظام التتبع"
                                   onChange={(e) => {
                                     const updated = [...parsedInvoices];
                                     if (updated[idx].items) {
+                                      const currentCat = updated[idx].items[itemIdx].category;
+                                      const hadNoName = !updated[idx].items[itemIdx].name;
                                       updated[idx].items[itemIdx].name = e.target.value;
+                                      if (hadNoName && currentCat) {
+                                        updated[idx].items[itemIdx].category = "";
+                                      }
                                       setParsedInvoices(updated);
                                     }
                                   }}
@@ -2183,12 +2229,15 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               <div className="w-[100px]">
                                 <input
                                   type="text"
-                                  value={item.category || ""}
+                                  value={item.name ? (item.category || "") : ""}
                                   placeholder="نوع السلعة"
                                   title="نوع السلعة (مثال: خضار، بيبسي، غاز...)"
                                   onChange={(e) => {
                                     const updated = [...parsedInvoices];
                                     if (updated[idx].items) {
+                                      if (!updated[idx].items[itemIdx].name && updated[idx].items[itemIdx].category) {
+                                        updated[idx].items[itemIdx].name = updated[idx].items[itemIdx].category;
+                                      }
                                       updated[idx].items[itemIdx].category = e.target.value;
                                       setParsedInvoices(updated);
                                     }
@@ -2522,13 +2571,18 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               {/* Item Name */}
                               <input
                                 type="text"
-                                value={item.name}
+                                value={item.name || (item as any).product_name || (!item.name && item.category ? item.category : "")}
                                 placeholder="اسم السلعة"
                                 title="اسم المادة/السلعة للتتبع"
                                 onChange={(e) => {
                                   const updated = [...rows];
                                   if (updated[index].items) {
+                                    const currentCat = updated[index].items[itemIdx].category;
+                                    const hadNoName = !updated[index].items[itemIdx].name;
                                     updated[index].items[itemIdx].name = e.target.value;
+                                    if (hadNoName && currentCat) {
+                                      updated[index].items[itemIdx].category = "";
+                                    }
                                     setRows(updated);
                                   }
                                 }}
@@ -2554,12 +2608,15 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               {/* Category (نوع السلعة) */}
                               <input
                                 type="text"
-                                value={item.category || ""}
+                                value={item.name ? (item.category || "") : ""}
                                 placeholder="نوع السلعة"
                                 title="تصنيف السلعة (خضار، بيبسي، ديزل...)"
                                 onChange={(e) => {
                                   const updated = [...rows];
                                   if (updated[index].items) {
+                                    if (!updated[index].items[itemIdx].name && updated[index].items[itemIdx].category) {
+                                      updated[index].items[itemIdx].name = updated[index].items[itemIdx].category;
+                                    }
                                     updated[index].items[itemIdx].category = e.target.value;
                                     setRows(updated);
                                   }
@@ -4415,12 +4472,17 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 <label className="text-[10px] font-bold text-slate-700 block">اسم المادة / السلعة:</label>
                                 <input
                                   type="text"
-                                  value={item.name}
+                                  value={item.name || (item as any).product_name || (!item.name && item.category ? item.category : "")}
                                   placeholder="مثل: خضار، لحوم، غاز..."
                                   onChange={(e) => {
                                     const updated = [...parsedInvoices];
                                     if (updated[pinvIdx].items) {
+                                      const currentCat = updated[pinvIdx].items[itemIdx].category;
+                                      const hadNoName = !updated[pinvIdx].items[itemIdx].name;
                                       updated[pinvIdx].items[itemIdx].name = e.target.value;
+                                      if (hadNoName && currentCat) {
+                                        updated[pinvIdx].items[itemIdx].category = "";
+                                      }
                                       setParsedInvoices(updated);
                                     }
                                   }}
@@ -4433,11 +4495,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 <label className="text-[10px] font-bold text-purple-700 block">تصنيف السلعة للفرع:</label>
                                 <input
                                   type="text"
-                                  value={item.category || ""}
+                                  value={item.name ? (item.category || "") : ""}
                                   placeholder="تصنيف المادة"
                                   onChange={(e) => {
                                     const updated = [...parsedInvoices];
                                     if (updated[pinvIdx].items) {
+                                      if (!updated[pinvIdx].items[itemIdx].name && updated[pinvIdx].items[itemIdx].category) {
+                                        updated[pinvIdx].items[itemIdx].name = updated[pinvIdx].items[itemIdx].category;
+                                      }
                                       updated[pinvIdx].items[itemIdx].category = e.target.value;
                                       setParsedInvoices(updated);
                                     }
@@ -4859,11 +4924,17 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               <label className="text-[10px] font-bold text-slate-700 block">اسم المادة / السلعة:</label>
                               <input
                                 type="text"
-                                value={item.name || (item as any).product_name || ""}
+                                value={item.name || (item as any).product_name || (!item.name && item.category ? item.category : "")}
                                 placeholder="مثل: خضار، لحوم، غاز..."
                                 onChange={(e) => {
                                   const updatedItems = [...(previewInvoice.items || [])];
-                                  updatedItems[itemIdx] = { ...updatedItems[itemIdx], name: e.target.value };
+                                  const currentCat = updatedItems[itemIdx]?.category;
+                                  const hadNoName = !updatedItems[itemIdx]?.name;
+                                  updatedItems[itemIdx] = { 
+                                    ...updatedItems[itemIdx], 
+                                    name: e.target.value,
+                                    category: (hadNoName && currentCat) ? "" : (updatedItems[itemIdx].category || "")
+                                  };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
                                 className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-950 font-bold placeholder-slate-400 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-500"
@@ -4875,11 +4946,19 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               <label className="text-[10px] font-bold text-purple-700 block">تصنيف السلعة للفرع:</label>
                               <input
                                 type="text"
-                                value={item.category || ""}
+                                value={item.name ? (item.category || "") : ""}
                                 placeholder="تصنيف المادة"
                                 onChange={(e) => {
                                   const updatedItems = [...(previewInvoice.items || [])];
-                                  updatedItems[itemIdx] = { ...updatedItems[itemIdx], category: e.target.value };
+                                  let currentName = updatedItems[itemIdx]?.name;
+                                  if (!currentName && updatedItems[itemIdx]?.category) {
+                                    currentName = updatedItems[itemIdx].category;
+                                  }
+                                  updatedItems[itemIdx] = { 
+                                    ...updatedItems[itemIdx], 
+                                    name: currentName || "",
+                                    category: e.target.value 
+                                  };
                                   setPreviewInvoice({ ...previewInvoice, items: updatedItems });
                                 }}
                                 className="w-full px-2.5 py-1.5 bg-white border border-purple-200 focus:border-purple-600 rounded-lg text-purple-900 font-bold focus:outline-none placeholder-purple-300"

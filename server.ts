@@ -816,6 +816,7 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
   try {
     const snap = await getDocs(collection(db, "tax_invoices"));
     const list: TaxInvoice[] = [];
+    const itemsToPersist: TaxInvoice[] = [];
     taxInvoicesCache.clear();
     snap.forEach((d) => {
       const data = d.data() as TaxInvoice;
@@ -823,10 +824,34 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
         if (!data.id) {
           data.id = d.id;
         }
+        // Normalize items: If product name was placed in category while name was empty, swap them
+        if (Array.isArray(data.items)) {
+          let wasModified = false;
+          data.items = data.items.map((it: any) => {
+            let itemName = String(it.name || it.product_name || "").trim();
+            let itemCat = String(it.category || "").trim();
+            if (!itemName && itemCat) {
+              wasModified = true;
+              itemName = itemCat;
+              itemCat = "";
+            }
+            return {
+              ...it,
+              name: itemName,
+              category: itemCat
+            };
+          });
+          if (wasModified) {
+            itemsToPersist.push(data);
+          }
+        }
         list.push(data);
         taxInvoicesCache.set(data.id, cleanObject(data));
       }
     });
+    if (itemsToPersist.length > 0) {
+      saveTaxInvoices(itemsToPersist).catch(e => console.error("Error auto-fixing invoice item categories:", e));
+    }
     taxInvoicesLoaded = true;
     taxInvoicesLastFetch = Date.now();
     return list;
@@ -2849,6 +2874,20 @@ async function startServer() {
     for (const data of inputs) {
       if (!data.date || !data.amount) continue;
 
+      const invoiceItems = Array.isArray(data.items) ? data.items.map((it: any) => {
+        let name = String(it.name || it.product_name || "").trim();
+        let category = String(it.category || "").trim();
+        if (!name && category) {
+          name = category;
+          category = "";
+        }
+        return {
+          ...it,
+          name,
+          category
+        };
+      }) : [];
+
       const invoice: TaxInvoice = {
         id: `tax-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         date: data.date,
@@ -2857,7 +2896,7 @@ async function startServer() {
         invoice_no: data.invoice_no || "",
         invoice_date: data.invoice_date || "",
         amount: data.amount,
-        items: Array.isArray(data.items) ? data.items : [],
+        items: invoiceItems,
         createdBy: data.createdBy || "",
         status: data.status || "approved",
         rawImage: data.rawImage || "",
@@ -2930,6 +2969,21 @@ async function startServer() {
       const rawImg = data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || "");
       const fileTp = data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || "");
 
+      const rawItems = Array.isArray(data.items) ? data.items : (existing?.items || []);
+      const normalizedItems = rawItems.map((it: any) => {
+        let name = String(it.name || it.product_name || "").trim();
+        let category = String(it.category || "").trim();
+        if (!name && category) {
+          name = category;
+          category = "";
+        }
+        return {
+          ...it,
+          name,
+          category
+        };
+      });
+
       const updatedInvoice: TaxInvoice = {
         id,
         date: data.date,
@@ -2938,7 +2992,7 @@ async function startServer() {
         invoice_no: data.invoice_no !== undefined ? data.invoice_no : (existing?.invoice_no || ""),
         invoice_date: data.invoice_date || existing?.invoice_date || "",
         amount: parseFloat(data.amount),
-        items: Array.isArray(data.items) ? data.items : (existing?.items || []),
+        items: normalizedItems,
         createdBy: data.createdBy || existing?.createdBy || "",
         status: data.status || "approved",
         rawImage: rawImg,
@@ -3010,7 +3064,10 @@ async function startServer() {
             "   - Format strictly as YYYY-MM-DD in Gregorian calendar.\n" +
             "   - If only a Hijri date is printed (e.g., 1445 or 1446 H), accurately convert it to its equivalent Gregorian YYYY-MM-DD date.\n\n" +
             "5. LINE ITEMS ('items'):\n" +
-            "   - Extract purchased item rows with 'name' (Arabic item title), 'qty' (e.g. '5 كجم', '2 كرتون', '1 حبة'), 'price_with_tax' (the price inclusive of tax), and 'category' (e.g. خضار, غاز, ديزل, بيبسي, لحوم, دواجن, منظفات, مخبوزات, مستلزمات).\n" +
+            "   - Extract purchased item rows with 'name' (MUST contain the exact Arabic title/name of the purchased item or product, e.g. 'شاورما ساديا', 'بطاطس وفره', 'دجاج', 'طماطم', 'زيت'). The item name MUST ALWAYS be placed in 'name'!\n" +
+            "   - 'category': The category should be left empty (\"\") by default. Never put the item name in 'category'!\n" +
+            "   - 'qty': e.g. '5 كجم', '2 كرتون', '1 حبة'.\n" +
+            "   - 'price_with_tax': The price inclusive of tax.\n" +
             "   - If individual line items cannot be determined, provide a single item with the invoice description and total amount.";
 
           const response = await generateContentWithRetry({
@@ -3058,9 +3115,9 @@ async function startServer() {
                         name: { type: Type.STRING, description: "Arabic name of the purchased item/product" },
                         qty: { type: Type.STRING, description: "Quantity or specification of the purchased item" },
                         price_with_tax: { type: Type.NUMBER, description: "Total price of this item after VAT/Tax" },
-                        category: { type: Type.STRING, description: "Arabic category/type of the item (e.g. خضار, غاز, ديزل, بيبسي, لحوم, إلخ)" }
+                        category: { type: Type.STRING, description: "Arabic category/type of the item, leave empty string by default" }
                       },
-                      required: ["name", "price_with_tax", "category"]
+                      required: ["name", "price_with_tax"]
                     },
                     description: "List of items/materials identified inside this invoice."
                   }
@@ -3125,11 +3182,20 @@ async function startServer() {
             invoice_no: invoiceNo,
             invoice_date: parsedObj.invoice_date || "",
             amount: typeof parsedObj.amount === "number" ? parsedObj.amount : (parseFloat(parsedObj.amount) || 0),
-            items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => ({
-              name: String(it.name || "").trim(),
-              qty: it.qty !== undefined ? String(it.qty).trim() : "1 حبة",
-              price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0)
-            })).filter((it: any) => it.name !== "") : [],
+            items: Array.isArray(parsedObj.items) ? parsedObj.items.map((it: any) => {
+              let itemName = String(it.name || it.product_name || "").trim();
+              let itemCat = String(it.category || "").trim();
+              if (!itemName && itemCat) {
+                itemName = itemCat;
+                itemCat = "";
+              }
+              return {
+                name: itemName,
+                qty: it.qty !== undefined ? String(it.qty).trim() : "1 حبة",
+                price_with_tax: typeof it.price_with_tax === "number" ? it.price_with_tax : (parseFloat(it.price_with_tax) || 0),
+                category: itemCat
+              };
+            }).filter((it: any) => it.name !== "") : [],
             tempId: `temp-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
           };
         } catch (err: any) {
