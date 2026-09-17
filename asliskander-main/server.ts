@@ -332,14 +332,10 @@ async function getEmployees(): Promise<Employee[]> {
     const snap = await getDocs(collection(db, "employees"));
     const list: Employee[] = [];
     snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employees", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.name || data.salary !== undefined)) {
+      const data = d.data() as Employee;
+      if (data) {
         if (!data.id) data.id = d.id;
-        list.push(data as Employee);
+        list.push(data);
       }
     });
     return list;
@@ -370,14 +366,10 @@ async function getEmployeeAdvances(): Promise<EmployeeAdvance[]> {
     const snap = await getDocs(collection(db, "employee_advances"));
     const list: EmployeeAdvance[] = [];
     snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employee_advances", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.employeeId || data.amount !== undefined)) {
+      const data = d.data() as EmployeeAdvance;
+      if (data) {
         if (!data.id) data.id = d.id;
-        list.push(data as EmployeeAdvance);
+        list.push(data);
       }
     });
     return list;
@@ -408,14 +400,10 @@ async function getEmployeeViolations(): Promise<EmployeeViolation[]> {
     const snap = await getDocs(collection(db, "employee_violations"));
     const list: EmployeeViolation[] = [];
     snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employee_violations", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.employeeId || data.employeeName || data.description)) {
+      const data = d.data() as EmployeeViolation;
+      if (data) {
         if (!data.id) data.id = d.id;
-        list.push(data as EmployeeViolation);
+        list.push(data);
       }
     });
     return list;
@@ -446,14 +434,10 @@ async function getEmployeeAttendance(): Promise<EmployeeAttendance[]> {
     const snap = await getDocs(collection(db, "employee_attendance"));
     const list: EmployeeAttendance[] = [];
     snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employee_attendance", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.employeeId || data.date || data.arrivalTime)) {
+      const data = d.data() as EmployeeAttendance;
+      if (data) {
         if (!data.id) data.id = d.id;
-        list.push(data as EmployeeAttendance);
+        list.push(data);
       }
     });
     return list;

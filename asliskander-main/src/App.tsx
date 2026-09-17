@@ -14,7 +14,6 @@ import SettingsTab from "./components/SettingsTab";
 import BakeryTab from "./components/BakeryTab";
 import DrinksTab from "./components/DrinksTab";
 import SecondAccountantTab from "./components/SecondAccountantTab";
-import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AslIskanderLogoSymbol, AslIskanderText } from "./components/AslIskanderLogo";
 
 type TabType = "input" | "purchases" | "tax" | "reports" | "employees" | "settings" | "bakery" | "drinks" | "assistant";
@@ -668,40 +667,38 @@ export default function App() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.15 }}
             >
-              <ErrorBoundary>
-                {activeTab === "input" && isTabAllowed("input") && (
-                  <DailyInputTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
-                )}
-                {activeTab === "assistant" && isTabAllowed("assistant") && (
-                  <SecondAccountantTab 
-                    onShowToast={showToast} 
-                    userRole={userRole} 
-                    userBranch={currentUser?.branch || "الكل"} 
-                    userName={currentUser?.displayName || currentUser?.username}
-                  />
-                )}
-                {activeTab === "purchases" && isTabAllowed("purchases") && (
-                  <PurchasesTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
-                )}
-                {activeTab === "tax" && isTabAllowed("tax") && (
-                  <TaxTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
-                )}
-                {activeTab === "reports" && isTabAllowed("reports") && (
-                  <ReportsTab onShowToast={showToast} userRole={userRole} />
-                )}
-                {activeTab === "employees" && isTabAllowed("employees") && (
-                  <EmployeesTab onShowToast={showToast} userRole={userRole} />
-                )}
-                {activeTab === "settings" && isTabAllowed("settings") && (
-                  <SettingsTab onShowToast={showToast} userRole={userRole} />
-                )}
-                {activeTab === "bakery" && isTabAllowed("bakery") && (
-                  <BakeryTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
-                )}
-                {activeTab === "drinks" && isTabAllowed("drinks") && (
-                  <DrinksTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
-                )}
-              </ErrorBoundary>
+              {activeTab === "input" && isTabAllowed("input") && (
+                <DailyInputTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "assistant" && isTabAllowed("assistant") && (
+                <SecondAccountantTab 
+                  onShowToast={showToast} 
+                  userRole={userRole} 
+                  userBranch={currentUser?.branch || "الكل"} 
+                  userName={currentUser?.displayName || currentUser?.username}
+                />
+              )}
+              {activeTab === "purchases" && isTabAllowed("purchases") && (
+                <PurchasesTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "tax" && isTabAllowed("tax") && (
+                <TaxTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "reports" && isTabAllowed("reports") && (
+                <ReportsTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "employees" && isTabAllowed("employees") && (
+                <EmployeesTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "settings" && isTabAllowed("settings") && (
+                <SettingsTab onShowToast={showToast} userRole={userRole} />
+              )}
+              {activeTab === "bakery" && isTabAllowed("bakery") && (
+                <BakeryTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
+              {activeTab === "drinks" && isTabAllowed("drinks") && (
+                <DrinksTab onShowToast={showToast} userRole={userRole} userBranch={currentUser?.branch || "الكل"} />
+              )}
             </motion.div>
           </AnimatePresence>
         </main>

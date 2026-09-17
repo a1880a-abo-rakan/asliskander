@@ -187,11 +187,23 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
         fetch("/api/settings")
       ]);
 
-      if (empRes.ok) setEmployees(await empRes.json());
-      if (advRes.ok) setAdvances(await advRes.json());
-      if (attRes.ok) setAttendance(await attRes.json());
+      if (empRes.ok) {
+        const rawEmps = await empRes.json();
+        setEmployees(Array.isArray(rawEmps) ? rawEmps.filter((e: any) => e && e.name && !e.test && !e.id?.startsWith("test_perm")) : []);
+      }
+      if (advRes.ok) {
+        const rawAdv = await advRes.json();
+        setAdvances(Array.isArray(rawAdv) ? rawAdv.filter((a: any) => a && (a.employeeId || a.employeeName) && !a.test && !a.id?.startsWith("test_perm")) : []);
+      }
+      if (attRes.ok) {
+        const rawAtt = await attRes.json();
+        setAttendance(Array.isArray(rawAtt) ? rawAtt.filter((at: any) => at && (at.employeeId || at.employeeName) && !at.test && !at.id?.startsWith("test_perm")) : []);
+      }
       if (configRes.ok) setDeductionConfig(await configRes.json());
-      if (violRes.ok) setViolations(await violRes.json());
+      if (violRes.ok) {
+        const rawViol = await violRes.json();
+        setViolations(Array.isArray(rawViol) ? rawViol.filter((v: any) => v && (v.employeeId || v.employeeName) && !v.test && !v.id?.startsWith("test_perm")) : []);
+      }
       if (settingsRes.ok) setSystemSettings(await settingsRes.json());
     } catch (err) {
       console.error(err);
@@ -624,46 +636,47 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
 
   // Inquiry calculations for reporting window
   const getInquiryReport = () => {
-    const reportList = employees.filter(emp => inqEmployeeId === "all" || emp.id === inqEmployeeId);
+    const reportList = (employees || []).filter(emp => emp && (inqEmployeeId === "all" || emp.id === inqEmployeeId));
     
     return reportList.map(emp => {
       // Filter attendance in period
-      const empAtt = attendance.filter(
-        x => x.employeeId === emp.id && x.date >= inqStart && x.date <= inqEnd
+      const empAtt = (attendance || []).filter(
+        x => x && x.employeeId === emp.id && (x.date || "") >= inqStart && (x.date || "") <= inqEnd
       );
       // Filter advances in period
-      const empAdv = advances.filter(
-        x => x.employeeId === emp.id && x.date >= inqStart && x.date <= inqEnd
+      const empAdv = (advances || []).filter(
+        x => x && x.employeeId === emp.id && (x.date || "") >= inqStart && (x.date || "") <= inqEnd
       );
       // Filter violations in period
-      const empViolations = violations.filter(
-        x => x.employeeId === emp.id && x.date >= inqStart && x.date <= inqEnd
+      const empViolations = (violations || []).filter(
+        x => x && x.employeeId === emp.id && (x.date || "") >= inqStart && (x.date || "") <= inqEnd
       );
 
-      const totalLatenessMins = empAtt.reduce((sum, item) => sum + item.latenessMinutes, 0);
-      const latenessDeductions = empAtt.reduce((sum, item) => sum + (item.hasExcuse ? 0 : item.deductionAmount), 0);
-      const totalViolationsDeductions = empViolations.reduce((sum, item) => sum + (item.type === "deduction" ? item.deductionAmount : 0), 0);
+      const totalLatenessMins = empAtt.reduce((sum, item) => sum + (Number(item?.latenessMinutes) || 0), 0);
+      const latenessDeductions = empAtt.reduce((sum, item) => sum + (item?.hasExcuse ? 0 : (Number(item?.deductionAmount) || 0)), 0);
+      const totalViolationsDeductions = empViolations.reduce((sum, item) => sum + (item?.type === "deduction" ? (Number(item?.deductionAmount) || 0) : 0), 0);
       
       const totalDeductions = latenessDeductions + totalViolationsDeductions;
-      const totalAdvancesAmt = empAdv.reduce((sum, item) => sum + item.amount, 0);
+      const totalAdvancesAmt = empAdv.reduce((sum, item) => sum + (Number(item?.amount) || 0), 0);
 
       // Break down categories of lateness
-      const simpleCount = empAtt.filter(x => x.latenessCategory === "simple").length;
-      const mediumCount = empAtt.filter(x => x.latenessCategory === "medium").length;
-      const largeCount = empAtt.filter(x => x.latenessCategory === "large").length;
-      const severeCount = empAtt.filter(x => x.latenessCategory === "severe").length;
+      const simpleCount = empAtt.filter(x => x?.latenessCategory === "simple").length;
+      const mediumCount = empAtt.filter(x => x?.latenessCategory === "medium").length;
+      const largeCount = empAtt.filter(x => x?.latenessCategory === "large").length;
+      const severeCount = empAtt.filter(x => x?.latenessCategory === "severe").length;
 
-      const insuranceDeduction = Number(emp.insuranceDeduction) || 0;
-      const unexcusedAbsenceDays = Number(emp.unexcusedAbsenceDays) || 0;
-      const excusedAbsenceDays = Number(emp.excusedAbsenceDays) || 0;
-      const baseSalary = Number(emp.salary) || 0;
+      const insuranceDeduction = Number(emp?.insuranceDeduction) || 0;
+      const unexcusedAbsenceDays = Number(emp?.unexcusedAbsenceDays) || 0;
+      const excusedAbsenceDays = Number(emp?.excusedAbsenceDays) || 0;
+      const baseSalary = Number(emp?.salary) || 0;
       const dailyWage = baseSalary > 0 ? baseSalary / 30 : 0;
-      const absenceDeduction = Number((dailyWage * unexcusedAbsenceDays).toFixed(2));
-      const grandTotalDeductions = Number((totalDeductions + insuranceDeduction + absenceDeduction).toFixed(2));
-      const netPayable = Number((baseSalary - grandTotalDeductions - totalAdvancesAmt).toFixed(2));
+      const absenceDeduction = Number((dailyWage * unexcusedAbsenceDays).toFixed(2)) || 0;
+      const grandTotalDeductions = Number((totalDeductions + insuranceDeduction + absenceDeduction).toFixed(2)) || 0;
+      const netPayable = Number((baseSalary - grandTotalDeductions - totalAdvancesAmt).toFixed(2)) || 0;
 
       return {
         ...emp,
+        salary: baseSalary,
         daysAttended: empAtt.length,
         totalLatenessMins,
         latenessDeductions,
@@ -952,7 +965,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                           </td>
                           <td className="py-3.5 px-2 text-slate-600">{emp.job}</td>
                           <td className="py-3.5 px-2 text-center font-mono text-slate-800 text-xs font-bold">
-                            {emp.salary.toLocaleString("ar-SA")} ر.س
+                            {Number(emp?.salary || 0).toLocaleString("ar-SA")} ر.س
                           </td>
                           <td className="py-3.5 px-2 text-center text-indigo-700 font-mono">
                             {emp.requiredArrivalTime} إلى {emp.requiredDepartureTime}
@@ -1281,7 +1294,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     </thead>
                     <tbody className="divide-y divide-slate-50 text-xs">
                       {[...attendance]
-                        .sort((a, b) => b.date.localeCompare(a.date))
+                        .sort((a, b) => (b?.date || "").localeCompare(a?.date || ""))
                         .slice(0, 15)
                         .map((log) => (
                           <tr key={log.id} className="hover:bg-slate-50 font-medium">
@@ -1455,13 +1468,13 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     </thead>
                     <tbody className="divide-y divide-slate-50 text-xs">
                       {[...advances]
-                        .sort((a, b) => b.date.localeCompare(a.date))
+                        .sort((a, b) => (b?.date || "").localeCompare(a?.date || ""))
                         .map((adv) => (
                           <tr key={adv.id} className="hover:bg-slate-50 font-medium">
                             <td className="py-3.5 px-2 font-mono text-slate-600">{adv.date}</td>
                             <td className="py-3.5 px-2 text-slate-900 font-bold">{adv.employeeName}</td>
                             <td className="py-3.5 px-2 text-center font-bold text-rose-700 font-mono text-xs">
-                              {adv.amount.toLocaleString("ar-SA")} ر.س
+                              {Number(adv?.amount || 0).toLocaleString("ar-SA")} ر.س
                             </td>
                             <td className="py-3.5 px-2 text-slate-500 font-semibold">{adv.notes || "مسجلة كخصم تالي"}</td>
                             <td className="py-3.5 px-2 text-center">
@@ -1560,10 +1573,10 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                 {/* Visual badges counters values */}
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1 rounded-full font-bold">
-                    إجمالي سلفيات الفترة: {reportData.reduce((s, x) => s + x.totalAdvancesAmt, 0).toLocaleString()} ر.س
+                    إجمالي سلفيات الفترة: {reportData.reduce((s, x) => s + (Number(x?.totalAdvancesAmt) || 0), 0).toLocaleString()} ر.س
                   </span>
                   <span className="text-[10px] bg-rose-50 border border-rose-200 text-rose-800 px-3 py-1 rounded-full font-bold">
-                    إجمالي خصومات التأخير: {reportData.reduce((s, x) => s + x.totalDeductions, 0).toLocaleString()} ر.س
+                    إجمالي خصومات التأخير: {reportData.reduce((s, x) => s + (Number(x?.totalDeductions) || 0), 0).toLocaleString()} ر.س
                   </span>
 
                   {userRole === "مدير" && employees.length > 0 && (
@@ -1648,7 +1661,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                                </div>
                             </td>
                             <td className="py-3.5 px-2 font-mono text-slate-800 font-bold">
-                              {emp.salary.toLocaleString("ar-SA")} ر.س
+                              {Number(emp?.salary || 0).toLocaleString("ar-SA")} ر.س
                             </td>
                             <td className="py-3.5 px-2 text-center text-slate-600 font-mono font-bold">
                               {emp.daysAttended} أيام
@@ -1683,16 +1696,16 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                               )}
                             </td>
                             <td className="py-3.5 px-2 text-center font-bold text-rose-700 font-mono">
-                              {emp.latenessDeductions > 0 ? `${emp.latenessDeductions.toLocaleString()} ر.س` : "0"}
+                              {(Number(emp?.latenessDeductions) || 0) > 0 ? `${Number(emp?.latenessDeductions || 0).toLocaleString()} ر.س` : "0"}
                             </td>
                             <td className="py-3.5 px-2 text-center font-extrabold text-rose-955 bg-rose-50/20 font-mono">
-                              {emp.totalViolationsDeductions > 0 ? `${emp.totalViolationsDeductions.toLocaleString()} ر.س` : "0"}
+                              {(Number(emp?.totalViolationsDeductions) || 0) > 0 ? `${Number(emp?.totalViolationsDeductions || 0).toLocaleString()} ر.س` : "0"}
                             </td>
                             <td className="py-3.5 px-2 text-center font-bold text-rose-800 font-mono">
-                              {emp.totalAdvancesAmt > 0 ? `${emp.totalAdvancesAmt.toLocaleString()} ر.س` : "0"}
+                              {(Number(emp?.totalAdvancesAmt) || 0) > 0 ? `${Number(emp?.totalAdvancesAmt || 0).toLocaleString()} ر.س` : "0"}
                             </td>
                             <td className="py-3.5 px-2 text-center font-bold text-indigo-700 font-mono text-xs bg-indigo-50/40">
-                              {emp.netPayable.toLocaleString()} ر.س
+                              {Number(emp?.netPayable || 0).toLocaleString()} ر.س
                             </td>
                             {userRole === "مدير" && (
                               <td className="py-3.5 px-2 text-center">
@@ -1773,7 +1786,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                                   <div className="bg-white p-3 rounded-xl border border-slate-200/60 shadow-xs space-y-2">
                                     <h5 className="font-extrabold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
                                       <Coins className="w-3.5 h-3.5 text-emerald-600" />
-                                      <span>السلفيات المستلمة (إجمالي: {emp.totalAdvancesAmt.toLocaleString()} ر.س)</span>
+                                      <span>السلفيات المستلمة (إجمالي: {Number(emp?.totalAdvancesAmt || 0).toLocaleString()} ر.س)</span>
                                     </h5>
                                     {advances.filter(ad => ad.employeeId === emp.id && ad.date >= inqStart && ad.date <= inqEnd).length === 0 ? (
                                       <p className="text-[11px] text-slate-400 py-2 text-center font-sans">لا توجد سلفيات مسجلة بالفترة</p>
@@ -1788,7 +1801,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                                                 <p className="text-[9px] text-slate-400 font-sans mt-0.5 truncate max-w-[130px]" title={ad.notes}>{ad.notes || "طلب سلفة"}</p>
                                               </div>
                                               <div className="text-left font-bold text-rose-850 font-mono">
-                                                {ad.amount.toLocaleString()} ر.س
+                                                {Number(ad?.amount || 0).toLocaleString()} ر.س
                                               </div>
                                             </div>
                                           ))}
@@ -2440,7 +2453,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                         </div>
                         <div>
                           <span className="block text-[10px] text-slate-600 font-bold">الراتب الأساسي:</span>
-                          <strong className="text-slate-950 font-mono font-black text-xs sm:text-sm">{item.employee.salary.toLocaleString("ar-SA")} ر.س</strong>
+                          <strong className="text-slate-950 font-mono font-black text-xs sm:text-sm">{Number(item.employee?.salary || 0).toLocaleString("ar-SA")} ر.س</strong>
                         </div>
                         <div>
                           <span className="block text-[10px] text-slate-600 font-bold">رقم الهاتف / الدوام:</span>
@@ -2481,7 +2494,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                                   {att.latenessMinutes === 0 ? "سليم" : att.oralWarning ? "🗣️ إنذار شفهي" : `خصم (${att.latenessCategory === "simple" ? "بسيط" : att.latenessCategory === "medium" ? "متوسط" : att.latenessCategory === "large" ? "كبير" : "شديد"})`}
                                 </td>
                                 <td className="p-1.5 border border-slate-300 text-center font-black text-rose-700 font-mono">
-                                  {att.deductionAmount > 0 ? `${att.deductionAmount.toLocaleString("ar-SA")} ر.س` : "0"}
+                                  {(Number(att?.deductionAmount) || 0) > 0 ? `${Number(att?.deductionAmount || 0).toLocaleString("ar-SA")} ر.س` : "0"}
                                 </td>
                                 <td className="p-1.5 border border-slate-300 text-slate-800 font-medium">{att.notes || (att.hasExcuse ? "بعذر مقبول" : "بدون")}</td>
                               </tr>
@@ -2541,7 +2554,7 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                                 <tr key={advIdx}>
                                   <td className="p-1.5 border border-slate-300 font-mono font-bold">{adv.date}</td>
                                   <td className="p-1.5 border border-slate-300 font-bold break-words whitespace-normal">{adv.notes || "سلفة"}</td>
-                                  <td className="p-1.5 border border-slate-300 text-center font-black text-rose-800 font-mono">{adv.amount.toLocaleString("ar-SA")} ر.س</td>
+                                  <td className="p-1.5 border border-slate-300 text-center font-black text-rose-800 font-mono">{Number(adv?.amount || 0).toLocaleString("ar-SA")} ر.س</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -2554,30 +2567,30 @@ export default function EmployeesTab({ onShowToast, userRole }: EmployeesTabProp
                     <div className="bg-indigo-50/90 p-3 rounded-xl border border-indigo-300 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs items-center">
                       <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
                         <span className="block text-[10px] text-slate-600 font-bold">الراتب الأساسي</span>
-                        <span className="font-black font-mono text-slate-900 text-xs sm:text-sm">{item.employee.salary.toLocaleString("ar-SA")} ر.س</span>
+                        <span className="font-black font-mono text-slate-900 text-xs sm:text-sm">{Number(item.employee?.salary || 0).toLocaleString("ar-SA")} ر.س</span>
                       </div>
                       <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
                         <span className="block text-[10px] text-rose-700 font-bold">خصوم التأخيرات</span>
-                        <span className="font-black font-mono text-rose-700 text-xs sm:text-sm">-{totalLatenessDeduction.toLocaleString("ar-SA")} ر.س</span>
+                        <span className="font-black font-mono text-rose-700 text-xs sm:text-sm">-{Number(totalLatenessDeduction || 0).toLocaleString("ar-SA")} ر.س</span>
                       </div>
                       <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
                         <span className="block text-[10px] text-rose-700 font-bold">جزاءات المخالفات</span>
-                        <span className="font-black font-mono text-rose-700 text-xs sm:text-sm">-{totalViolationDeduction.toLocaleString("ar-SA")} ر.س</span>
+                        <span className="font-black font-mono text-rose-700 text-xs sm:text-sm">-{Number(totalViolationDeduction || 0).toLocaleString("ar-SA")} ر.س</span>
                       </div>
                       <div className="border-l border-indigo-200/80 pb-1 sm:pb-0">
                         <span className="block text-[10px] text-rose-800 font-bold">استقطاع السلف</span>
-                        <span className="font-black font-mono text-rose-800 text-xs sm:text-sm">-{totalAdvancesAmt.toLocaleString("ar-SA")} ر.س</span>
+                        <span className="font-black font-mono text-rose-800 text-xs sm:text-sm">-{Number(totalAdvancesAmt || 0).toLocaleString("ar-SA")} ر.س</span>
                       </div>
                       <div className="col-span-2 sm:col-span-1 bg-white border-2 border-indigo-700 p-2 rounded-lg shadow-xs">
                         <span className="block text-[9px] text-slate-600 font-black uppercase">الصافي المستحق للصرف</span>
-                        <span className="text-base sm:text-lg font-black font-mono text-indigo-950">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ر.س</span>
+                        <span className="text-base sm:text-lg font-black font-mono text-indigo-950">{Number(item.totals?.netPayable || 0).toLocaleString("ar-SA")} ر.س</span>
                       </div>
                     </div>
 
                     {/* Employee Acknowledgment Declaration */}
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-300 text-xs text-slate-900 font-semibold leading-relaxed">
                       <strong className="text-slate-950 font-black text-xs block mb-1">📄 إقرار واستلام الموظف:</strong>
-                      أقر أنا الموظف / <span className="font-black underline text-indigo-950">{item.employee.name}</span> بأنني اطلعت وراجعت كافة بيانات الدوام والخصوم الموضحة بهذا الكشف، وأقر باستلامي لصافي المستحق المالي المبيّن أعلاه وقدره (<span className="font-mono font-black text-slate-950">{(item.totals.netPayable || 0).toLocaleString("ar-SA")} ريال</span>) كاملاً، ولا يحق لي المطالبة بأي مبالغ إضافية عن هذه الفترة بعد التوقيع.
+                      أقر أنا الموظف / <span className="font-black underline text-indigo-950">{item.employee.name}</span> بأنني اطلعت وراجعت كافة بيانات الدوام والخصوم الموضحة بهذا الكشف، وأقر باستلامي لصافي المستحق المالي المبيّن أعلاه وقدره (<span className="font-mono font-black text-slate-950">{Number(item.totals?.netPayable || 0).toLocaleString("ar-SA")} ريال</span>) كاملاً، ولا يحق لي المطالبة بأي مبالغ إضافية عن هذه الفترة بعد التوقيع.
                     </div>
 
                     {/* Official Signatures Block (HR on Right, Recipient Employee on Left) */}

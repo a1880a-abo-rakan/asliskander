@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: asliskander
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: "--max_old_space_size=512"
