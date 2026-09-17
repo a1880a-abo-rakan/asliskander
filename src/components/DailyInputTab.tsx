@@ -5,7 +5,7 @@ import CategoryInstallmentInvoicesDropdown from "./CategoryInstallmentInvoicesDr
 import { 
   Building, Calendar, DollarSign, CreditCard, ChevronRight, AlertCircle, 
   Trash, Save, Info, Plus, FileText, ChevronLeft, RefreshCw, TrendingDown,
-  ChevronDown, ChevronUp, Check, Clock, Truck
+  ChevronDown, ChevronUp, Check, Clock, Truck, CheckCircle2, Edit3
 } from "lucide-react";
 
 interface DailyInputTabProps {
@@ -289,8 +289,11 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
   // Keep form in sync with database records of the selected date & branch
   useEffect(() => {
+    // If the user is currently actively editing the form, avoid resetting while typing
+    if (isLoadedForEdit) return;
+
     const existing = history.find(d => d.date === date && d.branch === branch);
-    if (existing && (isLoadedForEdit || existing.entered_by === "محاسب ثان" || existing.review_status === "pending_review")) {
+    if (existing) {
       setSarf(existing.sarf ?? 350);
       setCashBox(existing.cash_box || "");
       setPurGas(existing.pur_gas || "");
@@ -708,6 +711,8 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     const todayDateStr = getTodayDateStr();
     const isSameDay = date === todayDateStr;
     const existing = history.find(d => d.date === date && d.branch === branch);
+    const wasPending = existing && (existing.review_status === "pending_review" || (existing.entered_by === "محاسب ثان" && existing.review_status !== "approved"));
+    const isEditingExisting = existing && !wasPending;
 
     if (existing && !isSameDay && userRole !== "مدير") {
       onShowToast("⚠️ عذراً! يُمنع تعديل أو حفظ القيود للتواريخ السابقة لحماية سلامة السير المالي وجدولة الأقساط.");
@@ -768,34 +773,60 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
       if (res.ok) {
         const details = await res.json();
-        onShowToast(`💾 تم تخزين موازنة اليوم بنجاح لفرع ${branch}!`);
-        clearForm();
-        
-        const tomorrowStr = shiftDateStr(date, 1);
+        const updatedEntry = details.entry || { 
+          ...payload, 
+          id: `${payload.branch}-${payload.date}`, 
+          review_status: userRole === "مدير" ? "approved" : (payload.review_status || "pending_review") 
+        };
 
-        // Fetch carryover list for upcoming day to verify remaining installments
-        try {
-          const carryRes = await fetch(`/api/carryover?branch=${branch}&date=${tomorrowStr}`);
-          if (carryRes.ok) {
-            const activeCarries = await carryRes.json();
-            setCarryovers(activeCarries);
-            if (activeCarries.length > 0) {
-              setNextDayReminderModal({
-                show: true,
-                newDate: tomorrowStr,
-                carryovers: activeCarries
-              });
+        // Update history in state immediately so UI refreshes without delay
+        setHistory(prev => {
+          const idx = prev.findIndex(d => d.date === date && d.branch === branch);
+          if (idx >= 0) {
+            const nextList = [...prev];
+            nextList[idx] = updatedEntry;
+            return nextList;
+          }
+          return [updatedEntry, ...prev];
+        });
+
+        setIsLoadedForEdit(false);
+
+        if (wasPending && userRole === "مدير") {
+          onShowToast(`✅ تم اعتماد وحفظ موازنة اليوم بنجاح لفرع ${branch}!`);
+        } else if (isEditingExisting) {
+          onShowToast(`💾 تم حفظ وتحديث موازنة اليوم بنجاح لفرع ${branch}!`);
+        } else {
+          onShowToast(`💾 تم تخزين موازنة اليوم بنجاح لفرع ${branch}!`);
+        }
+
+        // Only for brand-new day entries (not reviewing or editing an existing day)
+        if (!existing) {
+          const tomorrowStr = shiftDateStr(date, 1);
+          try {
+            const carryRes = await fetch(`/api/carryover?branch=${branch}&date=${tomorrowStr}`);
+            if (carryRes.ok) {
+              const activeCarries = await carryRes.json();
+              setCarryovers(activeCarries);
+              if (activeCarries.length > 0) {
+                setNextDayReminderModal({
+                  show: true,
+                  newDate: tomorrowStr,
+                  carryovers: activeCarries
+                });
+              } else {
+                setDate(tomorrowStr);
+                onShowToast(`📅 تم الانتقال تلقائياً لتسجيل تاريخ ${tomorrowStr}`);
+              }
             } else {
               setDate(tomorrowStr);
-              onShowToast(`📅 تم الانتقال تلقائياً لتسجيل تاريخ ${tomorrowStr}`);
             }
-          } else {
+          } catch (err) {
+            console.error(err);
             setDate(tomorrowStr);
           }
-        } catch (err) {
-          console.error(err);
-          setDate(tomorrowStr);
         }
+
         loadBranchHistory();
       } else {
         onShowToast("❌ فشل تخزين موازنة الفرع");
@@ -1121,15 +1152,17 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
             const todayDateStr = getTodayDateStr();
             const isSameDay = date === todayDateStr;
             const canModify = isSameDay || userRole === "مدير";
-            const isPendingReview = existing.review_status === "pending_review" || existing.entered_by === "محاسب ثان";
+            const isPendingReview = existing.review_status === "pending_review" || (existing.entered_by === "محاسب ثان" && existing.review_status !== "approved");
+            const isApproved = existing.review_status === "approved" || (!isPendingReview && !existing.review_status);
 
+            // 1. Pending review state (Accountant submitted, manager needs to review & approve)
             if (isPendingReview && userRole === "مدير") {
               return (
                 <div className="p-4 rounded-xl border-2 border-amber-300 bg-amber-50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300 shadow-sm">
                   <div className="flex items-start gap-3">
                     <span className="text-2xl mt-0.5 animate-pulse">📥</span>
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-xs font-black text-amber-950">
                           مدخلات مستلمة من المحاسب الثاني (بانتظار المراجعة والاعتماد) لفرع {branch} بتاريخ {date}
                         </h4>
@@ -1157,39 +1190,113 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
               );
             }
 
+            // 2. Active Edit Mode (User clicked "تعديل اليومية")
+            if (canModify && isLoadedForEdit) {
+              return (
+                <div className="p-4 rounded-xl border-2 border-indigo-400 bg-indigo-50/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <Edit3 className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-xs font-black text-indigo-950">
+                          وضع تعديل قيود فرع {branch} بتاريخ {date}
+                        </h4>
+                        <span className="text-[10px] bg-indigo-200 text-indigo-900 font-black px-2.5 py-0.5 rounded-md border border-indigo-300 flex items-center gap-1">
+                          ✏️ وضع التعديل النشط
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-indigo-900 font-medium">
+                        أنت الآن في وضع التعديل. يمكنك تغيير أي من أرقام الصندوق، الشبكات، المشتريات، أو المصروفات أدناه، ثم الضغط على "حفظ التعديلات" لتحديث القيود المعتمدة.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsLoadedForEdit(false);
+                        onShowToast("تم إلغاء وضع التعديل والعودة للبيانات المحفوظة");
+                      }}
+                      className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                    >
+                      إلغاء التعديل
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveDay}
+                      disabled={loading}
+                      className="px-5 py-2.5 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-lg"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>حفظ التعديلات</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
+            // 3. Approved & Saved State (Green status with Edit button)
+            if (isApproved) {
+              return (
+                <div className="p-4 rounded-xl border-2 border-emerald-400 bg-emerald-50/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-xs font-black text-emerald-950">
+                          تم اعتماد وحفظ يومية فرع {branch} بتاريخ {date} بنجاح
+                        </h4>
+                        <span className="text-[10px] bg-emerald-200/90 text-emerald-900 font-black px-2.5 py-0.5 rounded-md border border-emerald-400 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5 text-emerald-700" />
+                          معتمد ومحفوظ
+                        </span>
+                        {existing.entered_by === "محاسب ثان" && (
+                          <span className="text-[10px] bg-white text-slate-700 font-bold px-2 py-0.5 rounded-md border border-emerald-200">
+                            مدخلات المحاسب الثاني (تمت المراجعة والاعتماد)
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-emerald-900 font-medium">
+                        تمت مراجعة واعتماد وتثبيت كافة قيود هذا اليوم بنجاح في السجلات المحاسبية. الأرقام المحفوظة معروضة في الحقول أدناه، ويمكنك النقر على "تعديل اليومية" لتحديث أي قيم.
+                      </p>
+                    </div>
+                  </div>
+                  {canModify && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsLoadedForEdit(true);
+                          onShowToast("✏️ تم تفعيل وضع التعديل، يمكنك الآن تعديل أي حقول وحفظها");
+                        }}
+                        className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-black text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-md"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                        <span>تعديل اليومية</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
             return (
               <div className={`p-4 rounded-xl border ${canModify ? (isLoadedForEdit ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200') : 'bg-slate-50 border-slate-200'} flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in duration-300`}>
                 <div className="flex items-start gap-3">
-                  <span className="text-xl mt-0.5">{canModify ? (isLoadedForEdit ? "✅" : "📌") : "🔒"}</span>
+                  <span className="text-xl mt-0.5">🔒</span>
                   <div className="space-y-1">
-                    <h4 className={`text-xs font-bold ${canModify ? (isLoadedForEdit ? 'text-emerald-950' : 'text-amber-950') : 'text-slate-800'}`}>
-                      {canModify 
-                        ? (isLoadedForEdit 
-                            ? `وضع التعديل تفاعلي لنظام فرع ${branch} بتاريخ ${date}` 
-                            : `تم تسجيل اليوم مسبقاً لفرع ${branch} بتاريخ ${date} (متاح لك التعديل بصفتك مديراً عاماً)`)
-                        : `السجل مغلق ومؤمن لفرع ${branch} بتاريخ ${date}`}
+                    <h4 className="text-xs font-bold text-slate-800">
+                      السجل مغلق ومؤمن لفرع {branch} بتاريخ {date}
                     </h4>
-                    <p className={`text-[11px] leading-relaxed ${canModify ? (isLoadedForEdit ? 'text-emerald-850' : 'text-amber-850') : 'text-slate-550'}`}>
-                      {canModify 
-                        ? (isLoadedForEdit 
-                            ? "تم تحميل الموازنة المحفوظة لليوم بالكامل في الحقول أدناه. يمكنك الآن تغيير أي قيم ثم الضغط على حفظ في الأسفل لتعديل موازنة اليوم." 
-                            : "تم تحميل وعرض قيود هذا اليوم كمرجع، وبإمكانك تعديله وحفظ التغييرات مباشرة باستخدام زر الحفظ بالأسفل.")
-                        : "حفاظاً على سلامة وموثوقية السجلات المالية وتطبيقاً للسياسة المحاسبية للمطعم، يُمنع تعديل أو حذف القيود التي تم إدخالها في الأيام السابقة. يمكنك مراجعة البيانات التاريخية في كشوف التقارير."}
+                    <p className="text-[11px] leading-relaxed text-slate-550">
+                      حفاظاً على سلامة وموثوقية السجلات المالية وتطبيقاً للسياسة المحاسبية للمطعم، يُمنع تعديل أو حذف القيود التي تم إدخالها في الأيام السابقة إلا بصلاحية المدير العام.
                     </p>
                   </div>
                 </div>
-                {canModify && !isLoadedForEdit && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsLoadedForEdit(true);
-                      onShowToast("📥 تم تحميل القيود والبيانات المسجلة للموازنة لتعديلها تفاعلياً!");
-                    }}
-                    className="px-4 py-2 bg-indigo-650 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg transition-all shadow-sm cursor-pointer whitespace-nowrap align-middle text-center"
-                  >
-                    📥 تحميل البيانات للتعديل
-                  </button>
-                )}
               </div>
             );
           }
@@ -2434,15 +2541,84 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
         {/* Submit handle */}
         <div className="flex justify-end pt-4">
-          <button
-            type="button"
-            disabled={loading}
-            onClick={handleSaveDay}
-            className="bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-sm py-3 px-8 rounded-xl shadow-lg hover:shadow-xl transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
-          >
-            <Save className="w-5 h-5" />
-            حفظ قيود اليوم وتأكيد التقسيط المحاسبي
-          </button>
+          {(() => {
+            const existing = history.find(d => d.date === date && d.branch === branch);
+            const isPendingReview = existing && (existing.review_status === "pending_review" || (existing.entered_by === "محاسب ثان" && existing.review_status !== "approved"));
+            const isApproved = existing && !isPendingReview;
+            const todayDateStr = getTodayDateStr();
+            const canModify = date === todayDateStr || userRole === "مدير";
+
+            if (isPendingReview && userRole === "مدير") {
+              return (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={handleSaveDay}
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm py-3 px-8 rounded-xl shadow-lg hover:shadow-xl transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Check className="w-5 h-5" />
+                  اعتماد وحفظ اليومية
+                </button>
+              );
+            }
+
+            if (isApproved && !isLoadedForEdit) {
+              if (canModify) {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLoadedForEdit(true);
+                      onShowToast("✏️ تم تفعيل وضع التعديل، يمكنك الآن تعديل أي حقول وحفظها");
+                    }}
+                    className="bg-white hover:bg-emerald-50 text-emerald-900 border-2 border-emerald-500 font-extrabold text-sm py-3 px-8 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-2"
+                  >
+                    <Edit3 className="w-5 h-5 text-emerald-700" />
+                    تعديل اليومية المعتمدة
+                  </button>
+                );
+              }
+              return null;
+            }
+
+            if (isApproved && isLoadedForEdit) {
+              return (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLoadedForEdit(false);
+                      onShowToast("تم إلغاء وضع التعديل");
+                    }}
+                    className="px-5 py-3 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-bold text-sm rounded-xl transition-all cursor-pointer"
+                  >
+                    إلغاء التعديل
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleSaveDay}
+                    className="bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-sm py-3 px-8 rounded-xl shadow-lg hover:shadow-xl transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <Save className="w-5 h-5" />
+                    حفظ التعديلات واعتماد اليومية
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <button
+                type="button"
+                disabled={loading}
+                onClick={handleSaveDay}
+                className="bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-sm py-3 px-8 rounded-xl shadow-lg hover:shadow-xl transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                <Save className="w-5 h-5" />
+                حفظ قيود اليوم وتأكيد التقسيط المحاسبي
+              </button>
+            );
+          })()}
         </div>
       </div>
 
@@ -2551,7 +2727,20 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                           <span className="text-slate-400 select-none cursor-not-allowed" title="تاريخ الأمس - محمي ومؤمن من التعديل للمحاسبين">🔒</span>
                         )}
                       </td>
-                      <td className="p-3 font-bold text-slate-800">{row.date}</td>
+                      <td className="p-3 font-bold text-slate-800">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{row.date}</span>
+                          {row.review_status === "approved" ? (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold border border-emerald-300">
+                              معتمد
+                            </span>
+                          ) : (row.review_status === "pending_review" || (row.entered_by === "محاسب ثان" && row.review_status !== "approved")) ? (
+                            <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold border border-amber-300">
+                              بانتظار الاعتماد
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="p-3 text-left font-bold text-emerald-700">{row.total_sales.toFixed(2)} ر</td>
                       <td className="p-3 text-left text-slate-500">{row.cash_net.toFixed(2)} ر</td>
                       <td className="p-3 text-left text-slate-500">{row.pos_net.toFixed(2)} ر</td>
