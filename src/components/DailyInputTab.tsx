@@ -703,7 +703,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   };
 
   const handleSaveDay = async () => {
-    if (!cashBox && cashBox !== 0 && userRole !== "مدير") {
+    if (!cashBox && cashBox !== 0) {
       onShowToast("⚠️ يرجى تزويد مبلغ الدرج لحساب اليوم");
       return;
     }
@@ -740,24 +740,24 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
         visa3: showDevice3 ? valVisa3 : 0,
         makhzan: valMakhzan,
         pepsi_paid: valPepsiPaid,
-        pepsi_type: pepsiType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "pepsi" && c.carry > 0) ? pepsiType : (valPepsiPaid > 0 ? 'invoice' : 'payment')),
+        pepsi_type: carryovers.some(c => c.key === "pepsi" && c.carry > 0) ? pepsiType : 'invoice',
         plastic_paid: valPlasticPaid,
-        plastic_type: plasticType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "plastic" && c.carry > 0) ? plasticType : (valPlasticPaid > 0 ? 'invoice' : 'payment')),
+        plastic_type: carryovers.some(c => c.key === "plastic" && c.carry > 0) ? plasticType : 'invoice',
         gas: valGasExp || valPurGas,
         vegetables: valVegExp || valPurVeg,
         sauces_paid: valSaucesPaid,
-        sauces_type: saucesType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "sauces" && c.carry > 0) ? saucesType : (valSaucesPaid > 0 ? 'invoice' : 'payment')),
+        sauces_type: carryovers.some(c => c.key === "sauces" && c.carry > 0) ? saucesType : 'invoice',
         bread: valBreadExp || valPurBread,
         grocery: valGroceryExp || valPurGroc,
         diesel_paid: valDieselPaid,
-        diesel_type: dieselType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "diesel" && c.carry > 0) ? dieselType : (valDieselPaid > 0 ? 'invoice' : 'payment')),
+        diesel_type: carryovers.some(c => c.key === "diesel" && c.carry > 0) ? dieselType : 'invoice',
         others: others.filter((o) => o.name && o.amt > 0),
         delivery_count: typeof deliveryCount === "number" ? deliveryCount : 0,
         delivery_rate: deliveryRate,
         fixed_deduct: valFixedDeduct,
         fixed_note: fixedNote,
         notes,
-        entered_by: userRole === "مدير" ? (existing?.entered_by && existing.entered_by !== "محاسب ثان" ? existing.entered_by : "المدير العام") : (existing?.entered_by || "محاسب"),
+        entered_by: existing?.entered_by || (userRole === "محاسب ثان" ? "محاسب ثان" : "مدير"),
         review_status: userRole === "مدير" ? "approved" : (existing?.review_status || "pending_review"),
         pepsi_cap: editingCaps.pepsi !== undefined ? editingCaps.pepsi : undefined,
         plastic_cap: editingCaps.plastic !== undefined ? editingCaps.plastic : undefined,
@@ -2850,7 +2850,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
               <div className="p-3 bg-indigo-50/50 rounded-lg text-[11px] text-slate-600 flex items-start gap-1.5 leading-relaxed">
                 <span className="text-indigo-650">💡</span>
                 <span>
-                  <strong>توضيح:</strong> هذه المبالغ تم جدولتها تلقائياً وفقاً للأسقف المالية المسجلة. عند الانتقال لليوم التالي، سيقوم النظام تلقائياً بتطبيق هذه الخصومات وتوزيعها لدقة حساب الأرباح والمبيعات اليومية.
+                  <strong>توضيح محاسبي:</strong> تم بالفعل احتساب وخصم قسط اليوم الأول من صافي أرباح موازنة اليوم الحالي لأي فاتورة مدخلة، والرصيد المتبقي المعروض أعلاه هو الرصيد المرحل الصافي الذي سيستكمل خصمه تدريجياً وفق السقف اليومي بدءاً من يوم الغد.
                 </span>
               </div>
             </div>
