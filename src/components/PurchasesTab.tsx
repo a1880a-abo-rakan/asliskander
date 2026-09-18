@@ -291,7 +291,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
   const [editingItem, setEditingItem] = useState<Purchase | null>(null);
   const [editName, setEditName] = useState("");
   const [editDate, setEditDate] = useState("");
-  const [editBranch, setEditBranch] = useState<"القادسية" | "المروج">("القادسية");
+  const [editBranch, setEditBranch] = useState<"القادسية" | "المروج" | "الكل">("القادسية");
   const [editPrice, setEditPrice] = useState("");
   const [editQty, setEditQty] = useState("");
   const [editStatus, setEditStatus] = useState<"active" | "depleted">("active");
@@ -362,7 +362,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
     setEditDate(item.date);
     setEditBranch(item.branch);
     setEditPrice(item.price.toString());
-    setEditQty(item.qty || "");
+    setEditQty(item.qty !== undefined && item.qty !== null ? String(item.qty) : "");
     setEditStatus(item.status);
     setEditDepletedDate(item.depletedDate || "");
     setEditCategory(item.category || "");

@@ -63,8 +63,9 @@ export default function SecondAccountantTab({
   const isToday = date === getTodayStr();
   const isYesterday = date === getYesterdayStr();
   const isTwoDaysAgo = date === getTwoDaysAgoStr();
-  // Flexible entry: editable for today and the past 2 days
-  const isEditable = isToday || isYesterday || isTwoDaysAgo;
+  const isManager = userRole === "مدير";
+  // Flexible entry: editable for today and the past 2 days, or completely unrestricted for General Manager
+  const isEditable = isManager || isToday || isYesterday || isTwoDaysAgo;
 
   const getDateLabel = () => {
     if (isToday) return t("اليوم الحالي", "Today", "आज (Today)");
@@ -708,8 +709,8 @@ export default function SecondAccountantTab({
         fixed_deduct: existingEntry?.fixed_deduct ?? (branch === "القادسية" ? 650 : 575),
         fixed_note: existingEntry?.fixed_note ?? "مصاريف دائمة",
         notes: notes.trim(),
-        entered_by: "محاسب ثان",
-        review_status: "pending_review"
+        entered_by: userRole === "مدير" ? (userName || "المدير العام") : (existingEntry?.entered_by || "محاسب ثان"),
+        review_status: userRole === "مدير" ? "approved" : (existingEntry?.review_status || "pending_review")
       };
 
       const res = await fetch("/api/days", {
@@ -962,7 +963,29 @@ export default function SecondAccountantTab({
       </div>
 
       {/* Date Permission & Lock Notice */}
-      {!isEditable ? (
+      {isManager ? (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-center justify-between gap-3 text-amber-950 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-amber-200/80 text-amber-800 rounded-xl shrink-0">
+              <ShieldCheck className="w-5 h-5 text-amber-700" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black text-amber-900">👑 صلاحية المدير العام المطلقة</h4>
+                <span className="text-[10px] bg-amber-200/90 text-amber-900 font-extrabold px-2 py-0.5 rounded-full">كامل الصلاحية</span>
+              </div>
+              <p className="text-[11px] text-amber-850 mt-0.5">
+                يمكنك كمدير عام تعديل أو إضافة أي مشتريات أو فواتير أقساط أو قيود نسي المحاسب إدخالها لأي تاريخ، واعتمادها فوراً.
+              </p>
+            </div>
+          </div>
+          {existingEntry && (
+            <span className="text-[10px] font-bold bg-white px-2.5 py-1 rounded-lg border border-amber-200 text-amber-900 shrink-0">
+              يوجد قيد مسجل ({existingEntry.review_status === "approved" ? "معتمد ✅" : "قيد المراجعة ⏳"})
+            </span>
+          )}
+        </div>
+      ) : !isEditable ? (
         <div className="bg-slate-100 border border-slate-300 rounded-2xl p-4 flex items-center gap-3.5 text-slate-800 shadow-xs">
           <div className="p-2.5 bg-slate-200 text-slate-600 rounded-xl shrink-0">
             <Lock className="w-5 h-5 text-slate-600" />

@@ -898,7 +898,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
           </div>
           
           <div style="text-align: center; margin-bottom: 14px; font-weight: bold; font-size: 11.5px; color: #1e293b;">
-            نطاق التقرير للفترة من ${fromDate} إلى ${toDate} (${branch === "all" ? "كافة الفروع الموحدة" : branch})
+            نطاق التقرير للفترة من ${fromDate} إلى ${toDate} (${branch === "الكل" ? "كافة الفروع الموحدة" : branch})
           </div>
 
           <div class="stats">

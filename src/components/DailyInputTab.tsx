@@ -703,7 +703,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   };
 
   const handleSaveDay = async () => {
-    if (!cashBox && cashBox !== 0) {
+    if (!cashBox && cashBox !== 0 && userRole !== "مدير") {
       onShowToast("⚠️ يرجى تزويد مبلغ الدرج لحساب اليوم");
       return;
     }
@@ -740,24 +740,24 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
         visa3: showDevice3 ? valVisa3 : 0,
         makhzan: valMakhzan,
         pepsi_paid: valPepsiPaid,
-        pepsi_type: carryovers.some(c => c.key === "pepsi" && c.carry > 0) ? pepsiType : 'invoice',
+        pepsi_type: pepsiType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "pepsi" && c.carry > 0) ? pepsiType : (valPepsiPaid > 0 ? 'invoice' : 'payment')),
         plastic_paid: valPlasticPaid,
-        plastic_type: carryovers.some(c => c.key === "plastic" && c.carry > 0) ? plasticType : 'invoice',
+        plastic_type: plasticType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "plastic" && c.carry > 0) ? plasticType : (valPlasticPaid > 0 ? 'invoice' : 'payment')),
         gas: valGasExp || valPurGas,
         vegetables: valVegExp || valPurVeg,
         sauces_paid: valSaucesPaid,
-        sauces_type: carryovers.some(c => c.key === "sauces" && c.carry > 0) ? saucesType : 'invoice',
+        sauces_type: saucesType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "sauces" && c.carry > 0) ? saucesType : (valSaucesPaid > 0 ? 'invoice' : 'payment')),
         bread: valBreadExp || valPurBread,
         grocery: valGroceryExp || valPurGroc,
         diesel_paid: valDieselPaid,
-        diesel_type: carryovers.some(c => c.key === "diesel" && c.carry > 0) ? dieselType : 'invoice',
+        diesel_type: dieselType === 'invoice' ? 'invoice' : (carryovers.some(c => c.key === "diesel" && c.carry > 0) ? dieselType : (valDieselPaid > 0 ? 'invoice' : 'payment')),
         others: others.filter((o) => o.name && o.amt > 0),
         delivery_count: typeof deliveryCount === "number" ? deliveryCount : 0,
         delivery_rate: deliveryRate,
         fixed_deduct: valFixedDeduct,
         fixed_note: fixedNote,
         notes,
-        entered_by: existing?.entered_by || (userRole === "محاسب ثان" ? "محاسب ثان" : "مدير"),
+        entered_by: userRole === "مدير" ? (existing?.entered_by && existing.entered_by !== "محاسب ثان" ? existing.entered_by : "المدير العام") : (existing?.entered_by || "محاسب"),
         review_status: userRole === "مدير" ? "approved" : (existing?.review_status || "pending_review"),
         pepsi_cap: editingCaps.pepsi !== undefined ? editingCaps.pepsi : undefined,
         plastic_cap: editingCaps.plastic !== undefined ? editingCaps.plastic : undefined,
@@ -2734,7 +2734,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
                             <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold border border-emerald-300">
                               معتمد
                             </span>
-                          ) : (row.review_status === "pending_review" || (row.entered_by === "محاسب ثان" && row.review_status !== "approved")) ? (
+                          ) : (row.review_status === "pending_review" || row.entered_by === "محاسب ثان") ? (
                             <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold border border-amber-300">
                               بانتظار الاعتماد
                             </span>

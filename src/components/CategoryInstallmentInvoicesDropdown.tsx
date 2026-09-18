@@ -5,7 +5,7 @@ import {
   Clock, CheckCircle2, ChevronDown, 
   Calendar, RefreshCw, User, FileText, X, History,
   Hourglass, AlertTriangle, Maximize2, Minimize2, Table, LayoutGrid,
-  Check, Info, ChevronUp, AlertCircle
+  Check, Info, ChevronUp, AlertCircle, Plus, Edit3, Trash2, Save, RotateCcw, ShieldCheck
 } from "lucide-react";
 
 interface CategoryInstallmentInvoicesDropdownProps {
@@ -30,6 +30,24 @@ export default function CategoryInstallmentInvoicesDropdown({
   const [expandedInvoiceId, setExpandedInvoiceId] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
+  // Manager-specific state for adding new invoices
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newBranch, setNewBranch] = useState<"القادسية" | "المروج">(branch);
+  const [newDate, setNewDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
+  const [newAmount, setNewAmount] = useState<number | "">("");
+  const [newNotes, setNewNotes] = useState<string>("");
+  const [isSubmittingNew, setIsSubmittingNew] = useState(false);
+
+  // Inline editing state
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState<string>("");
+  const [editAmount, setEditAmount] = useState<number | "">("");
+  const [editNotes, setEditNotes] = useState<string>("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Feedback notification
+  const [feedback, setFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+
   const fetchInvoices = async () => {
     setLoading(true);
     try {
@@ -44,6 +62,107 @@ export default function CategoryInstallmentInvoicesDropdown({
       console.error(`Failed to load ${category} invoices:`, err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreateInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAmount || Number(newAmount) <= 0) {
+      setFeedback({ type: "error", msg: "يرجى كتابة مبلغ صحيح للفاتورة" });
+      return;
+    }
+    setIsSubmittingNew(true);
+    setFeedback(null);
+    try {
+      const res = await fetch("/api/installment-invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category,
+          branch: newBranch,
+          date: newDate,
+          originalAmount: Number(newAmount),
+          enteredBy: "المدير العام",
+          notes: newNotes.trim()
+        })
+      });
+      if (res.ok) {
+        setFeedback({ type: "success", msg: "✅ تم إدراج الفاتورة وحفظها بالمنظومة وإعادة جدولة الأقساط للأيام القادمة بنجاح!" });
+        setNewAmount("");
+        setNewNotes("");
+        setShowAddForm(false);
+        await fetchInvoices();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setFeedback({ type: "error", msg: err.error || "فشل في حفظ الفاتورة" });
+      }
+    } catch (err: any) {
+      setFeedback({ type: "error", msg: err?.message || "حدث خطأ في الاتصال بالخادم" });
+    } finally {
+      setIsSubmittingNew(false);
+    }
+  };
+
+  const handleStartEdit = (inv: InstallmentInvoice) => {
+    setEditingInvoiceId(inv.id);
+    setEditDate(inv.date);
+    setEditAmount(inv.originalAmount);
+    setEditNotes(inv.notes || "");
+    setFeedback(null);
+  };
+
+  const handleSaveEdit = async (invId: string) => {
+    if (!editAmount || Number(editAmount) <= 0) {
+      setFeedback({ type: "error", msg: "يرجى كتابة مبلغ صحيح للفاتورة" });
+      return;
+    }
+    setIsSavingEdit(true);
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/installment-invoices/${invId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category,
+          branch,
+          date: editDate,
+          originalAmount: Number(editAmount),
+          enteredBy: "المدير العام",
+          notes: editNotes.trim()
+        })
+      });
+      if (res.ok) {
+        setFeedback({ type: "success", msg: "✅ تم تحديث بيانات الفاتورة وإعادة جدولة الأقساط بنجاح!" });
+        setEditingInvoiceId(null);
+        await fetchInvoices();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setFeedback({ type: "error", msg: err.error || "فشل في تحديث الفاتورة" });
+      }
+    } catch (err: any) {
+      setFeedback({ type: "error", msg: err?.message || "حدث خطأ في الاتصال بالخادم" });
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteInvoice = async (inv: InstallmentInvoice) => {
+    if (!window.confirm(`هل أنت متأكد من رغبتك كمدير عام في حذف فاتورة بقيمة ${inv.originalAmount} ر بتاريخ ${inv.date}؟\nسيتم إعادة جدولة الأقساط فوراً للأيام التالية.`)) {
+      return;
+    }
+    setFeedback(null);
+    try {
+      const res = await fetch(`/api/installment-invoices/${inv.id}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        setFeedback({ type: "success", msg: "✅ تم حذف الفاتورة وإعادة جدولة الأقساط بنجاح!" });
+        await fetchInvoices();
+      } else {
+        setFeedback({ type: "error", msg: "فشل حذف الفاتورة" });
+      }
+    } catch (err: any) {
+      setFeedback({ type: "error", msg: err?.message || "حدث خطأ في الاتصال بالخادم" });
     }
   };
 
@@ -261,6 +380,142 @@ export default function CategoryInstallmentInvoicesDropdown({
               </div>
             </div>
 
+            {/* General Manager Full Control Bar & Form */}
+            {userRole === "مدير" && (
+              <div className="bg-amber-50/90 border-b border-amber-200/80 p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 bg-amber-200 text-amber-900 rounded-md font-bold text-xs">👑</span>
+                    <div>
+                      <h4 className="text-xs font-black text-amber-950">صلاحية المدير العام المطلقة في تقسيط وإدراج الفواتير</h4>
+                      <p className="text-[10px] text-amber-850">
+                        إذا نسي المحاسب إدخال أي فاتورة، يمكنك إضافتها أو تعديلها هنا مباشرة لتُقسّط تلقائياً وتأخذ دورها الطبيعي بنظام الأسبقية FIFO.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddForm(!showAddForm);
+                      setFeedback(null);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-xl transition-all shadow-xs cursor-pointer ${
+                      showAddForm
+                        ? "bg-slate-800 text-white hover:bg-slate-900"
+                        : "bg-indigo-700 hover:bg-indigo-800 text-white"
+                    }`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{showAddForm ? "إلغاء الإدخال" : "➕ إضافة فاتورة مقسطة جديدة"}</span>
+                  </button>
+                </div>
+
+                {/* Feedback Notification Banner */}
+                {feedback && (
+                  <div className={`p-2.5 rounded-xl text-xs font-bold flex items-center justify-between gap-2 ${
+                    feedback.type === "success" 
+                      ? "bg-emerald-100 text-emerald-900 border border-emerald-300" 
+                      : "bg-rose-100 text-rose-900 border border-rose-300"
+                  }`}>
+                    <span>{feedback.msg}</span>
+                    <button 
+                      type="button" 
+                      onClick={() => setFeedback(null)} 
+                      className="text-slate-500 hover:text-slate-800 font-bold text-sm px-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Collapsible Add Invoice Form */}
+                {showAddForm && (
+                  <form onSubmit={handleCreateInvoice} className="bg-white p-3.5 rounded-xl border border-indigo-200 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-150">
+                      <span className="font-extrabold text-xs text-indigo-900 flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-indigo-600" />
+                        إدراج فاتورة جديدة لقسم: {categoryName}
+                      </span>
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-bold">
+                        تُقسّط تلقائياً حسب إعدادات الفرع
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-[11px]">
+                      {/* Branch Selection */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">الفرع:</label>
+                        <select
+                          value={newBranch}
+                          onChange={(e) => setNewBranch(e.target.value as any)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg p-1.5 font-bold text-slate-850 text-xs focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="القادسية">فرع القادسية</option>
+                          <option value="المروج">فرع المروج</option>
+                        </select>
+                      </div>
+
+                      {/* Invoice Date */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">تاريخ الفاتورة:</label>
+                        <input
+                          type="date"
+                          value={newDate}
+                          onChange={(e) => setNewDate(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg p-1.5 font-bold text-slate-850 text-xs font-mono focus:ring-2 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+
+                      {/* Original Amount */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">قيمة الفاتورة الأصلية (ر.س):</label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="مثال: 3500"
+                          value={newAmount}
+                          onChange={(e) => setNewAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg p-1.5 font-black text-slate-900 text-xs font-mono focus:ring-2 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+
+                      {/* Notes / Invoice Ref */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1">ملاحظات / رقم الفاتورة:</label>
+                        <input
+                          type="text"
+                          placeholder="رقم الفاتورة أو المورد (اختياري)"
+                          value={newNotes}
+                          onChange={(e) => setNewNotes(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-lg p-1.5 font-semibold text-slate-800 text-xs focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddForm(false)}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        إلغاء
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingNew}
+                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black shadow-xs cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>{isSubmittingNew ? "جاري الحفظ والجدولة..." : "💾 حفظ الفاتورة وإدراجها بنظام الأقساط"}</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
+
             {/* KPI Summary Banner (ملونة ومنظمة) */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 bg-slate-50/90 border-b border-slate-150 text-[10px]">
               <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-2xs flex flex-col justify-between">
@@ -414,6 +669,11 @@ export default function CategoryInstallmentInvoicesDropdown({
                         <th className="py-2.5 px-2.5 whitespace-nowrap">نهاية السداد</th>
                         <th className="py-2.5 px-2.5 whitespace-nowrap text-center">المدة والأيام</th>
                         <th className="py-2.5 px-2.5 whitespace-nowrap text-center">حالة الفاتورة الآن</th>
+                        {userRole === "مدير" && (
+                          <th className="py-2.5 px-2 text-center whitespace-nowrap bg-amber-50 text-amber-900 border-l border-amber-200">
+                            صلاحيات المدير
+                          </th>
+                        )}
                         <th className="py-2.5 px-2 text-center w-8">تفاصيل</th>
                       </tr>
                     </thead>
@@ -452,22 +712,48 @@ export default function CategoryInstallmentInvoicesDropdown({
                               </td>
 
                               {/* Invoice Date */}
-                              <td className="py-2 px-2.5 whitespace-nowrap">
-                                <div className="font-extrabold text-slate-850 font-mono flex items-center gap-1">
-                                  <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
-                                  <span>{inv.date}</span>
-                                </div>
-                                <span className="text-[9px] text-slate-400 block font-sans">
-                                  {inv.enteredBy || "محاسب ثان"}
-                                </span>
+                              <td className="py-2 px-2.5 whitespace-nowrap" onClick={(e) => editingInvoiceId === inv.id && e.stopPropagation()}>
+                                {editingInvoiceId === inv.id ? (
+                                  <input
+                                    type="date"
+                                    value={editDate}
+                                    onChange={(e) => setEditDate(e.target.value)}
+                                    className="bg-white border-2 border-indigo-500 rounded px-1.5 py-0.5 text-xs font-mono font-bold"
+                                  />
+                                ) : (
+                                  <>
+                                    <div className="font-extrabold text-slate-850 font-mono flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                                      <span>{inv.date}</span>
+                                    </div>
+                                    <span className="text-[9px] text-slate-400 block font-sans">
+                                      {inv.enteredBy || "محاسب ثان"}
+                                    </span>
+                                  </>
+                                )}
                               </td>
 
                               {/* Invoice Original Amount */}
-                              <td className="py-2 px-2.5 whitespace-nowrap">
-                                <span className="font-black text-slate-850 font-mono text-[11px]">
-                                  {inv.originalAmount.toFixed(2)}
-                                </span>
-                                <span className="text-[9px] text-slate-500 mr-1">ر</span>
+                              <td className="py-2 px-2.5 whitespace-nowrap" onClick={(e) => editingInvoiceId === inv.id && e.stopPropagation()}>
+                                {editingInvoiceId === inv.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={editAmount}
+                                      onChange={(e) => setEditAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                                      className="w-20 bg-white border-2 border-indigo-500 rounded px-1.5 py-0.5 text-xs font-mono font-black"
+                                    />
+                                    <span className="text-[10px] font-bold text-slate-500">ر</span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <span className="font-black text-slate-850 font-mono text-[11px]">
+                                      {inv.originalAmount.toFixed(2)}
+                                    </span>
+                                    <span className="text-[9px] text-slate-500 mr-1">ر</span>
+                                  </>
+                                )}
                               </td>
 
                               {/* Entry Status (نشطة مباشرة أو على الدور) */}
@@ -481,7 +767,7 @@ export default function CategoryInstallmentInvoicesDropdown({
                               {/* Actual Start Date */}
                               <td className="py-2 px-2.5 whitespace-nowrap font-mono">
                                 {inv.actualStartDate ? (
-                                  <div className="flex items-center gap-1 font-bold text-slate-750">
+                                  <div className="flex items-center gap-1 font-bold text-slate-755">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                                     <span>{inv.actualStartDate}</span>
                                   </div>
@@ -554,6 +840,56 @@ export default function CategoryInstallmentInvoicesDropdown({
                                 )}
                               </td>
 
+                              {/* Manager Actions Column */}
+                              {userRole === "مدير" && (
+                                <td 
+                                  className="py-2 px-2 text-center whitespace-nowrap bg-amber-50/50 border-l border-amber-100"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {editingInvoiceId === inv.id ? (
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveEdit(inv.id)}
+                                        disabled={isSavingEdit}
+                                        className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-[10px] flex items-center gap-1 shadow-2xs cursor-pointer"
+                                        title="حفظ التعديل"
+                                      >
+                                        <Save className="w-3 h-3" />
+                                        <span>حفظ</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingInvoiceId(null)}
+                                        className="px-1.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded font-bold text-[10px] cursor-pointer"
+                                        title="إلغاء التعديل"
+                                      >
+                                        إلغاء
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartEdit(inv)}
+                                        className="p-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded border border-indigo-200 shadow-2xs cursor-pointer"
+                                        title="تعديل تاريخ أو قيمة الفاتورة كمدير عام"
+                                      >
+                                        <Edit3 className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteInvoice(inv)}
+                                        className="p-1 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded border border-rose-200 shadow-2xs cursor-pointer"
+                                        title="حذف الفاتورة كمدير عام وإعادة الجدولة"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              )}
+
                               {/* Toggle Details Chevron */}
                               <td className="py-2 px-2 text-center text-slate-400 hover:text-indigo-600">
                                 {isExpandedRow ? (
@@ -567,7 +903,7 @@ export default function CategoryInstallmentInvoicesDropdown({
                             {/* Expanded Detail Accordion Row */}
                             {isExpandedRow && (
                               <tr className="bg-slate-50/90 border-b border-indigo-100">
-                                <td colSpan={9} className="p-3 text-slate-700 text-[10px]">
+                                <td colSpan={userRole === "مدير" ? 10 : 9} className="p-3 text-slate-700 text-[10px]">
                                   <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2 shadow-2xs">
                                     {/* Progress */}
                                     <div className="space-y-1">
@@ -640,9 +976,66 @@ export default function CategoryInstallmentInvoicesDropdown({
                                       </div>
                                     </div>
 
-                                    {inv.notes && (
+                                    {/* Manager Inline Edit Notes or View Notes */}
+                                    {editingInvoiceId === inv.id ? (
+                                      <div className="p-2 bg-amber-50 rounded-lg border border-amber-200 space-y-1">
+                                        <label className="block text-[10px] font-bold text-amber-900">ملاحظات الفاتورة:</label>
+                                        <input
+                                          type="text"
+                                          value={editNotes}
+                                          onChange={(e) => setEditNotes(e.target.value)}
+                                          className="w-full bg-white border border-amber-300 rounded px-2 py-1 text-xs font-semibold"
+                                          placeholder="رقم الفاتورة أو ملاحظات..."
+                                        />
+                                      </div>
+                                    ) : inv.notes ? (
                                       <div className="text-[9px] text-slate-500 bg-slate-50 p-1.5 rounded border border-slate-200">
                                         <span className="font-bold text-slate-600">ملاحظات:</span> {inv.notes}
+                                      </div>
+                                    ) : null}
+
+                                    {/* Manager Action Buttons inside accordion */}
+                                    {userRole === "مدير" && (
+                                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-150">
+                                        {editingInvoiceId === inv.id ? (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSaveEdit(inv.id)}
+                                              disabled={isSavingEdit}
+                                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer"
+                                            >
+                                              <Save className="w-3.5 h-3.5" />
+                                              <span>حفظ كافة تعديلات الفاتورة</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditingInvoiceId(null)}
+                                              className="px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-xs font-bold cursor-pointer"
+                                            >
+                                              إلغاء التعديل
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleStartEdit(inv)}
+                                              className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold flex items-center gap-1 border border-indigo-200 cursor-pointer"
+                                            >
+                                              <Edit3 className="w-3.5 h-3.5" />
+                                              <span>تعديل الفاتورة</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteInvoice(inv)}
+                                              className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-bold flex items-center gap-1 border border-rose-200 cursor-pointer"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                              <span>حذف الفاتورة</span>
+                                            </button>
+                                          </>
+                                        )}
                                       </div>
                                     )}
                                   </div>
@@ -783,6 +1176,95 @@ export default function CategoryInstallmentInvoicesDropdown({
                             )}
                           </span>
                         </div>
+
+                        {/* Manager Card Actions & Inline Edit */}
+                        {userRole === "مدير" && (
+                          <div className="pt-2 border-t border-slate-150 bg-amber-50/50 -mx-3 -mb-3 p-2.5 rounded-b-xl space-y-2">
+                            {editingInvoiceId === inv.id ? (
+                              <div className="space-y-2 bg-white p-2 rounded-lg border border-amber-300">
+                                <div className="flex items-center justify-between text-[10px] font-bold text-amber-900">
+                                  <span>تعديل بيانات الفاتورة كمدير عام</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <div>
+                                    <label className="block text-[9px] font-bold text-slate-600">التاريخ:</label>
+                                    <input
+                                      type="date"
+                                      value={editDate}
+                                      onChange={(e) => setEditDate(e.target.value)}
+                                      className="w-full bg-slate-50 border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono font-bold"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[9px] font-bold text-slate-600">القيمة الأصلية:</label>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      value={editAmount}
+                                      onChange={(e) => setEditAmount(e.target.value === "" ? "" : Number(e.target.value))}
+                                      className="w-full bg-slate-50 border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono font-black"
+                                    />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-slate-600">الملاحظات:</label>
+                                  <input
+                                    type="text"
+                                    value={editNotes}
+                                    onChange={(e) => setEditNotes(e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-300 rounded px-1.5 py-0.5 text-xs"
+                                    placeholder="ملاحظات..."
+                                  />
+                                </div>
+                                <div className="flex items-center justify-end gap-1.5 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingInvoiceId(null)}
+                                    className="px-2.5 py-1 bg-slate-200 text-slate-700 rounded text-xs font-bold cursor-pointer"
+                                  >
+                                    إلغاء
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveEdit(inv.id)}
+                                    disabled={isSavingEdit}
+                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-black shadow-xs flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Save className="w-3 h-3" />
+                                    <span>حفظ التعديل</span>
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between">
+                                <span className="text-[9px] font-bold text-amber-900 flex items-center gap-1">
+                                  <ShieldCheck className="w-3 h-3 text-amber-700" />
+                                  تحكم المدير العام:
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEdit(inv)}
+                                    className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-indigo-200 cursor-pointer"
+                                    title="تعديل الفاتورة"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>تعديل</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteInvoice(inv)}
+                                    className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[10px] font-bold flex items-center gap-1 border border-rose-200 cursor-pointer"
+                                    title="حذف الفاتورة"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span>حذف</span>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

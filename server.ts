@@ -2600,43 +2600,221 @@ async function startServer() {
     res.json(branchInvoices);
   });
 
+  const getCatField = (cat: string) => {
+    if (cat === "pepsi") return { paidKey: "pepsi_paid" as const, typeKey: "pepsi_type" as const };
+    if (cat === "plastic") return { paidKey: "plastic_paid" as const, typeKey: "plastic_type" as const };
+    if (cat === "sauces") return { paidKey: "sauces_paid" as const, typeKey: "sauces_type" as const };
+    if (cat === "diesel") return { paidKey: "diesel_paid" as const, typeKey: "diesel_type" as const };
+    return null;
+  };
+
   app.post("/api/installment-invoices", async (req, res) => {
-    const { category, branch, date, originalAmount, enteredBy, notes } = req.body;
-    if (!category || !branch || !date || !originalAmount) {
-      return res.status(400).json({ error: "Missing required invoice fields" });
+    try {
+      const { category, branch, date, originalAmount, enteredBy, notes } = req.body;
+      if (!category || !branch || !date || originalAmount === undefined || isNaN(Number(originalAmount))) {
+        return res.status(400).json({ error: "Missing required invoice fields" });
+      }
+
+      const numAmount = Number(originalAmount);
+      const allDays = await getDays();
+      const dayId = `${branch}-${date}`;
+      let targetDay = allDays.find(d => d.id === dayId);
+      const fields = getCatField(category);
+
+      if (targetDay) {
+        if (fields) {
+          (targetDay as any)[fields.paidKey] = numAmount;
+          (targetDay as any)[fields.typeKey] = 'invoice';
+        }
+        if (!targetDay.entered_by || enteredBy === "المدير العام" || enteredBy === "مدير") {
+          targetDay.entered_by = enteredBy || "المدير العام";
+        }
+        targetDay.review_status = "approved";
+      } else {
+        // Create stub daily entry so that the invoice exists in the daily timeline and history
+        targetDay = {
+          id: dayId,
+          date,
+          branch,
+          sarf: 350,
+          cash_box: 0,
+          cash_purchases: 0,
+          mada1: 0, mada2: 0, mada3: 0,
+          visa1: 0, visa2: 0, visa3: 0,
+          pos_net: 0, cash_net: 0, total_sales: 0,
+          makhzan: 0,
+          pepsi_paid: category === "pepsi" ? numAmount : 0,
+          pepsi_type: category === "pepsi" ? 'invoice' : undefined,
+          pepsi_carry_prev: 0, pepsi_deduct: 0, pepsi_carry_next: 0,
+          plastic_paid: category === "plastic" ? numAmount : 0,
+          plastic_type: category === "plastic" ? 'invoice' : undefined,
+          plastic_carry_prev: 0, plastic_deduct: 0, plastic_carry_next: 0,
+          sauces_paid: category === "sauces" ? numAmount : 0,
+          sauces_type: category === "sauces" ? 'invoice' : undefined,
+          sauces_carry_prev: 0, sauces_deduct: 0, sauces_carry_next: 0,
+          gas: 0, vegetables: 0, bread: 0, grocery: 0,
+          diesel_paid: category === "diesel" ? numAmount : 0,
+          diesel_type: category === "diesel" ? 'invoice' : undefined,
+          diesel_carry_prev: 0, diesel_deduct: 0, diesel_carry_next: 0,
+          others: [],
+          fixed_deduct: 0,
+          fixed_note: "",
+          notes: notes || "فاتورة تقسيط مدخلة من المدير العام",
+          net_day: 0,
+          entered_by: enteredBy || "المدير العام",
+          review_status: "approved"
+        };
+        allDays.push(targetDay);
+      }
+
+      await saveDays(allDays);
+      await autoRegisterDayInputsAsPurchases(targetDay);
+
+      const id = `inv-${category}-${branch}-${date}-${Date.now()}`;
+      const newInvoice: InstallmentInvoice = {
+        id,
+        category,
+        branch,
+        date,
+        enteredAt: new Date().toISOString(),
+        enteredBy: enteredBy || "المدير العام",
+        originalAmount: numAmount,
+        paidAmount: 0,
+        remainingAmount: numAmount,
+        status: "queued",
+        notes: notes || ""
+      };
+
+      await saveInstallmentInvoices([newInvoice]);
+      await recalculateCarryOvers(branch);
+
+      const updated = (await getInstallmentInvoices()).find(i => i.id === id);
+      res.json({ success: true, invoice: updated || newInvoice });
+    } catch (err: any) {
+      console.error("Error in POST /api/installment-invoices:", err);
+      res.status(500).json({ error: err.message || "Failed to save installment invoice" });
     }
+  });
 
-    const id = `inv-${category}-${branch}-${date}-${Date.now()}`;
-    const newInvoice: InstallmentInvoice = {
-      id,
-      category,
-      branch,
-      date,
-      enteredAt: new Date().toISOString(),
-      enteredBy: enteredBy || "محاسب ثان",
-      originalAmount: Number(originalAmount),
-      paidAmount: 0,
-      remainingAmount: Number(originalAmount),
-      status: "queued",
-      notes: notes || ""
-    };
+  app.put("/api/installment-invoices/:id", async (req, res) => {
+    try {
+      const id = req.params.id;
+      const { date, originalAmount, notes, enteredBy } = req.body;
+      const allInvs = await getInstallmentInvoices();
+      const target = allInvs.find(i => i.id === id);
 
-    await saveInstallmentInvoices([newInvoice]);
-    await recalculateCarryOvers(branch);
+      if (!target) {
+        return res.status(404).json({ error: "الفاتورة غير موجودة" });
+      }
 
-    const updated = (await getInstallmentInvoices()).find(i => i.id === id);
-    res.json({ success: true, invoice: updated || newInvoice });
+      const oldDate = target.date;
+      const newDate = date || oldDate;
+      const newAmount = originalAmount !== undefined ? Number(originalAmount) : target.originalAmount;
+      const fields = getCatField(target.category);
+
+      const allDays = await getDays();
+
+      // If date changed, clear out old day's entry field
+      if (newDate !== oldDate) {
+        const oldDayId = `${target.branch}-${oldDate}`;
+        const oldDay = allDays.find(d => d.id === oldDayId);
+        if (oldDay && fields) {
+          (oldDay as any)[fields.paidKey] = 0;
+          await autoRegisterDayInputsAsPurchases(oldDay);
+        }
+      }
+
+      // Update or create new date's daily entry
+      const newDayId = `${target.branch}-${newDate}`;
+      let newDay = allDays.find(d => d.id === newDayId);
+      if (newDay && fields) {
+        (newDay as any)[fields.paidKey] = newAmount;
+        (newDay as any)[fields.typeKey] = 'invoice';
+        newDay.review_status = "approved";
+        if (enteredBy) newDay.entered_by = enteredBy;
+      } else if (!newDay && fields) {
+        newDay = {
+          id: newDayId,
+          date: newDate,
+          branch: target.branch,
+          sarf: 350,
+          cash_box: 0,
+          cash_purchases: 0,
+          mada1: 0, mada2: 0, mada3: 0,
+          visa1: 0, visa2: 0, visa3: 0,
+          pos_net: 0, cash_net: 0, total_sales: 0,
+          makhzan: 0,
+          pepsi_paid: target.category === "pepsi" ? newAmount : 0,
+          pepsi_type: target.category === "pepsi" ? 'invoice' : undefined,
+          pepsi_carry_prev: 0, pepsi_deduct: 0, pepsi_carry_next: 0,
+          plastic_paid: target.category === "plastic" ? newAmount : 0,
+          plastic_type: target.category === "plastic" ? 'invoice' : undefined,
+          plastic_carry_prev: 0, plastic_deduct: 0, plastic_carry_next: 0,
+          sauces_paid: target.category === "sauces" ? newAmount : 0,
+          sauces_type: target.category === "sauces" ? 'invoice' : undefined,
+          sauces_carry_prev: 0, sauces_deduct: 0, sauces_carry_next: 0,
+          gas: 0, vegetables: 0, bread: 0, grocery: 0,
+          diesel_paid: target.category === "diesel" ? newAmount : 0,
+          diesel_type: target.category === "diesel" ? 'invoice' : undefined,
+          diesel_carry_prev: 0, diesel_deduct: 0, diesel_carry_next: 0,
+          others: [],
+          fixed_deduct: 0,
+          fixed_note: "",
+          notes: notes || "تعديل فاتورة تقسيط بواسطة المدير العام",
+          net_day: 0,
+          entered_by: enteredBy || "المدير العام",
+          review_status: "approved"
+        };
+        allDays.push(newDay);
+      }
+
+      await saveDays(allDays);
+      if (newDay) {
+        await autoRegisterDayInputsAsPurchases(newDay);
+      }
+
+      // Update invoice properties
+      target.date = newDate;
+      target.originalAmount = newAmount;
+      if (notes !== undefined) target.notes = notes;
+      if (enteredBy) target.enteredBy = enteredBy;
+
+      await saveInstallmentInvoices([target]);
+      await recalculateCarryOvers(target.branch);
+
+      const refreshed = (await getInstallmentInvoices()).find(i => i.id === id);
+      res.json({ success: true, invoice: refreshed || target });
+    } catch (err: any) {
+      console.error("Error in PUT /api/installment-invoices/:id:", err);
+      res.status(500).json({ error: err.message || "Failed to update installment invoice" });
+    }
   });
 
   app.delete("/api/installment-invoices/:id", async (req, res) => {
-    const id = req.params.id;
-    const allInvs = await getInstallmentInvoices();
-    const target = allInvs.find(i => i.id === id);
-    if (target) {
-      await deleteInstallmentInvoice(id);
-      await recalculateCarryOvers(target.branch);
+    try {
+      const id = req.params.id;
+      const allInvs = await getInstallmentInvoices();
+      const target = allInvs.find(i => i.id === id);
+      if (target) {
+        const allDays = await getDays();
+        const dayId = `${target.branch}-${target.date}`;
+        const targetDay = allDays.find(d => d.id === dayId);
+        const fields = getCatField(target.category);
+
+        if (targetDay && fields) {
+          (targetDay as any)[fields.paidKey] = 0;
+          await saveDays(allDays);
+          await autoRegisterDayInputsAsPurchases(targetDay);
+        }
+
+        await deleteInstallmentInvoice(id);
+        await recalculateCarryOvers(target.branch);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error in DELETE /api/installment-invoices/:id:", err);
+      res.status(500).json({ error: err.message || "Failed to delete installment invoice" });
     }
-    res.json({ success: true });
   });
 
   // 4. SHARED DIESEL BILLS ENDPOINTS

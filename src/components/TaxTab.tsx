@@ -2328,11 +2328,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     }
                     
                     const cleanedManual = rows.filter(r => r.company || r.amount);
-                    const newlyMerged = [...cleanedManual, ...activeValid.map(v => ({
+                    const newlyMerged: InvoiceInput[] = [...cleanedManual, ...activeValid.map(v => ({
                       company: v.company,
                       invoice_no: v.invoice_no,
                       invoice_date: v.invoice_date,
-                      amount: v.amount,
+                      amount: v.amount === "" ? ("" as const) : (parseFloat(String(v.amount)) || ("" as const)),
                       items: v.items || [],
                     }))];
 
