@@ -9,7 +9,7 @@ import "dotenv/config";
 // Firebase Integration Setup
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc, initializeFirestore
+  getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc, initializeFirestore, query, limit
 } from "firebase/firestore";
 
 let firebaseConfig: any = null;
@@ -193,305 +193,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 6000, err
   }
 }
 
-async function getSettings(): Promise<Settings> {
-  try {
-    const snap = await getDoc(doc(db, "settings", "app_settings"));
-    if (snap.exists()) {
-      const data = snap.data() as Settings;
-      return {
-        ...DEFAULT_SETTINGS,
-        ...data,
-        "سقف_بيبسي_قادسية": data.سقف_بيبسي_قادسية ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_قادسية,
-        "سقف_بيبسي_مروج": data.سقف_بيبسي_مروج ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_مروج,
-        "سقف_بلاستيك_قادسية": data.سقف_بلاستيك_قادسية ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_قادسية,
-        "سقف_بلاستيك_مروج": data.سقف_بلاستيك_مروج ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_مروج,
-        "سقف_صلصات_قادسية": data.سقف_صلصات_قادسية ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_قادسية,
-        "سقف_صلصات_mروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج, // keep backward fallback if any
-        "سقف_صلصات_مروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج,
-      } as Settings;
-    } else {
-      // Seed default settings on first load
-      await setDoc(doc(db, "settings", "app_settings"), cleanObject(DEFAULT_SETTINGS));
-      return DEFAULT_SETTINGS;
-    }
-  } catch (err) {
-    console.error("Error reading settings from Firestore:", err);
-    return DEFAULT_SETTINGS;
-  }
-}
-
-async function saveSettings(settings: Settings): Promise<void> {
-  try {
-    await setDoc(doc(db, "settings", "app_settings"), cleanObject(settings));
-  } catch (err) {
-    console.error("Error saving settings to Firestore:", err);
-  }
-}
-
-const DEFAULT_DEDUCTION_CONFIG: EmployeeDeductionConfig = {
-  id: "global-rules",
-  simpleThresholdMinutes: 15,
-  mediumThresholdMinutes: 30,
-  largeThresholdMinutes: 60,
-  simpleMaxWarnings: 3,
-  simpleDeductionHours: 1,
-  mediumDeductionHours: 3,
-  largeDeductionDayFraction: 0.5,
-  severeDeductionDayFraction: 1.0
-};
-
-async function getEmployeeDeductionConfig(): Promise<EmployeeDeductionConfig> {
-  try {
-    const snap = await getDoc(doc(db, "settings", "employee_deduction_rules"));
-    if (snap.exists()) {
-      return snap.data() as EmployeeDeductionConfig;
-    } else {
-      await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(DEFAULT_DEDUCTION_CONFIG));
-      return DEFAULT_DEDUCTION_CONFIG;
-    }
-  } catch (err) {
-    console.error("Error reading employee deduction rules from Firestore:", err);
-    return DEFAULT_DEDUCTION_CONFIG;
-  }
-}
-
-async function saveEmployeeDeductionConfig(config: EmployeeDeductionConfig): Promise<void> {
-  try {
-    await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(config));
-  } catch (err) {
-    console.error("Error saving employee deduction rules to Firestore:", err);
-  }
-}
-
-
-async function getUsers(): Promise<UnifiedUser[]> {
-  try {
-    const snap = await getDocs(collection(db, "users"));
-    const list: UnifiedUser[] = [];
-    snap.forEach((d) => {
-      const data = d.data() as UnifiedUser;
-      if (data) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        list.push(data);
-      }
-    });
-
-    // Seed default admin if list is empty
-    if (list.length === 0) {
-      const defaultAdmin: UnifiedUser = {
-        id: "admin",
-        username: "admin",
-        displayName: "المدير العام",
-        password: "123",
-        role: "مدير",
-        status: "نشط",
-        branch: "الكل",
-        createdAt: new Date().toISOString()
-      };
-      await setDoc(doc(db, "users", "admin"), cleanObject(defaultAdmin));
-      list.push(defaultAdmin);
-    }
-
-    return list;
-  } catch (err) {
-    console.error("Error loading users from Firestore:", err);
-    return [{
-      id: "admin",
-      username: "admin",
-      displayName: "المدير العام",
-      password: "123",
-      role: "مدير",
-      status: "نشط",
-      branch: "الكل",
-      createdAt: new Date().toISOString()
-    }];
-  }
-}
-
-async function saveUser(user: UnifiedUser): Promise<void> {
-  try {
-    await setDoc(doc(db, "users", user.id), cleanObject(user));
-  } catch (err) {
-    console.error("Error saving user to Firestore:", err);
-  }
-}
-
-async function deleteUser(userId: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "users", userId));
-  } catch (err) {
-    console.error("Error deleting user from Firestore:", err);
-  }
-}
-
-// --- EMPLOYEE HELPERS ---
-async function getEmployees(): Promise<Employee[]> {
-  try {
-    const snap = await getDocs(collection(db, "employees"));
-    const list: Employee[] = [];
-    snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employees", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.name || data.salary !== undefined)) {
-        if (!data.id) data.id = d.id;
-        list.push(data as Employee);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading employees from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployee(emp: Employee): Promise<void> {
-  try {
-    await setDoc(doc(db, "employees", emp.id), cleanObject(emp));
-  } catch (err) {
-    console.error("Error saving employee to Firestore:", err);
-  }
-}
-
-async function deleteEmployee(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employees", id));
-  } catch (err) {
-    console.error("Error deleting employee from Firestore:", err);
-  }
-}
-
-async function getEmployeeAdvances(): Promise<EmployeeAdvance[]> {
-  try {
-    const snap = await getDocs(collection(db, "employee_advances"));
-    const list: EmployeeAdvance[] = [];
-    snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employee_advances", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.employeeId || data.amount !== undefined)) {
-        if (!data.id) data.id = d.id;
-        list.push(data as EmployeeAdvance);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading advances from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployeeAdvance(adv: EmployeeAdvance): Promise<void> {
-  try {
-    await setDoc(doc(db, "employee_advances", adv.id), cleanObject(adv));
-  } catch (err) {
-    console.error("Error saving advance to Firestore:", err);
-  }
-}
-
-async function deleteEmployeeAdvance(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employee_advances", id));
-  } catch (err) {
-    console.error("Error deleting advance from Firestore:", err);
-  }
-}
-
-async function getEmployeeViolations(): Promise<EmployeeViolation[]> {
-  try {
-    const snap = await getDocs(collection(db, "employee_violations"));
-    const list: EmployeeViolation[] = [];
-    snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employee_violations", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.employeeId || data.employeeName || data.description)) {
-        if (!data.id) data.id = d.id;
-        list.push(data as EmployeeViolation);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading violations from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployeeViolation(v: EmployeeViolation): Promise<void> {
-  try {
-    await setDoc(doc(db, "employee_violations", v.id), cleanObject(v));
-  } catch (err) {
-    console.error("Error saving violation to Firestore:", err);
-  }
-}
-
-async function deleteEmployeeViolation(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employee_violations", id));
-  } catch (err) {
-    console.error("Error deleting violation from Firestore:", err);
-  }
-}
-
-async function getEmployeeAttendance(): Promise<EmployeeAttendance[]> {
-  try {
-    const snap = await getDocs(collection(db, "employee_attendance"));
-    const list: EmployeeAttendance[] = [];
-    snap.forEach((d) => {
-      if (d.id.startsWith("test_perm")) {
-        deleteDoc(doc(db, "employee_attendance", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.employeeId || data.date || data.arrivalTime)) {
-        if (!data.id) data.id = d.id;
-        list.push(data as EmployeeAttendance);
-      }
-    });
-    return list;
-  } catch (err) {
-    console.error("Error loading attendance from Firestore:", err);
-    return [];
-  }
-}
-
-async function saveEmployeeAttendance(att: EmployeeAttendance): Promise<void> {
-  try {
-    await setDoc(doc(db, "employee_attendance", att.id), cleanObject(att));
-  } catch (err) {
-    console.error("Error saving attendance to Firestore:", err);
-  }
-}
-
-async function deleteEmployeeAttendance(id: string): Promise<void> {
-  try {
-    await deleteDoc(doc(db, "employee_attendance", id));
-  } catch (err) {
-    console.error("Error deleting attendance from Firestore:", err);
-  }
-}
-
-// In-memory cache to prevent redundant writes (saving over 99% of Firestore writes)
-const daysCache = new Map<string, any>();
-let daysLoaded = false;
-
-const taxInvoicesCache = new Map<string, any>();
-let taxInvoicesLoaded = false;
-
-const dieselsCache = new Map<string, any>();
-let dieselsLoaded = false;
-
-const purchasesCache = new Map<string, any>();
-let purchasesLoaded = false;
-
 function isDeepEqual(obj1: any, obj2: any): boolean {
   if (obj1 === obj2) return true;
   if (obj1 == null || obj2 == null) return false;
@@ -525,6 +226,581 @@ if (!fs.existsSync(DATA_BACKUP_DIR)) {
   } catch {}
 }
 
+function readBackupJson<T>(filename: string, fallback: T): T {
+  try {
+    const filePath = path.join(DATA_BACKUP_DIR, filename);
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      return JSON.parse(raw) as T;
+    }
+  } catch (e) {
+    console.warn(`[Local Cache] Failed reading ${filename}:`, e);
+  }
+  return fallback;
+}
+
+function writeBackupJson(filename: string, data: any): void {
+  try {
+    const filePath = path.join(DATA_BACKUP_DIR, filename);
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+  } catch (e) {
+    console.warn(`[Local Cache] Failed writing ${filename}:`, e);
+  }
+}
+
+function hasBackupJson(filename: string): boolean {
+  try {
+    const filePath = path.join(DATA_BACKUP_DIR, filename);
+    return fs.existsSync(filePath);
+  } catch {
+    return false;
+  }
+}
+
+// Global flag to track if Firestore free daily read quota has been exceeded
+let isFirestoreReadQuotaExceeded = true;
+
+function checkFirestoreError(err: any): void {
+  const msg = String(err?.message || err || "");
+  if (msg.includes("Quota limit exceeded") || msg.includes("Quota exceeded") || msg.includes("Free daily read units")) {
+    isFirestoreReadQuotaExceeded = true;
+  }
+}
+
+// In-memory caches to prevent redundant reads and writes (saving >99% of Firestore reads/writes)
+let cachedSettings: Settings | null = null;
+
+async function getSettings(): Promise<Settings> {
+  if (cachedSettings) {
+    return { ...cachedSettings };
+  }
+  if (hasBackupJson("settings_backup.json")) {
+    const localSettings = readBackupJson<Settings | null>("settings_backup.json", null);
+    if (localSettings) {
+      cachedSettings = {
+        ...DEFAULT_SETTINGS,
+        ...localSettings,
+        "سقف_بيبسي_قادسية": localSettings.سقف_بيبسي_قادسية ?? localSettings.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_قادسية,
+        "سقف_بيبسي_مروج": localSettings.سقف_بيبسي_مروج ?? localSettings.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_مروج,
+        "سقف_بلاستيك_قادسية": localSettings.سقف_بلاستيك_قادسية ?? localSettings.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_قادسية,
+        "سقف_بلاستيك_مروج": localSettings.سقف_بلاستيك_مروج ?? localSettings.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_مروج,
+        "سقف_صلصات_قادسية": localSettings.سقف_صلصات_قادسية ?? localSettings.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_قادسية,
+        "سقف_صلصات_مروج": localSettings.سقف_صلصات_مروج ?? localSettings.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج,
+      };
+      return { ...cachedSettings };
+    }
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    cachedSettings = { ...DEFAULT_SETTINGS };
+    writeBackupJson("settings_backup.json", cachedSettings);
+    return { ...cachedSettings };
+  }
+
+  try {
+    const snap = await getDoc(doc(db, "settings", "app_settings"));
+    if (snap.exists()) {
+      const data = snap.data() as Settings;
+      cachedSettings = {
+        ...DEFAULT_SETTINGS,
+        ...data,
+        "سقف_بيبسي_قادسية": data.سقف_بيبسي_قادسية ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_قادسية,
+        "سقف_بيبسي_مروج": data.سقف_بيبسي_مروج ?? data.سقف_بيبسي ?? DEFAULT_SETTINGS.سقف_بيبسي_مروج,
+        "سقف_بلاستيك_قادسية": data.سقف_بلاستيك_قادسية ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_قادسية,
+        "سقف_بلاستيك_مروج": data.سقف_بلاستيك_مروج ?? data.سقف_بلاستيك ?? DEFAULT_SETTINGS.سقف_بلاستيك_مروج,
+        "سقف_صلصات_قادسية": data.سقف_صلصات_قادسية ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_قادسية,
+        "سقف_صلصات_مروج": data.سقف_صلصات_مروج ?? data.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج,
+      } as Settings;
+      writeBackupJson("settings_backup.json", cachedSettings);
+      return { ...cachedSettings };
+    } else {
+      await setDoc(doc(db, "settings", "app_settings"), cleanObject(DEFAULT_SETTINGS)).catch(() => {});
+      cachedSettings = { ...DEFAULT_SETTINGS };
+      writeBackupJson("settings_backup.json", cachedSettings);
+      return { ...cachedSettings };
+    }
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not read settings from Firestore, using local defaults:", err);
+    cachedSettings = { ...DEFAULT_SETTINGS };
+    writeBackupJson("settings_backup.json", cachedSettings);
+    return DEFAULT_SETTINGS;
+  }
+}
+
+async function saveSettings(settings: Settings): Promise<void> {
+  cachedSettings = { ...settings };
+  writeBackupJson("settings_backup.json", cachedSettings);
+  try {
+    await setDoc(doc(db, "settings", "app_settings"), cleanObject(settings));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.error("Error saving settings to Firestore (preserved locally):", err);
+  }
+}
+
+const DEFAULT_DEDUCTION_CONFIG: EmployeeDeductionConfig = {
+  id: "global-rules",
+  simpleThresholdMinutes: 15,
+  mediumThresholdMinutes: 30,
+  largeThresholdMinutes: 60,
+  simpleMaxWarnings: 3,
+  simpleDeductionHours: 1,
+  mediumDeductionHours: 3,
+  largeDeductionDayFraction: 0.5,
+  severeDeductionDayFraction: 1.0
+};
+
+let cachedDeductionConfig: EmployeeDeductionConfig | null = null;
+
+async function getEmployeeDeductionConfig(): Promise<EmployeeDeductionConfig> {
+  if (cachedDeductionConfig) return { ...cachedDeductionConfig };
+  if (hasBackupJson("employee_deduction_rules_backup.json")) {
+    const local = readBackupJson<EmployeeDeductionConfig | null>("employee_deduction_rules_backup.json", null);
+    if (local) {
+      cachedDeductionConfig = { ...local };
+      return { ...cachedDeductionConfig };
+    }
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    cachedDeductionConfig = { ...DEFAULT_DEDUCTION_CONFIG };
+    writeBackupJson("employee_deduction_rules_backup.json", cachedDeductionConfig);
+    return { ...cachedDeductionConfig };
+  }
+
+  try {
+    const snap = await getDoc(doc(db, "settings", "employee_deduction_rules"));
+    if (snap.exists()) {
+      cachedDeductionConfig = snap.data() as EmployeeDeductionConfig;
+      writeBackupJson("employee_deduction_rules_backup.json", cachedDeductionConfig);
+      return { ...cachedDeductionConfig };
+    } else {
+      await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(DEFAULT_DEDUCTION_CONFIG)).catch(() => {});
+      cachedDeductionConfig = { ...DEFAULT_DEDUCTION_CONFIG };
+      writeBackupJson("employee_deduction_rules_backup.json", cachedDeductionConfig);
+      return { ...cachedDeductionConfig };
+    }
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Error reading employee deduction rules from Firestore, using defaults:", err);
+    cachedDeductionConfig = { ...DEFAULT_DEDUCTION_CONFIG };
+    writeBackupJson("employee_deduction_rules_backup.json", cachedDeductionConfig);
+    return DEFAULT_DEDUCTION_CONFIG;
+  }
+}
+
+async function saveEmployeeDeductionConfig(config: EmployeeDeductionConfig): Promise<void> {
+  cachedDeductionConfig = { ...config };
+  writeBackupJson("employee_deduction_rules_backup.json", cachedDeductionConfig);
+  try {
+    await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(config));
+  } catch (err) {
+    console.error("Error saving employee deduction rules to Firestore:", err);
+  }
+}
+
+let usersCache = new Map<string, UnifiedUser>();
+let usersLoaded = false;
+
+async function getUsers(): Promise<UnifiedUser[]> {
+  if (usersLoaded) {
+    return Array.from(usersCache.values()).map(u => ({ ...u }));
+  }
+  if (hasBackupJson("users_backup.json")) {
+    const localUsers = readBackupJson<UnifiedUser[]>("users_backup.json", []);
+    if (localUsers.length > 0) {
+      usersCache.clear();
+      localUsers.forEach(u => { if (u && u.id) usersCache.set(u.id, u); });
+      usersLoaded = true;
+      return Array.from(usersCache.values()).map(u => ({ ...u }));
+    }
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    const defaultList: UnifiedUser[] = [{
+      id: "admin",
+      username: "admin",
+      displayName: "المدير العام",
+      password: "123",
+      role: "مدير",
+      status: "نشط",
+      branch: "الكل",
+      createdAt: new Date().toISOString()
+    }];
+    defaultList.forEach(u => usersCache.set(u.id, u));
+    writeBackupJson("users_backup.json", defaultList);
+    usersLoaded = true;
+    return defaultList;
+  }
+  try {
+    const snap = await getDocs(collection(db, "users"));
+    const list: UnifiedUser[] = [];
+    usersCache.clear();
+    snap.forEach((d) => {
+      const data = d.data() as UnifiedUser;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+        usersCache.set(data.id, data);
+      }
+    });
+
+    if (list.length === 0) {
+      const defaultAdmin: UnifiedUser = {
+        id: "admin",
+        username: "admin",
+        displayName: "المدير العام",
+        password: "123",
+        role: "مدير",
+        status: "نشط",
+        branch: "الكل",
+        createdAt: new Date().toISOString()
+      };
+      await setDoc(doc(db, "users", "admin"), cleanObject(defaultAdmin)).catch(() => {});
+      list.push(defaultAdmin);
+      usersCache.set(defaultAdmin.id, defaultAdmin);
+    }
+
+    writeBackupJson("users_backup.json", list);
+    usersLoaded = true;
+    return list;
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not load users from Firestore, using default admin:", err);
+    const defaultList: UnifiedUser[] = [{
+      id: "admin",
+      username: "admin",
+      displayName: "المدير العام",
+      password: "123",
+      role: "مدير",
+      status: "نشط",
+      branch: "الكل",
+      createdAt: new Date().toISOString()
+    }];
+    defaultList.forEach(u => usersCache.set(u.id, u));
+    writeBackupJson("users_backup.json", defaultList);
+    usersLoaded = true;
+    return defaultList;
+  }
+}
+
+async function saveUser(user: UnifiedUser): Promise<void> {
+  usersCache.set(user.id, user);
+  usersLoaded = true;
+  writeBackupJson("users_backup.json", Array.from(usersCache.values()));
+  try {
+    await setDoc(doc(db, "users", user.id), cleanObject(user));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.error("Error saving user to Firestore:", err);
+  }
+}
+
+async function deleteUser(userId: string): Promise<void> {
+  usersCache.delete(userId);
+  writeBackupJson("users_backup.json", Array.from(usersCache.values()));
+  try {
+    await deleteDoc(doc(db, "users", userId));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.error("Error deleting user from Firestore:", err);
+  }
+}
+
+// --- EMPLOYEE HELPERS (Local-first) ---
+const employeesCache = new Map<string, Employee>();
+let employeesLoaded = false;
+
+async function getEmployees(): Promise<Employee[]> {
+  if (employeesLoaded) {
+    return Array.from(employeesCache.values()).map(e => ({ ...e }));
+  }
+  if (hasBackupJson("employees_backup.json")) {
+    const local = readBackupJson<Employee[]>("employees_backup.json", []);
+    employeesCache.clear();
+    local.forEach(e => { if (e && e.id) employeesCache.set(e.id, e); });
+    employeesLoaded = true;
+    return Array.from(employeesCache.values()).map(e => ({ ...e }));
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    employeesLoaded = true;
+    writeBackupJson("employees_backup.json", []);
+    return [];
+  }
+  try {
+    const snap = await getDocs(collection(db, "employees"));
+    const list: Employee[] = [];
+    employeesCache.clear();
+    snap.forEach((d) => {
+      if (d.id.startsWith("test_perm")) {
+        deleteDoc(doc(db, "employees", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.name || data.salary !== undefined)) {
+        if (!data.id) data.id = d.id;
+        list.push(data as Employee);
+        employeesCache.set(data.id, data as Employee);
+      }
+    });
+    writeBackupJson("employees_backup.json", list);
+    employeesLoaded = true;
+    return list;
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not load employees from Firestore, preserving cached state:", err);
+    employeesLoaded = true;
+    writeBackupJson("employees_backup.json", Array.from(employeesCache.values()));
+    return Array.from(employeesCache.values()).map(e => ({ ...e }));
+  }
+}
+
+async function saveEmployee(emp: Employee): Promise<void> {
+  employeesCache.set(emp.id, emp);
+  employeesLoaded = true;
+  writeBackupJson("employees_backup.json", Array.from(employeesCache.values()));
+  try {
+    await setDoc(doc(db, "employees", emp.id), cleanObject(emp));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not persist employee to Firestore (preserved in local cache):", err);
+  }
+}
+
+async function deleteEmployee(id: string): Promise<void> {
+  employeesCache.delete(id);
+  writeBackupJson("employees_backup.json", Array.from(employeesCache.values()));
+  try {
+    await deleteDoc(doc(db, "employees", id));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not delete employee from Firestore (removed in local cache):", err);
+  }
+}
+
+const employeeAdvancesCache = new Map<string, EmployeeAdvance>();
+let employeeAdvancesLoaded = false;
+
+async function getEmployeeAdvances(): Promise<EmployeeAdvance[]> {
+  if (employeeAdvancesLoaded) {
+    return Array.from(employeeAdvancesCache.values()).map(a => ({ ...a }));
+  }
+  if (hasBackupJson("employee_advances_backup.json")) {
+    const local = readBackupJson<EmployeeAdvance[]>("employee_advances_backup.json", []);
+    employeeAdvancesCache.clear();
+    local.forEach(a => { if (a && a.id) employeeAdvancesCache.set(a.id, a); });
+    employeeAdvancesLoaded = true;
+    return Array.from(employeeAdvancesCache.values()).map(a => ({ ...a }));
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    employeeAdvancesLoaded = true;
+    writeBackupJson("employee_advances_backup.json", []);
+    return [];
+  }
+  try {
+    const snap = await getDocs(collection(db, "employee_advances"));
+    const list: EmployeeAdvance[] = [];
+    employeeAdvancesCache.clear();
+    snap.forEach((d) => {
+      if (d.id.startsWith("test_perm")) {
+        deleteDoc(doc(db, "employee_advances", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.employeeId || data.amount !== undefined)) {
+        if (!data.id) data.id = d.id;
+        list.push(data as EmployeeAdvance);
+        employeeAdvancesCache.set(data.id, data as EmployeeAdvance);
+      }
+    });
+    writeBackupJson("employee_advances_backup.json", list);
+    employeeAdvancesLoaded = true;
+    return list;
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not load advances from Firestore, preserving cached state:", err);
+    employeeAdvancesLoaded = true;
+    writeBackupJson("employee_advances_backup.json", Array.from(employeeAdvancesCache.values()));
+    return Array.from(employeeAdvancesCache.values()).map(a => ({ ...a }));
+  }
+}
+
+async function saveEmployeeAdvance(adv: EmployeeAdvance): Promise<void> {
+  employeeAdvancesCache.set(adv.id, adv);
+  employeeAdvancesLoaded = true;
+  writeBackupJson("employee_advances_backup.json", Array.from(employeeAdvancesCache.values()));
+  try {
+    await setDoc(doc(db, "employee_advances", adv.id), cleanObject(adv));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not persist advance to Firestore (preserved in local cache):", err);
+  }
+}
+
+async function deleteEmployeeAdvance(id: string): Promise<void> {
+  employeeAdvancesCache.delete(id);
+  writeBackupJson("employee_advances_backup.json", Array.from(employeeAdvancesCache.values()));
+  try {
+    await deleteDoc(doc(db, "employee_advances", id));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not delete advance from Firestore (removed in local cache):", err);
+  }
+}
+
+const employeeViolationsCache = new Map<string, EmployeeViolation>();
+let employeeViolationsLoaded = false;
+
+async function getEmployeeViolations(): Promise<EmployeeViolation[]> {
+  if (employeeViolationsLoaded) {
+    return Array.from(employeeViolationsCache.values()).map(v => ({ ...v }));
+  }
+  if (hasBackupJson("employee_violations_backup.json")) {
+    const local = readBackupJson<EmployeeViolation[]>("employee_violations_backup.json", []);
+    employeeViolationsCache.clear();
+    local.forEach(v => { if (v && v.id) employeeViolationsCache.set(v.id, v); });
+    employeeViolationsLoaded = true;
+    return Array.from(employeeViolationsCache.values()).map(v => ({ ...v }));
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    employeeViolationsLoaded = true;
+    writeBackupJson("employee_violations_backup.json", []);
+    return [];
+  }
+  try {
+    const snap = await getDocs(collection(db, "employee_violations"));
+    const list: EmployeeViolation[] = [];
+    employeeViolationsCache.clear();
+    snap.forEach((d) => {
+      if (d.id.startsWith("test_perm")) {
+        deleteDoc(doc(db, "employee_violations", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.employeeId || data.employeeName || data.description)) {
+        if (!data.id) data.id = d.id;
+        list.push(data as EmployeeViolation);
+        employeeViolationsCache.set(data.id, data as EmployeeViolation);
+      }
+    });
+    writeBackupJson("employee_violations_backup.json", list);
+    employeeViolationsLoaded = true;
+    return list;
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not load violations from Firestore, preserving cached state:", err);
+    employeeViolationsLoaded = true;
+    writeBackupJson("employee_violations_backup.json", Array.from(employeeViolationsCache.values()));
+    return Array.from(employeeViolationsCache.values()).map(v => ({ ...v }));
+  }
+}
+
+async function saveEmployeeViolation(v: EmployeeViolation): Promise<void> {
+  employeeViolationsCache.set(v.id, v);
+  employeeViolationsLoaded = true;
+  writeBackupJson("employee_violations_backup.json", Array.from(employeeViolationsCache.values()));
+  try {
+    await setDoc(doc(db, "employee_violations", v.id), cleanObject(v));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not persist violation to Firestore (preserved in local cache):", err);
+  }
+}
+
+async function deleteEmployeeViolation(id: string): Promise<void> {
+  employeeViolationsCache.delete(id);
+  writeBackupJson("employee_violations_backup.json", Array.from(employeeViolationsCache.values()));
+  try {
+    await deleteDoc(doc(db, "employee_violations", id));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not delete violation from Firestore (removed in local cache):", err);
+  }
+}
+
+const employeeAttendanceCache = new Map<string, EmployeeAttendance>();
+let employeeAttendanceLoaded = false;
+
+async function getEmployeeAttendance(): Promise<EmployeeAttendance[]> {
+  if (employeeAttendanceLoaded) {
+    return Array.from(employeeAttendanceCache.values()).map(a => ({ ...a }));
+  }
+  if (hasBackupJson("employee_attendance_backup.json")) {
+    const local = readBackupJson<EmployeeAttendance[]>("employee_attendance_backup.json", []);
+    employeeAttendanceCache.clear();
+    local.forEach(a => { if (a && a.id) employeeAttendanceCache.set(a.id, a); });
+    employeeAttendanceLoaded = true;
+    return Array.from(employeeAttendanceCache.values()).map(a => ({ ...a }));
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    employeeAttendanceLoaded = true;
+    writeBackupJson("employee_attendance_backup.json", []);
+    return [];
+  }
+  try {
+    const snap = await getDocs(collection(db, "employee_attendance"));
+    const list: EmployeeAttendance[] = [];
+    employeeAttendanceCache.clear();
+    snap.forEach((d) => {
+      if (d.id.startsWith("test_perm")) {
+        deleteDoc(doc(db, "employee_attendance", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.employeeId || data.date || data.arrivalTime)) {
+        if (!data.id) data.id = d.id;
+        list.push(data as EmployeeAttendance);
+        employeeAttendanceCache.set(data.id, data as EmployeeAttendance);
+      }
+    });
+    writeBackupJson("employee_attendance_backup.json", list);
+    employeeAttendanceLoaded = true;
+    return list;
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not load attendance from Firestore, preserving cached state:", err);
+    employeeAttendanceLoaded = true;
+    writeBackupJson("employee_attendance_backup.json", Array.from(employeeAttendanceCache.values()));
+    return Array.from(employeeAttendanceCache.values()).map(a => ({ ...a }));
+  }
+}
+
+async function saveEmployeeAttendance(att: EmployeeAttendance): Promise<void> {
+  employeeAttendanceCache.set(att.id, att);
+  employeeAttendanceLoaded = true;
+  writeBackupJson("employee_attendance_backup.json", Array.from(employeeAttendanceCache.values()));
+  try {
+    await setDoc(doc(db, "employee_attendance", att.id), cleanObject(att));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not persist attendance to Firestore (preserved in local cache):", err);
+  }
+}
+
+async function deleteEmployeeAttendance(id: string): Promise<void> {
+  employeeAttendanceCache.delete(id);
+  writeBackupJson("employee_attendance_backup.json", Array.from(employeeAttendanceCache.values()));
+  try {
+    await deleteDoc(doc(db, "employee_attendance", id));
+  } catch (err) {
+    checkFirestoreError(err);
+    console.warn("Could not delete attendance from Firestore (removed in local cache):", err);
+  }
+}
+
+// In-memory cache to prevent redundant writes (saving over 99% of Firestore writes)
+const daysCache = new Map<string, any>();
+let daysLoaded = false;
+
+const taxInvoicesCache = new Map<string, any>();
+let taxInvoicesLoaded = false;
+
+const dieselsCache = new Map<string, any>();
+let dieselsLoaded = false;
+
+const purchasesCache = new Map<string, any>();
+let purchasesLoaded = false;
+
 const DAYS_BACKUP_FILE = path.join(DATA_BACKUP_DIR, "days_backup.json");
 function loadDaysFromFile(): DailyEntry[] {
   try {
@@ -551,45 +827,46 @@ async function getDays(): Promise<DailyEntry[]> {
   if (daysLoaded) {
     return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
   }
+
+  // 1. Check local backup file first to prevent costly Firestore collection scan
+  const localDays = loadDaysFromFile();
+  if (localDays && localDays.length > 0) {
+    daysCache.clear();
+    localDays.forEach(d => {
+      if (d && d.id && d.date && !(d as any).test) {
+        daysCache.set(d.id, JSON.parse(JSON.stringify(cleanObject(d))));
+      }
+    });
+    daysLoaded = true;
+    return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
+  }
+
   try {
     const snap = await withTimeout(getDocs(collection(db, "days")), 6000);
     const list: DailyEntry[] = [];
     daysCache.clear();
     snap.forEach((d) => {
       const data = d.data() as DailyEntry;
-      if (data) {
+      if (data && !(data as any).test) {
         if (!data.id) {
           data.id = d.id;
         }
-        list.push(data);
-        // Cache the deeply cleaned version
-        daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
+        if (data.date) {
+          list.push(data);
+          // Cache the deeply cleaned version
+          daysCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
+        }
       }
     });
     if (list.length > 0) {
       saveDaysToFile(list);
-    } else {
-      const localDays = loadDaysFromFile();
-      localDays.forEach(d => {
-        if (d && d.id) {
-          daysCache.set(d.id, JSON.parse(JSON.stringify(cleanObject(d))));
-          list.push(d);
-        }
-      });
     }
     daysLoaded = true;
     return list;
   } catch (err) {
-    console.warn("Could not read days from Firestore, loading from local backup:", err);
-    const localDays = loadDaysFromFile();
-    daysCache.clear();
-    localDays.forEach(d => {
-      if (d && d.id) {
-        daysCache.set(d.id, JSON.parse(JSON.stringify(cleanObject(d))));
-      }
-    });
+    console.warn("Could not read days from Firestore, returning empty or cached:", err);
     daysLoaded = true;
-    return localDays;
+    return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
   }
 }
 
@@ -637,9 +914,10 @@ async function saveDays(days: DailyEntry[]): Promise<void> {
 
 async function deleteDay(id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, "days", id));
     daysCache.delete(id);
+    saveDaysToFile(Array.from(daysCache.values()));
     await deletePurchasesForDay(id);
+    await deleteDoc(doc(db, "days", id));
   } catch (err) {
     console.error("Error deleting day from Firestore:", err);
   }
@@ -681,7 +959,20 @@ async function getInstallmentInvoices(): Promise<InstallmentInvoice[]> {
     return Array.from(invoicesCache.values()).map(inv => JSON.parse(JSON.stringify(inv)));
   }
 
-  // 1. Primary: Read from doc(db, "settings", "installment_invoices") - fully allowed by Firestore rules
+  // 1. Primary: Load from local backup file if available (0ms, 0 Firestore reads)
+  const localList = loadInvoicesFromFile();
+  if (localList.length > 0) {
+    invoicesCache.clear();
+    localList.forEach((inv) => {
+      if (inv && inv.id) {
+        invoicesCache.set(inv.id, JSON.parse(JSON.stringify(cleanObject(inv))));
+      }
+    });
+    invoicesLoaded = true;
+    return localList;
+  }
+
+  // 2. Secondary: Read from doc(db, "settings", "installment_invoices")
   try {
     const snap = await getDoc(doc(db, "settings", "installment_invoices"));
     if (snap.exists()) {
@@ -701,23 +992,6 @@ async function getInstallmentInvoices(): Promise<InstallmentInvoice[]> {
     console.warn("Could not read installment_invoices from Firestore settings, using local backup:", err?.message || err);
   }
 
-  // 2. Secondary: Load from local backup file if available
-  const localList = loadInvoicesFromFile();
-  if (localList.length > 0) {
-    invoicesCache.clear();
-    localList.forEach((inv) => {
-      if (inv && inv.id) {
-        invoicesCache.set(inv.id, JSON.parse(JSON.stringify(cleanObject(inv))));
-      }
-    });
-    invoicesLoaded = true;
-    setDoc(doc(db, "settings", "installment_invoices"), {
-      list: cleanObject(localList),
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
-    return localList;
-  }
-
   invoicesLoaded = true;
   return Array.from(invoicesCache.values()).map(inv => JSON.parse(JSON.stringify(inv)));
 }
@@ -735,7 +1009,7 @@ async function saveInstallmentInvoices(invoices: InstallmentInvoice[]): Promise<
   // 1. Save to local file backup
   saveInvoicesToFile(allInvoices);
 
-  // 2. Save entire list to doc(db, "settings", "installment_invoices") (allowed by Firestore rules)
+  // 2. Save entire list to doc(db, "settings", "installment_invoices")
   try {
     await withTimeout(setDoc(doc(db, "settings", "installment_invoices"), {
       list: cleanObject(allInvoices),
@@ -765,6 +1039,26 @@ async function getDiesels(): Promise<SharedDiesel[]> {
   if (dieselsLoaded) {
     return Array.from(dieselsCache.values()).map(b => JSON.parse(JSON.stringify(b)));
   }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("diesel_backup.json")) {
+    const local = readBackupJson<SharedDiesel[]>("diesel_backup.json", []);
+    dieselsCache.clear();
+    local.forEach(d => {
+      if (d && d.id) {
+        dieselsCache.set(d.id, JSON.parse(JSON.stringify(cleanObject(d))));
+      }
+    });
+    dieselsLoaded = true;
+    return Array.from(dieselsCache.values()).map(b => JSON.parse(JSON.stringify(b)));
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    dieselsLoaded = true;
+    writeBackupJson("diesel_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDocs(collection(db, "diesel"));
     const list: SharedDiesel[] = [];
@@ -780,10 +1074,14 @@ async function getDiesels(): Promise<SharedDiesel[]> {
       }
     });
     dieselsLoaded = true;
+    writeBackupJson("diesel_backup.json", list);
     return list;
   } catch (err) {
-    console.error("Error reading diesels from Firestore:", err);
-    return [];
+    checkFirestoreError(err);
+    console.warn("Could not read diesels from Firestore, using cached/empty:", err);
+    dieselsLoaded = true;
+    writeBackupJson("diesel_backup.json", Array.from(dieselsCache.values()));
+    return Array.from(dieselsCache.values()).map(b => JSON.parse(JSON.stringify(b)));
   }
 }
 
@@ -809,26 +1107,46 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
       toWrite.forEach(item => {
         dieselsCache.set(item.id, JSON.parse(JSON.stringify(item.cleaned)));
       });
+      writeBackupJson("diesel_backup.json", Array.from(dieselsCache.values()));
       await Promise.all(toWrite.map(async (item) => {
         try {
           await withTimeout(setDoc(doc(db, "diesel", item.id), item.cleaned), 4000);
-        } catch {}
+        } catch (err) {
+          checkFirestoreError(err);
+        }
       }));
     }
     dieselsLoaded = true;
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving diesels to Firestore:", err);
   }
 }
 
-let taxInvoicesLastFetch = 0;
-const TAX_INVOICES_CACHE_TTL = 30000; // 30 seconds TTL for multi-client synchronicity
-
 async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
-  const isExpired = Date.now() - taxInvoicesLastFetch > TAX_INVOICES_CACHE_TTL;
-  if (taxInvoicesLoaded && !isExpired && !forceRefresh) {
+  if (taxInvoicesLoaded && !forceRefresh) {
     return Array.from(taxInvoicesCache.values());
   }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("tax_invoices_backup.json") && !forceRefresh) {
+    const local = readBackupJson<TaxInvoice[]>("tax_invoices_backup.json", []);
+    taxInvoicesCache.clear();
+    local.forEach(inv => {
+      if (inv && inv.id) {
+        taxInvoicesCache.set(inv.id, cleanObject(inv));
+      }
+    });
+    taxInvoicesLoaded = true;
+    return Array.from(taxInvoicesCache.values());
+  }
+
+  if (isFirestoreReadQuotaExceeded && !forceRefresh) {
+    taxInvoicesLoaded = true;
+    writeBackupJson("tax_invoices_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDocs(collection(db, "tax_invoices"));
     const list: TaxInvoice[] = [];
@@ -840,7 +1158,6 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
         if (!data.id) {
           data.id = d.id;
         }
-        // Normalize items: If product name was placed in category while name was empty, swap them
         if (Array.isArray(data.items)) {
           let wasModified = false;
           data.items = data.items.map((it: any) => {
@@ -865,18 +1182,18 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
         taxInvoicesCache.set(data.id, cleanObject(data));
       }
     });
+    writeBackupJson("tax_invoices_backup.json", list);
     if (itemsToPersist.length > 0) {
       saveTaxInvoices(itemsToPersist).catch(e => console.error("Error auto-fixing invoice item categories:", e));
     }
     taxInvoicesLoaded = true;
-    taxInvoicesLastFetch = Date.now();
     return list;
   } catch (err) {
-    console.error("Error reading tax invoices from Firestore:", err);
-    if (taxInvoicesCache.size > 0) {
-      return Array.from(taxInvoicesCache.values());
-    }
-    return [];
+    checkFirestoreError(err);
+    console.warn("Could not read tax invoices from Firestore, returning cached:", err);
+    taxInvoicesLoaded = true;
+    writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+    return Array.from(taxInvoicesCache.values());
   }
 }
 
@@ -889,9 +1206,7 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
         continue;
       }
       const cleanedNew = cleanObject(i);
-      // Safeguard against Firestore 1MB document limit for rawImage
       if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 900000) {
-        console.warn(`[Firestore Warning] rawImage for invoice ${i.id} is very large (${cleanedNew.rawImage.length} chars). Truncating to prevent Firestore 1MB document limit rejection.`);
         cleanedNew.rawImage = cleanedNew.rawImage.substring(0, 900000);
       }
       const cached = taxInvoicesCache.get(i.id);
@@ -904,13 +1219,19 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
 
     if (toWrite.length > 0) {
       console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new TaxInvoices`);
-      await Promise.all(toWrite.map(async (item) => {
-        await setDoc(doc(db, "tax_invoices", item.id), item.cleaned);
+      toWrite.forEach(item => {
         taxInvoicesCache.set(item.id, item.cleaned);
+      });
+      writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+      await Promise.all(toWrite.map(async (item) => {
+        try {
+          await setDoc(doc(db, "tax_invoices", item.id), item.cleaned);
+        } catch (e) {
+          console.warn("Error persisting tax invoice to Firestore:", e);
+        }
       }));
     }
     taxInvoicesLoaded = true;
-    taxInvoicesLastFetch = Date.now();
   } catch (err) {
     console.error("Error saving tax invoices to Firestore:", err);
   }
@@ -918,8 +1239,9 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
 
 async function deleteTaxInvoice(id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, "tax_invoices", id));
     taxInvoicesCache.delete(id);
+    writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+    await deleteDoc(doc(db, "tax_invoices", id));
   } catch (err) {
     console.error("Error deleting tax invoice from Firestore:", err);
   }
@@ -930,73 +1252,121 @@ interface TaxCompany {
   name: string;
 }
 
+const taxCompaniesCache = new Map<string, TaxCompany>();
+let taxCompaniesLoaded = false;
+
 async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
+  if (taxCompaniesLoaded) {
+    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+  }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("tax_companies_backup.json")) {
+    const local = readBackupJson<TaxCompany[]>("tax_companies_backup.json", []);
+    taxCompaniesCache.clear();
+    local.forEach(c => {
+      if (c && c.id) taxCompaniesCache.set(c.id, c);
+    });
+    taxCompaniesLoaded = true;
+    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    taxCompaniesLoaded = true;
+    writeBackupJson("tax_companies_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDocs(collection(db, "tax_registered_companies"));
     const list: TaxCompany[] = [];
+    taxCompaniesCache.clear();
     snap.forEach((d) => {
       const data = d.data() as Partial<TaxCompany>;
       if (data && typeof data.name === "string" && data.name.trim()) {
-        list.push({
+        const item: TaxCompany = {
           id: data.id || d.id,
           name: data.name.trim(),
-        });
+        };
+        list.push(item);
+        taxCompaniesCache.set(item.id, item);
       }
     });
 
     if (list.length === 0) {
-      // Seed with existing companies from tax_invoices on first launch!
       const invoices = await getTaxInvoices();
       const uniqueNames = Array.from(new Set(invoices.map((i) => i.company).filter(Boolean)));
       for (const name of uniqueNames) {
         if (!name || typeof name !== "string") continue;
         const id = `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const comp: TaxCompany = { id, name: name.trim() };
-        await setDoc(doc(db, "tax_registered_companies", id), comp);
+        await setDoc(doc(db, "tax_registered_companies", id), comp).catch(() => {});
         list.push(comp);
+        taxCompaniesCache.set(comp.id, comp);
       }
     }
 
     list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+    writeBackupJson("tax_companies_backup.json", list);
+    taxCompaniesLoaded = true;
     return list;
   } catch (err) {
-    console.error("Error reading tax registered companies from Firestore:", err);
-    return [];
+    checkFirestoreError(err);
+    console.warn("Could not load tax companies from Firestore, returning cached:", err);
+    taxCompaniesLoaded = true;
+    writeBackupJson("tax_companies_backup.json", Array.from(taxCompaniesCache.values()));
+    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
   }
 }
 
 async function saveTaxRegisteredCompany(company: TaxCompany): Promise<void> {
+  taxCompaniesCache.set(company.id, company);
+  taxCompaniesLoaded = true;
+  writeBackupJson("tax_companies_backup.json", Array.from(taxCompaniesCache.values()));
   try {
-    console.log(`[FIRESTORE SAVE] Attempting to save doc 'tax_registered_companies' with ID: "${company.id}", Name: "${company.name}"`);
     await setDoc(doc(db, "tax_registered_companies", company.id), cleanObject(company));
-    console.log(`[FIRESTORE SAVE] Completed setDoc call for ID: "${company.id}"`);
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving tax registered company to Firestore:", err);
-    throw err;
   }
 }
 
 async function deleteTaxRegisteredCompany(id: string): Promise<void> {
+  taxCompaniesCache.delete(id);
+  writeBackupJson("tax_companies_backup.json", Array.from(taxCompaniesCache.values()));
   try {
-    console.log(`[FIRESTORE DELETE] Attempting to delete doc 'tax_registered_companies' with ID: "${id}"`);
     await deleteDoc(doc(db, "tax_registered_companies", id));
-    console.log(`[FIRESTORE DELETE] Completed deleteDoc call for ID: "${id}"`);
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error deleting tax registered company from Firestore:", err);
-    throw err;
   }
 }
 
 const taxCashCache = new Map<string, TaxCashEntry>();
 let taxCashLoaded = false;
-let taxCashLastFetch = 0;
-const TAX_CASH_CACHE_TTL = 30000;
 
 async function getTaxCashList(forceRefresh = false): Promise<TaxCashEntry[]> {
-  const isExpired = Date.now() - taxCashLastFetch > TAX_CASH_CACHE_TTL;
-  if (taxCashLoaded && !isExpired && !forceRefresh) {
+  if (taxCashLoaded && !forceRefresh) {
     return Array.from(taxCashCache.values());
   }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("tax_cash_backup.json") && !forceRefresh) {
+    const local = readBackupJson<TaxCashEntry[]>("tax_cash_backup.json", []);
+    taxCashCache.clear();
+    local.forEach(r => {
+      if (r && r.id) taxCashCache.set(r.id, r);
+    });
+    taxCashLoaded = true;
+    return Array.from(taxCashCache.values());
+  }
+
+  if (isFirestoreReadQuotaExceeded && !forceRefresh) {
+    taxCashLoaded = true;
+    writeBackupJson("tax_cash_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDoc(doc(db, "settings", "tax_cash_records"));
     if (snap.exists()) {
@@ -1009,12 +1379,15 @@ async function getTaxCashList(forceRefresh = false): Promise<TaxCashEntry[]> {
           }
         });
       }
+      writeBackupJson("tax_cash_backup.json", Array.from(taxCashCache.values()));
     }
     taxCashLoaded = true;
-    taxCashLastFetch = Date.now();
     return Array.from(taxCashCache.values());
   } catch (err) {
-    console.error("Error reading tax_cash from Firestore settings:", err);
+    checkFirestoreError(err);
+    console.warn("Could not read tax_cash from Firestore, using cached:", err);
+    taxCashLoaded = true;
+    writeBackupJson("tax_cash_backup.json", Array.from(taxCashCache.values()));
     return Array.from(taxCashCache.values());
   }
 }
@@ -1029,6 +1402,7 @@ async function saveTaxCashRecord(entry: TaxCashEntry): Promise<TaxCashEntry> {
     updatedAt: new Date().toISOString()
   };
   taxCashCache.set(docId, cleaned);
+  writeBackupJson("tax_cash_backup.json", Array.from(taxCashCache.values()));
   
   const recordsObj: Record<string, TaxCashEntry> = {};
   taxCashCache.forEach((val, key) => {
@@ -1041,14 +1415,15 @@ async function saveTaxCashRecord(entry: TaxCashEntry): Promise<TaxCashEntry> {
       lastUpdated: new Date().toISOString()
     }, { merge: true });
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving tax_cash to Firestore settings:", err);
-    throw err;
   }
   return cleaned;
 }
 
 async function deleteTaxCashRecord(docId: string): Promise<void> {
   taxCashCache.delete(docId);
+  writeBackupJson("tax_cash_backup.json", Array.from(taxCashCache.values()));
   const recordsObj: Record<string, TaxCashEntry> = {};
   taxCashCache.forEach((val, key) => {
     recordsObj[key] = val;
@@ -1059,80 +1434,152 @@ async function deleteTaxCashRecord(docId: string): Promise<void> {
       lastUpdated: new Date().toISOString()
     }, { merge: true });
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error deleting tax_cash from Firestore settings:", err);
-    throw err;
   }
 }
 
+const bakeryCache = new Map<string, BakeryEntry>();
+let bakeryLoaded = false;
+
 async function getBakeryEntries(): Promise<BakeryEntry[]> {
+  if (bakeryLoaded) {
+    return Array.from(bakeryCache.values());
+  }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("bakery_backup.json")) {
+    const local = readBackupJson<BakeryEntry[]>("bakery_backup.json", []);
+    bakeryCache.clear();
+    local.forEach(b => {
+      if (b && b.id) bakeryCache.set(b.id, b);
+    });
+    bakeryLoaded = true;
+    return Array.from(bakeryCache.values());
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    bakeryLoaded = true;
+    writeBackupJson("bakery_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDocs(collection(db, "bakery_entries"));
     const list: BakeryEntry[] = [];
+    bakeryCache.clear();
     snap.forEach((d) => {
       const data = d.data() as BakeryEntry;
       if (data) {
         if (!data.id) data.id = d.id;
         list.push(data);
+        bakeryCache.set(data.id, data);
       }
     });
+    writeBackupJson("bakery_backup.json", list);
+    bakeryLoaded = true;
     return list;
   } catch (err) {
-    console.error("Error reading bakery entries from Firestore:", err);
-    return [];
+    checkFirestoreError(err);
+    console.warn("Could not read bakery entries from Firestore, using cached:", err);
+    bakeryLoaded = true;
+    writeBackupJson("bakery_backup.json", Array.from(bakeryCache.values()));
+    return Array.from(bakeryCache.values());
   }
 }
 
 async function saveBakeryEntry(entry: BakeryEntry): Promise<void> {
+  bakeryCache.set(entry.id, entry);
+  bakeryLoaded = true;
+  writeBackupJson("bakery_backup.json", Array.from(bakeryCache.values()));
   try {
     await withTimeout(setDoc(doc(db, "bakery_entries", entry.id), cleanObject(entry)));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving bakery entry to Firestore:", err);
-    throw err;
   }
 }
 
 async function deleteBakeryEntry(id: string): Promise<void> {
+  bakeryCache.delete(id);
+  writeBackupJson("bakery_backup.json", Array.from(bakeryCache.values()));
   try {
     await deleteDoc(doc(db, "bakery_entries", id));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error deleting bakery entry from Firestore:", err);
-    throw err;
   }
 }
 
+const drinksCache = new Map<string, DrinksEntry>();
+let drinksLoaded = false;
+
 async function getDrinksEntries(): Promise<DrinksEntry[]> {
+  if (drinksLoaded) {
+    return Array.from(drinksCache.values());
+  }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("drinks_backup.json")) {
+    const local = readBackupJson<DrinksEntry[]>("drinks_backup.json", []);
+    drinksCache.clear();
+    local.forEach(d => {
+      if (d && d.id) drinksCache.set(d.id, d);
+    });
+    drinksLoaded = true;
+    return Array.from(drinksCache.values());
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    drinksLoaded = true;
+    writeBackupJson("drinks_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDocs(collection(db, "drinks_entries"));
     const list: DrinksEntry[] = [];
+    drinksCache.clear();
     snap.forEach((d) => {
       const data = d.data() as DrinksEntry;
       if (data) {
         if (!data.id) data.id = d.id;
         list.push(data);
+        drinksCache.set(data.id, data);
       }
     });
+    writeBackupJson("drinks_backup.json", list);
+    drinksLoaded = true;
     return list;
   } catch (err) {
-    console.error("Error reading drinks entries from Firestore:", err);
-    return [];
+    checkFirestoreError(err);
+    console.warn("Could not read drinks entries from Firestore, using cached:", err);
+    drinksLoaded = true;
+    writeBackupJson("drinks_backup.json", Array.from(drinksCache.values()));
+    return Array.from(drinksCache.values());
   }
 }
 
 async function saveDrinksEntry(entry: DrinksEntry): Promise<void> {
+  drinksCache.set(entry.id, entry);
+  drinksLoaded = true;
+  writeBackupJson("drinks_backup.json", Array.from(drinksCache.values()));
   try {
     await withTimeout(setDoc(doc(db, "drinks_entries", entry.id), cleanObject(entry)));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving drinks entry to Firestore:", err);
-    throw err;
   }
 }
 
 async function deleteDrinksEntry(id: string): Promise<void> {
+  drinksCache.delete(id);
+  writeBackupJson("drinks_backup.json", Array.from(drinksCache.values()));
   try {
     await deleteDoc(doc(db, "drinks_entries", id));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error deleting drinks entry from Firestore:", err);
-    throw err;
   }
 }
 
@@ -1147,25 +1594,52 @@ const DEFAULT_DRINK_PRICES = {
   citrus_diet: 2.0
 };
 
+let cachedDrinkPrices: Record<string, number> | null = null;
+
 async function getDrinkPrices(): Promise<Record<string, number>> {
+  if (cachedDrinkPrices) return { ...cachedDrinkPrices };
+
+  if (hasBackupJson("drink_prices_backup.json")) {
+    const local = readBackupJson<Record<string, number> | null>("drink_prices_backup.json", null);
+    if (local) {
+      cachedDrinkPrices = { ...DEFAULT_DRINK_PRICES, ...local };
+      return { ...cachedDrinkPrices };
+    }
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    cachedDrinkPrices = { ...DEFAULT_DRINK_PRICES };
+    writeBackupJson("drink_prices_backup.json", cachedDrinkPrices);
+    return cachedDrinkPrices;
+  }
+
   try {
     const snap = await getDoc(doc(db, "settings", "drink_prices"));
     if (snap.exists()) {
-      return { ...DEFAULT_DRINK_PRICES, ...snap.data() };
+      cachedDrinkPrices = { ...DEFAULT_DRINK_PRICES, ...snap.data() };
+      writeBackupJson("drink_prices_backup.json", cachedDrinkPrices);
+      return { ...cachedDrinkPrices };
     }
-    return DEFAULT_DRINK_PRICES;
+    cachedDrinkPrices = { ...DEFAULT_DRINK_PRICES };
+    writeBackupJson("drink_prices_backup.json", cachedDrinkPrices);
+    return cachedDrinkPrices;
   } catch (err) {
-    console.error("Error reading drink prices from Firestore:", err);
+    checkFirestoreError(err);
+    console.warn("Error reading drink prices from Firestore, using defaults:", err);
+    cachedDrinkPrices = { ...DEFAULT_DRINK_PRICES };
+    writeBackupJson("drink_prices_backup.json", cachedDrinkPrices);
     return DEFAULT_DRINK_PRICES;
   }
 }
 
 async function saveDrinkPrices(prices: Record<string, number>): Promise<void> {
+  cachedDrinkPrices = { ...DEFAULT_DRINK_PRICES, ...prices };
+  writeBackupJson("drink_prices_backup.json", cachedDrinkPrices);
   try {
     await withTimeout(setDoc(doc(db, "settings", "drink_prices"), cleanObject(prices)));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving drink prices to Firestore:", err);
-    throw err;
   }
 }
 
@@ -1173,6 +1647,24 @@ async function getPurchases(): Promise<Purchase[]> {
   if (purchasesLoaded) {
     return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
   }
+
+  // 1. Primary: Local backup (0 reads)
+  if (hasBackupJson("purchases_backup.json")) {
+    const local = readBackupJson<Purchase[]>("purchases_backup.json", []);
+    purchasesCache.clear();
+    local.forEach(p => {
+      if (p && p.id) purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
+    });
+    purchasesLoaded = true;
+    return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
+  }
+
+  if (isFirestoreReadQuotaExceeded) {
+    purchasesLoaded = true;
+    writeBackupJson("purchases_backup.json", []);
+    return [];
+  }
+
   try {
     const snap = await getDocs(collection(db, "purchases"));
     const list: Purchase[] = [];
@@ -1187,11 +1679,15 @@ async function getPurchases(): Promise<Purchase[]> {
         purchasesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
+    writeBackupJson("purchases_backup.json", list);
     purchasesLoaded = true;
     return list;
   } catch (err) {
-    console.error("Error reading purchases from Firestore:", err);
-    return [];
+    checkFirestoreError(err);
+    console.warn("Could not read purchases from Firestore, using cached:", err);
+    purchasesLoaded = true;
+    writeBackupJson("purchases_backup.json", Array.from(purchasesCache.values()));
+    return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
   }
 }
 
@@ -1202,24 +1698,28 @@ async function savePurchase(p: Purchase): Promise<void> {
     if (cached && isDeepEqual(cleanedNew, cached)) {
       return;
     }
-    console.log(`[Firestore Optimization] Saving modified/new Purchase: ${p.id}`);
     purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanedNew)));
     purchasesLoaded = true;
+    writeBackupJson("purchases_backup.json", Array.from(purchasesCache.values()));
     try {
       await withTimeout(setDoc(doc(db, "purchases", p.id), cleanedNew), 4000);
-    } catch {
-      // Memory cache is safe
+    } catch (err) {
+      checkFirestoreError(err);
+      // Memory cache and local backup are safe
     }
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving purchase to Firestore:", err);
   }
 }
 
 async function deletePurchase(id: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, "purchases", id));
     purchasesCache.delete(id);
+    writeBackupJson("purchases_backup.json", Array.from(purchasesCache.values()));
+    await deleteDoc(doc(db, "purchases", id));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error deleting purchase from Firestore:", err);
   }
 }
@@ -1843,34 +2343,68 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
 }
 
 // --- WHATSAPP SYSTEM HELPERS ---
-let memoryWhatsAppConfig: any = { status: "disconnected" };
+let memoryWhatsAppConfig: any = null;
 let memoryWhatsAppMessages: any[] = [];
+let whatsAppMessagesLoaded = false;
 
 async function getWhatsAppConfig(): Promise<any> {
+  if (memoryWhatsAppConfig) return memoryWhatsAppConfig;
+  if (hasBackupJson("whatsapp_config_backup.json")) {
+    const local = readBackupJson<any>("whatsapp_config_backup.json", null);
+    if (local) {
+      memoryWhatsAppConfig = local;
+      return memoryWhatsAppConfig;
+    }
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    memoryWhatsAppConfig = { status: "disconnected" };
+    writeBackupJson("whatsapp_config_backup.json", memoryWhatsAppConfig);
+    return memoryWhatsAppConfig;
+  }
   try {
     const docRef = doc(db, "whatsapp_settings", "global_config");
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data();
       memoryWhatsAppConfig = data;
+      writeBackupJson("whatsapp_config_backup.json", data);
       return data;
     }
   } catch (err) {
-    console.error("Error loading WhatsApp config from Firestore, fallback to memory:", err);
+    checkFirestoreError(err);
+    console.warn("Error loading WhatsApp config from Firestore, fallback to memory:", err);
   }
-  return memoryWhatsAppConfig || { status: "disconnected" };
+  memoryWhatsAppConfig = { status: "disconnected" };
+  writeBackupJson("whatsapp_config_backup.json", memoryWhatsAppConfig);
+  return memoryWhatsAppConfig;
 }
 
 async function saveWhatsAppConfig(config: any): Promise<void> {
   memoryWhatsAppConfig = config;
+  writeBackupJson("whatsapp_config_backup.json", config);
   try {
     await setDoc(doc(db, "whatsapp_settings", "global_config"), cleanObject(config));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving WhatsApp config to Firestore, using memory content anyway:", err);
   }
 }
 
 async function getWhatsAppMessages(): Promise<any[]> {
+  if (whatsAppMessagesLoaded || memoryWhatsAppMessages.length > 0) {
+    return memoryWhatsAppMessages;
+  }
+  if (hasBackupJson("whatsapp_messages_backup.json")) {
+    const local = readBackupJson<any[]>("whatsapp_messages_backup.json", []);
+    memoryWhatsAppMessages = local;
+    whatsAppMessagesLoaded = true;
+    return memoryWhatsAppMessages;
+  }
+  if (isFirestoreReadQuotaExceeded) {
+    whatsAppMessagesLoaded = true;
+    writeBackupJson("whatsapp_messages_backup.json", []);
+    return [];
+  }
   try {
     const snap = await getDocs(collection(db, "whatsapp_messages"));
     const list: any[] = [];
@@ -1883,9 +2417,14 @@ async function getWhatsAppMessages(): Promise<any[]> {
     });
     const sorted = list.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()).slice(0, 100);
     memoryWhatsAppMessages = sorted;
+    whatsAppMessagesLoaded = true;
+    writeBackupJson("whatsapp_messages_backup.json", sorted);
     return sorted;
   } catch (err) {
-    console.error("Error loading WhatsApp messages from Firestore, fallback to memory:", err);
+    checkFirestoreError(err);
+    console.warn("Error loading WhatsApp messages from Firestore, fallback to memory:", err);
+    whatsAppMessagesLoaded = true;
+    writeBackupJson("whatsapp_messages_backup.json", memoryWhatsAppMessages);
     return memoryWhatsAppMessages;
   }
 }
@@ -1895,9 +2434,11 @@ async function saveWhatsAppMessage(msg: any): Promise<void> {
   if (memoryWhatsAppMessages.length > 100) {
     memoryWhatsAppMessages = memoryWhatsAppMessages.slice(0, 100);
   }
+  writeBackupJson("whatsapp_messages_backup.json", memoryWhatsAppMessages);
   try {
     await setDoc(doc(db, "whatsapp_messages", msg.id), cleanObject(msg));
   } catch (err) {
+    checkFirestoreError(err);
     console.error("Error saving WhatsApp message to Firestore, kept in memory anyway:", err);
   }
 }
@@ -1949,7 +2490,7 @@ async function startServer() {
 
       // Test days read
       try {
-        const snap = await getDocs(collection(db, "days"));
+        const snap = await getDocs(query(collection(db, "days"), limit(1)));
         results.databaseTests.daysRead = {
           success: true,
           count: snap.size
@@ -2263,24 +2804,29 @@ async function startServer() {
 
   // 3. DAILY REPORTS / DAYS ENDPOINTS
   app.get("/api/days", async (req, res) => {
-    const branch = req.query.branch as "القادسية" | "المروج";
-    const from = req.query.from as string;
-    const to = req.query.to as string;
+    try {
+      const branch = req.query.branch as "القادسية" | "المروج";
+      const from = req.query.from as string;
+      const to = req.query.to as string;
 
-    let days = await getDays();
+      let days = await getDays();
 
-    if (branch) {
-      days = days.filter((d) => d.branch === branch);
-    }
-    if (from) {
-      days = days.filter((d) => d.date >= from);
-    }
-    if (to) {
-      days = days.filter((d) => d.date <= to);
-    }
+      if (branch) {
+        days = days.filter((d) => d.branch === branch);
+      }
+      if (from) {
+        days = days.filter((d) => d.date && d.date >= from);
+      }
+      if (to) {
+        days = days.filter((d) => d.date && d.date <= to);
+      }
 
-    days.sort((a, b) => a.date.localeCompare(b.date));
-    res.json(days);
+      days.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      res.json(days);
+    } catch (err: any) {
+      console.error("Error in GET /api/days:", err);
+      res.status(500).json({ error: "Failed to fetch days" });
+    }
   });
 
   app.post("/api/days", async (req, res) => {
