@@ -1297,54 +1297,59 @@ interface TaxCompany {
 const taxCompaniesCache = new Map<string, TaxCompany>();
 let taxCompaniesLoaded = false;
 
-async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
-  if (taxCompaniesLoaded) {
+async function getTaxRegisteredCompanies(forceRefresh = false): Promise<TaxCompany[]> {
+  if (taxCompaniesLoaded && !forceRefresh && taxCompaniesCache.size > 0) {
     return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
   }
 
-  // 1. Primary: Local backup (0 reads)
-  if (hasBackupJson("tax_companies_backup.json")) {
+  // 1. Primary: Local backup (0 reads) IF IT HAS VALID DATA
+  if (hasBackupJson("tax_companies_backup.json") && !forceRefresh) {
     const local = readBackupJson<TaxCompany[]>("tax_companies_backup.json", []);
-    taxCompaniesCache.clear();
-    local.forEach(c => {
-      if (c && c.id) taxCompaniesCache.set(c.id, c);
-    });
-    taxCompaniesLoaded = true;
-    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
-  }
-
-  if (isFirestoreReadQuotaExceeded) {
-    taxCompaniesLoaded = true;
-    // preserve backup
-    return [];
+    if (Array.isArray(local) && local.length > 0) {
+      taxCompaniesCache.clear();
+      local.forEach(c => {
+        if (c && c.id && c.name && c.name.trim()) taxCompaniesCache.set(c.id, c);
+      });
+      if (taxCompaniesCache.size > 0) {
+        taxCompaniesLoaded = true;
+        return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+      }
+    }
   }
 
   try {
     const snap = await getDocs(collection(db, "tax_registered_companies"));
     const list: TaxCompany[] = [];
     taxCompaniesCache.clear();
+    const existingNames = new Set<string>();
+
     snap.forEach((d) => {
       const data = d.data() as Partial<TaxCompany>;
-      if (data && typeof data.name === "string" && data.name.trim()) {
+      if (data && typeof data.name === "string" && data.name.trim() && data.name.trim() !== "فاتورة" && !(data as any).test) {
         const item: TaxCompany = {
           id: data.id || d.id,
           name: data.name.trim(),
         };
         list.push(item);
         taxCompaniesCache.set(item.id, item);
+        existingNames.add(item.name.trim());
       }
     });
 
-    if (list.length === 0) {
-      const invoices = await getTaxInvoices();
-      const uniqueNames = Array.from(new Set(invoices.map((i) => i.company).filter(Boolean)));
-      for (const name of uniqueNames) {
-        if (!name || typeof name !== "string") continue;
-        const id = `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const comp: TaxCompany = { id, name: name.trim() };
-        await setDoc(doc(db, "tax_registered_companies", id), comp).catch(() => {});
-        list.push(comp);
-        taxCompaniesCache.set(comp.id, comp);
+    // Also populate with any company names from existing tax invoices
+    const invoices = await getTaxInvoices();
+    for (const inv of invoices) {
+      if (inv.company && typeof inv.company === "string" && inv.company.trim()) {
+        const cname = inv.company.trim();
+        if (!existingNames.has(cname)) {
+          existingNames.add(cname);
+          const id = `comp-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          const comp: TaxCompany = { id, name: cname };
+          list.push(comp);
+          taxCompaniesCache.set(comp.id, comp);
+          // Persist to Firestore asynchronously without blocking
+          setDoc(doc(db, "tax_registered_companies", id), comp).catch(() => {});
+        }
       }
     }
 
@@ -1354,10 +1359,26 @@ async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
     return list;
   } catch (err) {
     checkFirestoreError(err);
-    console.warn("Could not load tax companies from Firestore, returning cached:", err);
+    console.warn("Could not load tax companies from Firestore, checking invoices cache:", err);
+    // Fallback: extract from invoices cache
+    const invoices = await getTaxInvoices();
+    const list: TaxCompany[] = [];
+    const seen = new Set<string>();
+    invoices.forEach((inv, idx) => {
+      if (inv.company && typeof inv.company === "string" && inv.company.trim()) {
+        const cname = inv.company.trim();
+        if (!seen.has(cname)) {
+          seen.add(cname);
+          const comp: TaxCompany = { id: `comp-inv-${idx}`, name: cname };
+          list.push(comp);
+          taxCompaniesCache.set(comp.id, comp);
+        }
+      }
+    });
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
     taxCompaniesLoaded = true;
-    writeBackupJson("tax_companies_backup.json", Array.from(taxCompaniesCache.values()));
-    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+    writeBackupJson("tax_companies_backup.json", list);
+    return list;
   }
 }
 
@@ -3490,7 +3511,8 @@ async function startServer() {
   // 5. TAX INVOICE ENDPOINTS
   app.get("/api/tax-companies", async (req, res) => {
     try {
-      const list = await getTaxRegisteredCompanies();
+      const fresh = req.query.fresh === "true";
+      const list = await getTaxRegisteredCompanies(fresh);
       res.json(list);
     } catch (err: any) {
       console.error("Error in /api/tax-companies:", err);

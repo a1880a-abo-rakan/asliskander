@@ -864,16 +864,27 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   };
 
+  const syncCompaniesWithInvoices = (comps: TaxCompany[], invList: TaxInvoice[]) => {
+    const set = new Set<string>();
+    comps.forEach(c => {
+      if (c && c.name && c.name.trim()) set.add(c.name.trim());
+    });
+    invList.forEach(i => {
+      if (i && i.company && i.company.trim()) set.add(i.company.trim());
+    });
+    const companyNames = Array.from(set).sort((a, b) => a.localeCompare(b, "ar"));
+    cachedAllCompanies = companyNames;
+    setAllCompanies(companyNames);
+  };
+
   const loadCompanies = async () => {
     try {
-      const res = await fetch("/api/tax-companies");
+      const res = await fetch("/api/tax-companies?fresh=true");
       if (res.ok) {
         const data = await res.json() as TaxCompany[];
         cachedRegisteredCompanies = data;
-        const companyNames = data.map(c => c.name);
-        cachedAllCompanies = companyNames;
         setRegisteredCompanies(data);
-        setAllCompanies(companyNames);
+        syncCompaniesWithInvoices(data, invoices);
       }
     } catch (err) {
       console.error("Error loading tax companies:", err);
@@ -1126,6 +1137,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
             }));
             cachedInvoices = normalized;
             setInvoices(normalized);
+            syncCompaniesWithInvoices(cachedRegisteredCompanies, normalized);
           })
           .catch((err) => console.error("Error loading tax invoices:", err))
       );
