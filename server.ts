@@ -1173,27 +1173,23 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
     return Array.from(taxInvoicesCache.values());
   }
 
-  // 1. Primary: Local backup (0 reads)
+  // 1. Check local backup first if available and has data
   if (hasBackupJson("tax_invoices_backup.json") && !forceRefresh) {
     const local = readBackupJson<TaxInvoice[]>("tax_invoices_backup.json", []);
-    taxInvoicesCache.clear();
-    local.forEach(inv => {
-      if (inv && inv.id) {
-        taxInvoicesCache.set(inv.id, cleanObject(inv));
-      }
-    });
-    taxInvoicesLoaded = true;
-    return Array.from(taxInvoicesCache.values());
-  }
-
-  if (isFirestoreReadQuotaExceeded && !forceRefresh) {
-    taxInvoicesLoaded = true;
-    writeBackupJson("tax_invoices_backup.json", []);
-    return [];
+    if (local && local.length > 0) {
+      taxInvoicesCache.clear();
+      local.forEach(inv => {
+        if (inv && inv.id) {
+          taxInvoicesCache.set(inv.id, cleanObject(inv));
+        }
+      });
+      taxInvoicesLoaded = true;
+      return Array.from(taxInvoicesCache.values());
+    }
   }
 
   try {
-    const snap = await getDocs(collection(db, "tax_invoices"));
+    const snap = await withTimeout(getDocs(collection(db, "tax_invoices")), 10000);
     const list: TaxInvoice[] = [];
     const itemsToPersist: TaxInvoice[] = [];
     taxInvoicesCache.clear();
@@ -1318,7 +1314,7 @@ async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
 
   if (isFirestoreReadQuotaExceeded) {
     taxCompaniesLoaded = true;
-    writeBackupJson("tax_companies_backup.json", []);
+    // preserve backup
     return [];
   }
 
@@ -1693,25 +1689,21 @@ async function getPurchases(): Promise<Purchase[]> {
     return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
   }
 
-  // 1. Primary: Local backup (0 reads)
+  // 1. Check local backup first if available and has items
   if (hasBackupJson("purchases_backup.json")) {
     const local = readBackupJson<Purchase[]>("purchases_backup.json", []);
-    purchasesCache.clear();
-    local.forEach(p => {
-      if (p && p.id) purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
-    });
-    purchasesLoaded = true;
-    return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
-  }
-
-  if (isFirestoreReadQuotaExceeded) {
-    purchasesLoaded = true;
-    writeBackupJson("purchases_backup.json", []);
-    return [];
+    if (local && local.length > 0) {
+      purchasesCache.clear();
+      local.forEach(p => {
+        if (p && p.id) purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
+      });
+      purchasesLoaded = true;
+      return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
+    }
   }
 
   try {
-    const snap = await getDocs(collection(db, "purchases"));
+    const snap = await withTimeout(getDocs(collection(db, "purchases")), 10000);
     const list: Purchase[] = [];
     purchasesCache.clear();
     snap.forEach((d) => {
@@ -3684,8 +3676,8 @@ async function startServer() {
         items: invoiceItems,
         createdBy: data.createdBy || "",
         status: data.status || "approved",
-        rawImage: data.rawImage || "",
-        fileType: data.fileType || ""
+        rawImage: (data.status === "approved") ? "" : (data.rawImage || ""),
+        fileType: (data.status === "approved") ? "" : (data.fileType || "")
       };
 
       invoices.push(invoice);
@@ -3751,8 +3743,10 @@ async function startServer() {
       const existingInvoices = await getTaxInvoices();
       const existing = existingInvoices.find(i => i.id === id);
 
-      const rawImg = data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || "");
-      const fileTp = data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || "");
+      // If the invoice is being approved by the manager, remove the image so it doesn't weigh down system memory and disk
+      const isApprovedStatus = (data.status === "approved");
+      const rawImg = isApprovedStatus ? "" : (data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || ""));
+      const fileTp = isApprovedStatus ? "" : (data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || ""));
 
       const rawItems = Array.isArray(data.items) ? data.items : (existing?.items || []);
       const normalizedItems = rawItems.map((it: any) => {

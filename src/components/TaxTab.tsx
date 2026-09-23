@@ -1010,7 +1010,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const normalizedInv = {
         ...inv,
         items: normalizeInvoiceItems(inv.items),
-        status: "approved" as const
+        status: "approved" as const,
+        rawImage: "",
+        fileType: ""
       };
       if (exists) {
         updatedList = prev.map((i) =>
@@ -1034,7 +1036,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const updated = {
         ...inv,
         items: normalizeInvoiceItems(inv.items),
-        status: "approved" as const
+        status: "approved" as const,
+        rawImage: "",
+        fileType: ""
       };
       const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`, {
         method: "PUT",
