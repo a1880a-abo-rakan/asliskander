@@ -258,7 +258,7 @@ function hasBackupJson(filename: string): boolean {
 }
 
 // Global flag to track if Firestore free daily read quota has been exceeded
-let isFirestoreReadQuotaExceeded = true;
+let isFirestoreReadQuotaExceeded = false;
 
 function checkFirestoreError(err: any): void {
   const msg = String(err?.message || err || "");
@@ -406,6 +406,29 @@ let usersLoaded = false;
 async function getUsers(): Promise<UnifiedUser[]> {
   if (usersLoaded) {
     return Array.from(usersCache.values()).map(u => ({ ...u }));
+  }
+  // Try fetching fresh users from Firestore first so accounts and passwords are always synced
+  if (!isFirestoreReadQuotaExceeded) {
+    try {
+      const snap = await withTimeout(getDocs(collection(db, "users")), 5000);
+      const list: UnifiedUser[] = [];
+      usersCache.clear();
+      snap.forEach((d) => {
+        const data = d.data() as UnifiedUser;
+        if (data) {
+          if (!data.id) data.id = d.id;
+          list.push(data);
+          usersCache.set(data.id, data);
+        }
+      });
+      if (list.length > 0) {
+        writeBackupJson("users_backup.json", list);
+        usersLoaded = true;
+        return list;
+      }
+    } catch (e) {
+      console.warn("Could not fetch users directly from Firestore, checking backup:", e);
+    }
   }
   if (hasBackupJson("users_backup.json")) {
     const localUsers = readBackupJson<UnifiedUser[]>("users_backup.json", []);
@@ -838,6 +861,28 @@ async function getDays(): Promise<DailyEntry[]> {
       }
     });
     daysLoaded = true;
+
+    // Concurrently trigger background sync with Firestore if online to fetch newest days (e.g. recent dates)
+    if (!isFirestoreReadQuotaExceeded) {
+      withTimeout(getDocs(collection(db, "days")), 7000).then(snap => {
+        let changed = false;
+        snap.forEach(d => {
+          const data = d.data() as DailyEntry;
+          if (data && !(data as any).test && data.date) {
+            const docId = data.id || d.id;
+            data.id = docId;
+            if (!daysCache.has(docId)) {
+              daysCache.set(docId, JSON.parse(JSON.stringify(cleanObject(data))));
+              changed = true;
+            }
+          }
+        });
+        if (changed) {
+          saveDaysToFile(Array.from(daysCache.values()));
+        }
+      }).catch(e => console.warn("Background days sync notice:", e?.message || e));
+    }
+
     return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
   }
 

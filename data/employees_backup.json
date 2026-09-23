@@ -1,1 +1,126 @@
-[]
+[
+  {
+    "salary": 2500,
+    "job": "كاشير ومساعد",
+    "requiredArrivalTime": "16:00",
+    "advanceLimitPercent": 25,
+    "name": "مروان",
+    "phone": "",
+    "createdAt": "2026-06-13T13:13:06.569Z",
+    "requiredDepartureTime": "04:30",
+    "id": "emp-1781356386569-38"
+  },
+  {
+    "phone": "0544818341",
+    "salary": 2500,
+    "id": "emp-1781442683812-633",
+    "job": "مساعد",
+    "advanceLimitPercent": 25,
+    "requiredArrivalTime": "16:00",
+    "name": "موسى",
+    "createdAt": "2026-06-14T13:11:23.812Z",
+    "requiredDepartureTime": "05:00"
+  },
+  {
+    "id": "emp-1781442761667-815",
+    "requiredDepartureTime": "05:00",
+    "phone": "0545036849",
+    "salary": 1500,
+    "job": "عامل مطبخ وساعد",
+    "requiredArrivalTime": "16:00",
+    "advanceLimitPercent": 25,
+    "name": "اسلام",
+    "createdAt": "2026-06-14T13:12:41.667Z"
+  },
+  {
+    "job": "شيف",
+    "requiredArrivalTime": "15:00",
+    "advanceLimitPercent": 25,
+    "salary": 4000,
+    "phone": "0573314177",
+    "id": "emp-1781442819196-436",
+    "createdAt": "2026-06-14T13:13:39.196Z",
+    "name": "محمد المغربي",
+    "requiredDepartureTime": "03:00"
+  },
+  {
+    "salary": 2000,
+    "createdAt": "2026-07-06T14:38:15.253Z",
+    "requiredDepartureTime": "04:20",
+    "phone": "",
+    "name": "أمجد ارناؤط",
+    "job": "مساعد شيف",
+    "advanceLimitPercent": 25,
+    "requiredArrivalTime": "16:20",
+    "id": "emp-1783348695253-363"
+  },
+  {
+    "salary": 3500,
+    "requiredDepartureTime": "03:00",
+    "job": "شيف",
+    "id": "emp-1783348737498-373",
+    "phone": "",
+    "createdAt": "2026-07-06T14:38:57.498Z",
+    "requiredArrivalTime": "15:00",
+    "advanceLimitPercent": 25,
+    "name": "عبدالرحيم اوملوك"
+  },
+  {
+    "requiredDepartureTime": "21:00",
+    "salary": 2500,
+    "id": "emp-1783348776158-70",
+    "job": "خباز",
+    "name": "صالح علام",
+    "phone": "",
+    "createdAt": "2026-07-06T14:39:36.158Z",
+    "requiredArrivalTime": "09:00",
+    "advanceLimitPercent": 25
+  },
+  {
+    "requiredArrivalTime": "16:00",
+    "advanceLimitPercent": 25,
+    "salary": 1800,
+    "requiredDepartureTime": "05:00",
+    "id": "emp-1783348809768-877",
+    "name": "مجبور",
+    "phone": "",
+    "job": "عامل مطبخ",
+    "createdAt": "2026-07-06T14:40:09.768Z"
+  },
+  {
+    "job": "معد وجبات سريعة",
+    "createdAt": "2026-07-06T14:40:41.965Z",
+    "name": "محمد شاهين",
+    "requiredDepartureTime": "05:00",
+    "salary": 1500,
+    "requiredArrivalTime": "16:00",
+    "advanceLimitPercent": 25,
+    "id": "emp-1783348841965-702",
+    "phone": ""
+  },
+  {
+    "id": "emp-1784172077753-269",
+    "phone": "",
+    "job": "دعم وتوصيل",
+    "createdAt": "2026-07-16T03:21:17.753Z",
+    "name": "جمال",
+    "requiredDepartureTime": "04:00",
+    "salary": 1000,
+    "advanceLimitPercent": 25,
+    "requiredArrivalTime": "16:00"
+  },
+  {
+    "excusedAbsenceDays": 0,
+    "requiredDepartureTime": "12:00",
+    "salary": 4000,
+    "name": "انتصار سليمان صالح البلوي",
+    "job": "محاسب",
+    "insuranceDeduction": 430,
+    "advanceLimitPercent": 25,
+    "requiredArrivalTime": "16:00",
+    "id": "emp-1786366104530-283",
+    "createdAt": "2026-08-10T12:48:24.530Z",
+    "unexcusedAbsenceDays": 5,
+    "phone": "0542044102"
+  }
+]
