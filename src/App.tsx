@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   Plus, Settings as SettingsIcon, BarChart3, Receipt,
   User, Shield, Calendar, LogOut, Check, Building2, Terminal, ShoppingBag, Users,
-  Timer, AlertTriangle, ChefHat, CupSoda
+  Timer, AlertTriangle, ChefHat, CupSoda, Zap, RefreshCw
 } from "lucide-react";
 import DailyInputTab from "./components/DailyInputTab";
 import PurchasesTab from "./components/PurchasesTab";
@@ -167,6 +167,26 @@ export default function App() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState("");
+  const [headerCleaning, setHeaderCleaning] = useState(false);
+
+  const handleQuickSystemCleanup = async () => {
+    if (currentUser?.role !== "مدير") return;
+    setHeaderCleaning(true);
+    try {
+      const res = await fetch("/api/app-state/cleanup", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message || "⚡ تم تنظيف وتسريع النظام بنجاح!");
+      } else {
+        showToast("⚠️ " + (data.error || "فشل تنظيف النظام"));
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("❌ خطأ أثناء الاتصال بالخادم لتنظيف النظام");
+    } finally {
+      setHeaderCleaning(false);
+    }
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -510,7 +530,23 @@ export default function App() {
 
         {/* Roles controls */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {currentUser.role === "مدير" && (
+              <button
+                onClick={handleQuickSystemCleanup}
+                disabled={headerCleaning}
+                title="تنظيف الذاكرة المؤقتة وتسريع النظام الشامل"
+                className="bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 hover:text-white border border-emerald-500/40 hover:border-emerald-400 rounded-xl px-3 py-1.5 text-xs font-bold font-sans flex items-center gap-1.5 cursor-pointer transition-all shadow-xs disabled:opacity-50"
+              >
+                {headerCleaning ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                ) : (
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                )}
+                <span className="hidden sm:inline">تسريع وتنظيف النظام</span>
+              </button>
+            )}
+
             <div className="flex items-center gap-2 text-xs bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-xl border border-slate-700/50">
               <User className="w-4 h-4 text-indigo-400" />
               <span>أهلاً، <span className="font-extrabold text-white">{currentUser.displayName}</span></span>

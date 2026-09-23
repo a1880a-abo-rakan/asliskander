@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { createServer as createViteServer } from "vite";
 import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry, InstallmentInvoice } from "./src/types";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
@@ -4701,7 +4702,95 @@ async function startServer() {
   });
 
 
-  // Catch-all JSON 404 handler for any unhandled /api/* requests
+  // --- SYSTEM CLEANUP AND MEMORY OPTIMIZATION ENDPOINT ---
+  app.post("/api/app-state/cleanup", async (req, res) => {
+    try {
+      let cleanedApprovedImages = 0;
+      let memoryBeforeMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+      // 1. Purge any stale images from approved invoices in memory cache & local backup
+      if (taxInvoicesCache.size > 0) {
+        let modified = false;
+        taxInvoicesCache.forEach((inv, id) => {
+          const isApproved = (inv.status === "approved" || (inv as any).is_approved);
+          if (isApproved && (inv.rawImage || inv.fileType)) {
+            inv.rawImage = "";
+            inv.fileType = "";
+            taxInvoicesCache.set(id, inv);
+            cleanedApprovedImages++;
+            modified = true;
+          }
+        });
+        if (modified) {
+          writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+        }
+      }
+
+      // Also clean in backup JSON if needed
+      const backupPath = path.join(DATA_BACKUP_DIR, "tax_invoices_backup.json");
+      if (fs.existsSync(backupPath)) {
+        try {
+          const fileData = JSON.parse(fs.readFileSync(backupPath, "utf-8"));
+          if (Array.isArray(fileData)) {
+            let fileMod = false;
+            fileData.forEach((inv: any) => {
+              const isApproved = (inv.status === "approved" || inv.is_approved);
+              if (isApproved && (inv.rawImage || inv.fileType)) {
+                delete inv.rawImage;
+                delete inv.fileType;
+                fileMod = true;
+              }
+            });
+            if (fileMod) {
+              writeBackupJson("tax_invoices_backup.json", fileData);
+            }
+          }
+        } catch (e) {
+          // ignore file read error
+        }
+      }
+
+      // 2. Clean temporary files in OS /tmp directory matching prefix
+      let cleanedTmpFiles = 0;
+      try {
+        const tmpDir = os.tmpdir();
+        if (fs.existsSync(tmpDir)) {
+          const files = fs.readdirSync(tmpDir);
+          for (const f of files) {
+            if (f.startsWith("upload_") || f.startsWith("ocr_") || f.endsWith(".tmp")) {
+              try {
+                fs.unlinkSync(path.join(tmpDir, f));
+                cleanedTmpFiles++;
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+
+      // 3. Trigger V8 Garbage Collection if exposed
+      if (global.gc) {
+        try {
+          global.gc();
+        } catch (_) {}
+      }
+
+      let memoryAfterMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+      res.json({
+        success: true,
+        message: `تم تنظيف الذاكرة المؤقتة وتسريع النظام بنجاح. تم تحرير الذاكرة (${memoryAfterMb}MB)، وتطهير ${cleanedApprovedImages} صورة معتمدة، وحذف ${cleanedTmpFiles} ملف مؤقت.`,
+        details: {
+          cleanedApprovedImages,
+          cleanedTmpFiles,
+          memoryBeforeMb: `${memoryBeforeMb} MB`,
+          memoryAfterMb: `${memoryAfterMb} MB`
+        }
+      });
+    } catch (err: any) {
+      console.error("Error in /api/app-state/cleanup:", err);
+      res.status(500).json({ error: "فشل استكمال تنظيف النظام: " + err.message });
+    }
+  });
   // to prevent them from falling through to the Vite SPA fallback (which returns HTML and breaks client parsing)
   app.all("/api/*", (req, res) => {
     res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });

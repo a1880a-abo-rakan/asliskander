@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Save, RefreshCw, Sliders, ShieldAlert, Sparkles, Percent, DollarSign, Fuel, Layers } from "lucide-react";
+import { Settings, Save, RefreshCw, Sliders, ShieldAlert, Sparkles, Percent, DollarSign, Fuel, Layers, Trash2, Zap, CheckCircle2 } from "lucide-react";
 import { Settings as AppSettings } from "../types";
 
 interface SettingsTabProps {
@@ -33,6 +33,32 @@ export default function SettingsTab({ onShowToast, userRole }: SettingsTabProps)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<string | null>(null);
+
+  const handleSystemCleanup = async () => {
+    if (userRole !== "مدير") {
+      onShowToast("⛔ متاح للمدير فقط");
+      return;
+    }
+    setCleaning(true);
+    setCleanupResult(null);
+    try {
+      const res = await fetch("/api/app-state/cleanup", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setCleanupResult(data.message || "تم تنظيف وتسريع النظام بنجاح!");
+        onShowToast("⚡ تم تنظيف الذاكرة المؤقتة وتسريع النظام بنجاح!");
+      } else {
+        onShowToast("⚠️ " + (data.error || "فشل تنظيف النظام"));
+      }
+    } catch (err) {
+      console.error(err);
+      onShowToast("❌ خطأ أثناء الاتصال بالخادم لتنظيف النظام");
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   const fetchSettings = async () => {
     try {
@@ -373,6 +399,54 @@ export default function SettingsTab({ onShowToast, userRole }: SettingsTabProps)
           </div>
         )}
       </form>
+
+      {/* System Maintenance & Speed Cleanup Panel (Manager Only) */}
+      {userRole === "مدير" && (
+        <div className="bg-gradient-to-br from-slate-900 to-slate-950 rounded-2xl p-6 text-white shadow-xl border border-slate-800 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-black tracking-tight text-slate-100">تنظيف وتسريع النظام الشامل</h3>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  آمن 100%
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed max-w-2xl">
+                يقوم هذا الزر بتفريغ الذاكرة العشوائية (RAM Flush)، وإزالة الملفات المؤقتة، وتطهير أي بقايا لصور الفواتير المعتمدة دون أي مساس بالبيانات المحاسبية أو الفواتير المعلقة.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSystemCleanup}
+              disabled={cleaning}
+              className="px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs rounded-xl shadow-lg hover:shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shrink-0"
+            >
+              {cleaning ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>جارٍ التنظيف والتسريع...</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4 text-amber-300" />
+                  <span>تنظيف الذاكرة المؤقتة وتسريع النظام الآن</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {cleanupResult && (
+            <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-emerald-200 text-xs font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{cleanupResult}</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
