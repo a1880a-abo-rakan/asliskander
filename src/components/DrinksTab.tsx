@@ -133,7 +133,7 @@ export default function DrinksTab({ onShowToast, userRole, userBranch }: DrinksT
       if (res.ok) {
         const data = await res.json();
         // Sort history by date descending
-        const sorted = data.sort((a: DrinksEntry, b: DrinksEntry) => b.date.localeCompare(a.date));
+        const sorted = data.sort((a: DrinksEntry, b: DrinksEntry) => String(b.date || "").localeCompare(String(a.date || "")));
         setHistory(sorted);
       } else {
         onShowToast("❌ فشل تحميل سجل المشروبات");
@@ -160,7 +160,7 @@ export default function DrinksTab({ onShowToast, userRole, userBranch }: DrinksT
     // Filter by same branch and date before selected date
     const branchHistory = history
       .filter((h) => h.branch === selectedBranch && h.date < selectedDate)
-      .sort((a, b) => b.date.localeCompare(a.date)); // descending date order
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))); // descending date order
 
     if (branchHistory.length === 0) {
       if (!silent) onShowToast(`ℹ️ لا يوجد سجلات سابقة لفرع ${selectedBranch} تسبق تاريخ ${selectedDate}`);
@@ -190,7 +190,7 @@ export default function DrinksTab({ onShowToast, userRole, userBranch }: DrinksT
     if (history.length === 0) return 0;
     const branchHistory = history
       .filter((h) => h.branch === selectedBranch && h.date < selectedDate)
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
     if (branchHistory.length === 0) return 0;
     return (branchHistory[0][drinkId] as DrinkItemState)?.current_stock || 0;
   };
@@ -486,12 +486,12 @@ export default function DrinksTab({ onShowToast, userRole, userBranch }: DrinksT
   // Filter history by selected branch and sort ascending by date for range calculations
   const branchHistoryAsc = history
     .filter((h) => h.branch === reportBranch)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 
   // Get shipment records for the selected branch (newest first)
   const shipmentRecordsDesc = history
     .filter((h) => h.branch === reportBranch && isShipmentRecord(h))
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 
   // Determine report range records
   let reportRecords: DrinksEntry[] = [];
@@ -539,7 +539,7 @@ export default function DrinksTab({ onShowToast, userRole, userBranch }: DrinksT
     }
 
     // Sort records in range by date ascending
-    const rangeRecordsSorted = [...reportRecords].sort((a, b) => a.date.localeCompare(b.date));
+    const rangeRecordsSorted = [...reportRecords].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
     const firstRecord = rangeRecordsSorted[0];
     const lastRecord = rangeRecordsSorted[rangeRecordsSorted.length - 1];
 
@@ -1221,7 +1221,7 @@ export default function DrinksTab({ onShowToast, userRole, userBranch }: DrinksT
 
                 {/* Find all shipment entries in this range */}
                 {(() => {
-                  const rangeShipments = reportRecords.filter(isShipmentRecord).sort((a, b) => a.date.localeCompare(b.date));
+                  const rangeShipments = reportRecords.filter(isShipmentRecord).sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
                   if (rangeShipments.length === 0) {
                     return (
                       <p className="text-xs text-slate-400 italic"> لم يتم رصد أي عمليات شحن/توريد بضاعة جديدة خلال هذا المدى المحدد (بيع عادي ومطابقة من الرصيد المتوفر).</p>

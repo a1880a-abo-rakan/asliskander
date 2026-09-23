@@ -1180,7 +1180,7 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
     if (local && local.length > 0) {
       taxInvoicesCache.clear();
       local.forEach(inv => {
-        if (inv && inv.id) {
+        if (inv && inv.id && !(inv as any).test && !String(inv.id).startsWith("test_perm") && (inv.date || inv.invoice_date)) {
           taxInvoicesCache.set(inv.id, cleanObject(inv));
         }
       });
@@ -1195,8 +1195,12 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
     const itemsToPersist: TaxInvoice[] = [];
     taxInvoicesCache.clear();
     snap.forEach((d) => {
-      const data = d.data() as TaxInvoice;
-      if (data) {
+      if (d.id.startsWith("test_perm") || d.id.startsWith("test-connection")) {
+        deleteDoc(doc(db, "tax_invoices", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.date || data.invoice_date)) {
         if (!data.id) {
           data.id = d.id;
         }
@@ -1220,7 +1224,7 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
             itemsToPersist.push(data);
           }
         }
-        list.push(data);
+        list.push(data as TaxInvoice);
         taxInvoicesCache.set(data.id, cleanObject(data));
       }
     });
@@ -1312,7 +1316,7 @@ async function getTaxRegisteredCompanies(forceRefresh = false): Promise<TaxCompa
       });
       if (taxCompaniesCache.size > 0) {
         taxCompaniesLoaded = true;
-        return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+        return Array.from(taxCompaniesCache.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ar"));
       }
     }
   }
@@ -1717,7 +1721,10 @@ async function getPurchases(): Promise<Purchase[]> {
     if (local && local.length > 0) {
       purchasesCache.clear();
       local.forEach(p => {
-        if (p && p.id) purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
+        if (p && p.id && !(p as any).test && !String(p.id).startsWith("test_perm")) {
+          if (!p.date) p.date = new Date().toISOString().split("T")[0];
+          purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
+        }
       });
       purchasesLoaded = true;
       return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
@@ -1729,12 +1736,19 @@ async function getPurchases(): Promise<Purchase[]> {
     const list: Purchase[] = [];
     purchasesCache.clear();
     snap.forEach((d) => {
-      const data = d.data() as Purchase;
-      if (data) {
+      if (d.id.startsWith("test_perm") || d.id.startsWith("test-connection")) {
+        deleteDoc(doc(db, "purchases", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.name || data.price !== undefined)) {
         if (!data.id) {
           data.id = d.id;
         }
-        list.push(data);
+        if (!data.date) {
+          data.date = new Date().toISOString().split("T")[0];
+        }
+        list.push(data as Purchase);
         purchasesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
@@ -2110,7 +2124,7 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
 
   // Filter entries for this branch and sort ascending by date
   const filtered = allDays.filter((d) => d.branch === branch);
-  filtered.sort((a, b) => a.date.localeCompare(b.date));
+  filtered.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 
   // Load all installment invoices
   const allInvoices = await getInstallmentInvoices();
@@ -2235,7 +2249,7 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
   for (const cat of CATEGORIES) {
     let catInvoices = branchInvoices.filter(i => i.category === cat.key);
     // Sort chronologically by date ascending, then enteredAt ascending
-    catInvoices.sort((a, b) => a.date.localeCompare(b.date) || (a.enteredAt || "").localeCompare(b.enteredAt || ""));
+    catInvoices.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.enteredAt || "").localeCompare(String(b.enteredAt || "")));
 
     // Reset simulation state for all invoices in this category
     for (const inv of catInvoices) {
@@ -2504,7 +2518,7 @@ async function saveWhatsAppMessage(msg: any): Promise<void> {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const PORT = 3000;
 
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
@@ -2719,7 +2733,7 @@ async function startServer() {
     }
 
     // Find latest record by date to check remaining carry-overs
-    filtered.sort((a, b) => b.date.localeCompare(a.date));
+    filtered.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
     const latest = filtered[0];
 
     const carries: Array<{
@@ -2800,7 +2814,7 @@ async function startServer() {
         const catInvs = allInvoices.filter(
           inv => inv.branch === branch && inv.category === cat.key && (dateQuery ? inv.date <= dateQuery : true)
         );
-        catInvs.sort((a, b) => a.date.localeCompare(b.date) || (a.enteredAt || "").localeCompare(b.enteredAt || ""));
+        catInvs.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.enteredAt || "").localeCompare(String(b.enteredAt || "")));
 
         // Open invoices with unpaid balance
         const openInvs = catInvs.filter(inv => inv.remainingAmount > 0);
@@ -2880,7 +2894,7 @@ async function startServer() {
         days = days.filter((d) => d.date && d.date <= to);
       }
 
-      days.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      days.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
       res.json(days);
     } catch (err: any) {
       console.error("Error in GET /api/days:", err);
@@ -3196,7 +3210,7 @@ async function startServer() {
     }
 
     // Sort newest first
-    branchInvoices.sort((a, b) => b.date.localeCompare(a.date) || (b.enteredAt || "").localeCompare(a.enteredAt || ""));
+    branchInvoices.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.enteredAt || "").localeCompare(String(a.enteredAt || "")));
 
     if (limitParam && limitParam > 0) {
       branchInvoices = branchInvoices.slice(0, limitParam);
@@ -3431,7 +3445,7 @@ async function startServer() {
     if (from) bills = bills.filter((b) => b.date >= from);
     if (to) bills = bills.filter((b) => b.date <= to);
 
-    bills.sort((a, b) => b.date.localeCompare(a.date));
+    bills.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
     res.json(bills);
   });
 
@@ -3631,7 +3645,7 @@ async function startServer() {
         });
       }
 
-      invoices.sort((a, b) => (b.invoice_date || b.date).localeCompare(a.invoice_date || a.date));
+      invoices.sort((a, b) => String(b.invoice_date || b.date || "").localeCompare(String(a.invoice_date || a.date || "")));
 
       // CRITICAL FOR PERFORMANCE & RENDER STABILITY:
       // Exclude heavy rawImage base64 payloads by default to keep response lightweight (~80KB vs ~200MB).
@@ -4155,7 +4169,7 @@ async function startServer() {
   app.get("/api/purchases", async (req, res) => {
     try {
       const purchases = await getPurchases();
-      purchases.sort((a, b) => b.date.localeCompare(a.date));
+      purchases.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
       res.json(purchases);
     } catch (err: any) {
       console.error("Error listing purchases:", err);
@@ -4245,7 +4259,7 @@ async function startServer() {
   app.get("/api/bakery", async (req, res) => {
     try {
       const entries = await getBakeryEntries();
-      entries.sort((a, b) => b.date.localeCompare(a.date));
+      entries.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
       res.json(entries);
     } catch (err: any) {
       console.error("Error loading bakery entries:", err);
@@ -4288,7 +4302,7 @@ async function startServer() {
   app.get("/api/drinks", async (req, res) => {
     try {
       const entries = await getDrinksEntries();
-      entries.sort((a, b) => b.date.localeCompare(a.date));
+      entries.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
       res.json(entries);
     } catch (err: any) {
       console.error("Error loading drinks entries:", err);

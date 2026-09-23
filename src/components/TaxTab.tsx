@@ -872,7 +872,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     invList.forEach(i => {
       if (i && i.company && i.company.trim()) set.add(i.company.trim());
     });
-    const companyNames = Array.from(set).sort((a, b) => a.localeCompare(b, "ar"));
+    const companyNames = Array.from(set).sort((a, b) => String(a || "").localeCompare(String(b || ""), "ar"));
     cachedAllCompanies = companyNames;
     setAllCompanies(companyNames);
   };
@@ -1041,6 +1041,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
 
     onShowToast(`✅ تم اعتماد وتثبيت فاتورة ${inv.company} بفرع ${inv.branch} بنجاح!`);
+    setIsBranchInvoicesExpanded(true);
 
     // 2. Perform network request in background
     try {
@@ -1130,14 +1131,20 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       promises.push(
         fetch(url)
           .then(async (resInvs) => {
-            const invData = resInvs.ok ? await resInvs.json() : [];
-            const normalized = (Array.isArray(invData) ? invData : []).map((inv: any) => ({
-              ...inv,
-              items: normalizeInvoiceItems(inv.items)
-            }));
-            cachedInvoices = normalized;
-            setInvoices(normalized);
-            syncCompaniesWithInvoices(cachedRegisteredCompanies, normalized);
+            if (resInvs.ok) {
+              const invData = await resInvs.json();
+              if (Array.isArray(invData)) {
+                const normalized = invData.map((inv: any) => ({
+                  ...inv,
+                  items: normalizeInvoiceItems(inv.items)
+                }));
+                cachedInvoices = normalized;
+                setInvoices(normalized);
+                syncCompaniesWithInvoices(cachedRegisteredCompanies, normalized);
+              }
+            } else {
+              console.error("Error response from /api/tax-invoices:", resInvs.status);
+            }
           })
           .catch((err) => console.error("Error loading tax invoices:", err))
       );
@@ -1263,7 +1270,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     if (myInvs.length === 0) return false;
 
     // Sort chronologically by their ID (since ID has timestamp inside)
-    const sorted = [...myInvs].sort((a, b) => a.id.localeCompare(b.id));
+    const sorted = [...myInvs].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
     const latest = sorted[sorted.length - 1];
 
     return latest && latest.id === inv.id;
@@ -2719,11 +2726,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               (i.date === todayStr || i.invoice_date === todayStr || i.date === date || i.status === "pending")
             )
           : branchInvoices;
-        const myInvoicesSorted = [...myInvoices].sort((a, b) => (a.invoice_date || a.date || a.id).localeCompare(b.invoice_date || b.date || b.id));
+        const myInvoicesSorted = [...myInvoices].sort((a, b) => String(a.invoice_date || a.date || a.id || "").localeCompare(String(b.invoice_date || b.date || b.id || "")));
         
         // Keep overall latest invoice check for permission logic
         const overallInvoices = allCombined.filter(i => i.createdBy === currentUser?.username);
-        const overallSorted = [...overallInvoices].sort((a, b) => a.id.localeCompare(b.id));
+        const overallSorted = [...overallInvoices].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
         const latestInvoice = overallSorted[overallSorted.length - 1];
 
         const displayInvoices = [...myInvoicesSorted].reverse();

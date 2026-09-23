@@ -134,7 +134,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
         });
       }
     }
-    return list.sort((a, b) => b.date.localeCompare(a.date));
+    return list.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   };
 
   const getOtherExpensesList = () => {
@@ -197,7 +197,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
         });
       }
     }
-    return list.sort((a, b) => b.date.localeCompare(a.date));
+    return list.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
   };
 
   // Group all expenses
@@ -307,7 +307,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
 
   // Build high-precision credit ledger metrics for Pepsi, Plastics, Sauces, and Diesel installments
   const computeInstallmentsReport = (daysList: DailyEntry[]) => {
-    const sortedDays = [...daysList].sort((a, b) => a.date.localeCompare(b.date));
+    const sortedDays = [...daysList].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
     if (sortedDays.length === 0) return [];
 
     const categories = [
@@ -360,7 +360,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
   const qDataList = reportData?.qData || [];
   const mDataList = reportData?.mData || [];
   const chronologicalDates = Array.from(new Set([...qDataList.map((d: any) => d.date), ...mDataList.map((d: any) => d.date)]))
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a, b) => String(a || "").localeCompare(String(b || "")));
 
   const maxTotalSalesVal = chronologicalDates.length > 0 ? chronologicalDates.reduce((max, date) => {
     const qDay = qDataList.find((d: any) => d.date === date);
@@ -400,7 +400,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
   const mTerminals = computeTerminalsBreakdown(reportData?.mData || []);
 
   const allMergedDays = [...(reportData?.qData || []), ...(reportData?.mData || [])]
-    .sort((a: any, b: any) => b.date.localeCompare(a.date));
+    .sort((a: any, b: any) => String(b.date || "").localeCompare(String(a.date || "")));
 
   const filteredDays = allMergedDays.filter((d: any) => {
     if (!ledgerSearch) return true;
@@ -455,7 +455,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
 
     const qDataList = reportData?.qData || [];
     const mDataList = reportData?.mData || [];
-    const allMergedDays = [...qDataList, ...mDataList].sort((a: any, b: any) => b.date.localeCompare(a.date));
+    const allMergedDays = [...qDataList, ...mDataList].sort((a: any, b: any) => String(b.date || "").localeCompare(String(a.date || "")));
 
     // Merged Daily Ledger Table HTML
     let ledgerTableHtml = "";
@@ -1819,7 +1819,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
               <div className="space-y-4">
                 {[...(reportData?.qData || []), ...(reportData?.mData || [])]
                   .filter((d: any) => d.notes && d.notes.trim() !== "")
-                  .sort((a, b) => b.date.localeCompare(a.date))
+                  .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
                   .length === 0 ? (
                     <div className="text-center p-8 text-slate-400 font-bold text-xs">
                       لا توجد ملاحظات إدارية مدونة للفترة والخيارات المحددة.
@@ -1827,7 +1827,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
                   ) : (
                     [...(reportData?.qData || []), ...(reportData?.mData || [])]
                       .filter((d: any) => d.notes && d.notes.trim() !== "")
-                      .sort((a, b) => b.date.localeCompare(a.date))
+                      .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
                       .map((d: any, idx) => (
                         <div key={idx} className="flex gap-4 p-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 hover:bg-slate-55 transition-colors">
                           <div className="space-y-1 text-center flex-shrink-0 w-24 border-l border-slate-200 pl-3">

@@ -684,7 +684,7 @@ export default function PurchasesTab({ onShowToast, userRole, userBranch }: Purc
         a.durationTrend === "longer" ||
         a.durationTrend === "shorter"
     )
-    .sort((a, b) => b.item.date.localeCompare(a.item.date))
+    .sort((a, b) => String(b.item?.date || "").localeCompare(String(a.item?.date || "")))
     .slice(0, 6);
 
   return (
