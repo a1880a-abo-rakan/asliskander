@@ -1252,8 +1252,10 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
         continue;
       }
       const cleanedNew = cleanObject(i);
-      if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 900000) {
-        cleanedNew.rawImage = cleanedNew.rawImage.substring(0, 900000);
+      // Ensure image base64 strings are never brutally truncated with substring(), which destroys JPEG encoding.
+      // Client-side adaptive compression ensures all images are safely sized (around 300KB-500KB).
+      if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 950000) {
+        console.warn(`[TaxInvoice Image] rawImage for ${i.id} is unusually large (${cleanedNew.rawImage.length} chars). Keeping intact.`);
       }
       const cached = taxInvoicesCache.get(i.id);
 

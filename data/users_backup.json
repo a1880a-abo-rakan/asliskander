@@ -1,54 +1,54 @@
 [
   {
-    "displayName": "أبو ريان عبدالله",
-    "status": "نشط",
-    "username": "abdullah",
-    "canEnterInvoices": true,
-    "password": "0540807788",
-    "createdAt": "2026-07-07T03:39:36.358Z",
     "id": "abdullah",
     "branch": "الكل",
-    "role": "محاسب"
+    "password": "0540807788",
+    "status": "نشط",
+    "role": "محاسب",
+    "username": "abdullah",
+    "canEnterInvoices": true,
+    "createdAt": "2026-07-07T03:39:36.358Z",
+    "displayName": "أبو ريان عبدالله"
   },
   {
-    "createdAt": "2026-09-21T05:24:00.943Z",
+    "status": "نشط",
     "id": "admin",
+    "createdAt": "2026-09-21T05:24:00.943Z",
     "password": "123",
     "displayName": "المدير العام",
     "username": "admin",
-    "role": "مدير",
     "branch": "الكل",
-    "status": "نشط"
+    "role": "مدير"
   },
   {
-    "password": "A123456a",
-    "displayName": "أمجد",
-    "id": "amjad",
-    "createdAt": "2026-07-03T14:12:39.600Z",
-    "role": "مدخل فواتير",
     "username": "amjad",
+    "role": "مدخل فواتير",
     "branch": "المروج",
-    "status": "نشط"
+    "password": "A123456a",
+    "status": "نشط",
+    "createdAt": "2026-07-03T14:12:39.600Z",
+    "displayName": "أمجد",
+    "id": "amjad"
   },
   {
-    "branch": "الكل",
-    "createdAt": "2026-09-03T20:53:33.139Z",
-    "displayName": "عمران",
-    "status": "نشط",
     "username": "imran",
+    "createdAt": "2026-09-03T20:53:33.139Z",
+    "status": "نشط",
     "id": "imran",
     "password": "Imran1404",
+    "displayName": "عمران",
+    "role": "محاسب ثان",
     "canEnterInvoices": false,
-    "role": "محاسب ثان"
+    "branch": "الكل"
   },
   {
-    "role": "مدخل فواتير",
-    "password": "M123456m",
-    "status": "نشط",
-    "branch": "القادسية",
-    "displayName": "مروان",
-    "id": "marwan",
     "createdAt": "2026-07-03T14:11:51.955Z",
+    "status": "نشط",
+    "password": "M123456m",
+    "displayName": "مروان",
+    "branch": "القادسية",
+    "id": "marwan",
+    "role": "مدخل فواتير",
     "username": "marwan"
   }
 ]
