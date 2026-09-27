@@ -2,10 +2,11 @@ import React, { useState, useEffect } from "react";
 import { Settings, DailyEntry, ExtraPurchase, OtherExpense } from "../types";
 import ReorderTimerBanner from "./ReorderTimerBanner";
 import CategoryInstallmentInvoicesDropdown from "./CategoryInstallmentInvoicesDropdown";
+import DeliverySummaryCollapsible from "./DeliverySummaryCollapsible";
 import { 
   Building, Calendar, DollarSign, CreditCard, ChevronRight, AlertCircle, 
   Trash, Save, Info, Plus, FileText, ChevronLeft, RefreshCw, TrendingDown,
-  ChevronDown, ChevronUp, Check, Clock, Truck, CheckCircle2, Edit3
+  ChevronDown, ChevronUp, Check, Clock, Truck, CheckCircle2, Edit3, CalendarRange
 } from "lucide-react";
 
 interface DailyInputTabProps {
@@ -127,6 +128,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   // Delivery Count & Multiplier (for Qadisiyah: count * rate; for Murooj: amount directly)
   const [deliveryCount, setDeliveryCount] = useState<number | "">("");
   const [deliveryRate, setDeliveryRate] = useState<number>(6);
+  const [isDeliverySummaryOpen, setIsDeliverySummaryOpen] = useState(false);
 
   // Extra customizable daily expenses items list
   const [others, setOthers] = useState<OtherExpense[]>([
@@ -2325,15 +2327,51 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
         {/* Delivery Orders Section */}
         <div className="space-y-3 pt-4 border-t border-slate-100">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-widest border-r-2 border-indigo-600 pr-2 flex items-center gap-1.5">
               <Truck className="w-4 h-4 text-indigo-600" />
               <span>🚚 بند التوصيل (ينعكس في بنود المصروفات باسم "توصيل"):</span>
             </h4>
+
+            {/* Collapsible Trigger: Only for General Manager and branch Al-Qadisiyah */}
+            {userRole === "مدير" && branch === "القادسية" && (
+              <button
+                type="button"
+                onClick={() => setIsDeliverySummaryOpen(prev => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer shadow-xs ${
+                  isDeliverySummaryOpen
+                    ? "bg-indigo-600 text-white border-indigo-700 ring-2 ring-indigo-200"
+                    : "bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:border-indigo-300"
+                }`}
+                title="كشف واستعلام طلبات التوصيل لفترة زمنية محددة مع إمكانية الطباعة A4"
+              >
+                <CalendarRange className="w-3.5 h-3.5" />
+                <span>كشف التوصيل حسب الفترة</span>
+                {isDeliverySummaryOpen ? (
+                  <ChevronUp className="w-3.5 h-3.5 text-white" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                )}
+              </button>
+            )}
+
             <span className="text-xs bg-indigo-50 text-indigo-800 font-bold px-2.5 py-0.5 rounded-lg border border-indigo-150 font-mono">
               إجمالي مبلغ التوصيل: {computedDeliveryAmount.toFixed(2)} ر
             </span>
           </div>
+
+          {/* Collapsible Period & Delivery Summary - Manager & Qadisiyah only */}
+          {userRole === "مدير" && branch === "القادسية" && (
+            <DeliverySummaryCollapsible
+              history={history}
+              currentDate={date}
+              currentDeliveryCount={deliveryCount}
+              currentDeliveryRate={deliveryRate}
+              currentDeliveryAmount={computedDeliveryAmount}
+              isOpen={isDeliverySummaryOpen}
+              onToggle={() => setIsDeliverySummaryOpen(prev => !prev)}
+            />
+          )}
 
           <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
             {branch === "القادسية" ? (
