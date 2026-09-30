@@ -474,23 +474,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     await processFiles(Array.from(files));
   };
 
-  // Helper to compress images on client-side before sending to server for OCR & Storage
-  // Uses adaptive multi-step compression optimized for high-end mobile cameras (iPhone 48MP+, Samsung 108MP+)
-  // to ensure crystal-clear text readability, instant upload speed, and guaranteed safety within Firestore document limits (<500KB).
-  const compressImage = (file: File, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
+  // Helper to compress images on client-side before sending to server for OCR
+  const compressImage = (file: File, maxWidth = 2000, maxHeight = 2000): Promise<string> => {
     return new Promise((resolve, reject) => {
-      // If it's explicitly a PDF file, fall back to standard reader
-      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = (err) => reject(err);
-        reader.readAsDataURL(file);
-        return;
-      }
-
-      // Check if file is an image (handling possible empty file.type on iOS Safari camera captures)
-      const isImage = file.type.startsWith("image/") || /\.(jpe?g|png|webp|heic|heif|bmp|gif)$/i.test(file.name);
-      if (!isImage && file.type) {
+      // If it's not an image file (e.g. PDF), fall back to standard reader
+      if (!file.type.startsWith("image/")) {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
         reader.onerror = (err) => reject(err);
@@ -499,10 +487,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       }
 
       const img = new Image();
-      const objectUrl = URL.createObjectURL(file);
-      img.src = objectUrl;
+      img.src = URL.createObjectURL(file);
       img.onload = () => {
-        URL.revokeObjectURL(objectUrl);
+        URL.revokeObjectURL(img.src);
         let width = img.width;
         let height = img.height;
 
@@ -531,32 +518,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, width, height);
-
-        // Adaptive compression:
-        // Start with 0.82 quality which produces razor-sharp Arabic fonts and numeric tables.
-        // If image is rich in detail (like iPhone 17 Pro Max 48MP raw sensors), adaptively adjust quality
-        // so the resulting Base64 payload stays well under 600,000 characters (~450KB), ensuring ultra-fast uploads
-        // and 100% smooth document inspection.
-        let quality = 0.82;
-        let compressedBase64 = canvas.toDataURL("image/jpeg", quality);
-
-        if (compressedBase64.length > 600000) {
-          quality = 0.72;
-          compressedBase64 = canvas.toDataURL("image/jpeg", quality);
-        }
-        if (compressedBase64.length > 600000) {
-          quality = 0.62;
-          compressedBase64 = canvas.toDataURL("image/jpeg", quality);
-        }
-
+        // Compress as JPEG format with 0.85 quality for crystal clear numbers, decimals, and Arabic text
+        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
         resolve(compressedBase64);
       };
-      img.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = (err) => reject(err);
-        reader.readAsDataURL(file);
+      img.onerror = (err) => {
+        reject(err);
       };
     });
   };
@@ -897,27 +864,16 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
   };
 
-  const syncCompaniesWithInvoices = (comps: TaxCompany[], invList: TaxInvoice[]) => {
-    const set = new Set<string>();
-    comps.forEach(c => {
-      if (c && c.name && c.name.trim()) set.add(c.name.trim());
-    });
-    invList.forEach(i => {
-      if (i && i.company && i.company.trim()) set.add(i.company.trim());
-    });
-    const companyNames = Array.from(set).sort((a, b) => String(a || "").localeCompare(String(b || ""), "ar"));
-    cachedAllCompanies = companyNames;
-    setAllCompanies(companyNames);
-  };
-
   const loadCompanies = async () => {
     try {
-      const res = await fetch("/api/tax-companies?fresh=true");
+      const res = await fetch("/api/tax-companies");
       if (res.ok) {
         const data = await res.json() as TaxCompany[];
         cachedRegisteredCompanies = data;
+        const companyNames = data.map(c => c.name);
+        cachedAllCompanies = companyNames;
         setRegisteredCompanies(data);
-        syncCompaniesWithInvoices(data, invoices);
+        setAllCompanies(companyNames);
       }
     } catch (err) {
       console.error("Error loading tax companies:", err);
@@ -1054,9 +1010,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       const normalizedInv = {
         ...inv,
         items: normalizeInvoiceItems(inv.items),
-        status: "approved" as const,
-        rawImage: "",
-        fileType: ""
+        status: "approved" as const
       };
       if (exists) {
         updatedList = prev.map((i) =>
@@ -1074,16 +1028,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     }
 
     onShowToast(`✅ تم اعتماد وتثبيت فاتورة ${inv.company} بفرع ${inv.branch} بنجاح!`);
-    setIsBranchInvoicesExpanded(true);
 
     // 2. Perform network request in background
     try {
       const updated = {
         ...inv,
         items: normalizeInvoiceItems(inv.items),
-        status: "approved" as const,
-        rawImage: "",
-        fileType: ""
+        status: "approved" as const
       };
       const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`, {
         method: "PUT",
@@ -1164,20 +1115,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       promises.push(
         fetch(url)
           .then(async (resInvs) => {
-            if (resInvs.ok) {
-              const invData = await resInvs.json();
-              if (Array.isArray(invData)) {
-                const normalized = invData.map((inv: any) => ({
-                  ...inv,
-                  items: normalizeInvoiceItems(inv.items)
-                }));
-                cachedInvoices = normalized;
-                setInvoices(normalized);
-                syncCompaniesWithInvoices(cachedRegisteredCompanies, normalized);
-              }
-            } else {
-              console.error("Error response from /api/tax-invoices:", resInvs.status);
-            }
+            const invData = resInvs.ok ? await resInvs.json() : [];
+            const normalized = (Array.isArray(invData) ? invData : []).map((inv: any) => ({
+              ...inv,
+              items: normalizeInvoiceItems(inv.items)
+            }));
+            cachedInvoices = normalized;
+            setInvoices(normalized);
           })
           .catch((err) => console.error("Error loading tax invoices:", err))
       );
@@ -1303,7 +1247,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     if (myInvs.length === 0) return false;
 
     // Sort chronologically by their ID (since ID has timestamp inside)
-    const sorted = [...myInvs].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+    const sorted = [...myInvs].sort((a, b) => a.id.localeCompare(b.id));
     const latest = sorted[sorted.length - 1];
 
     return latest && latest.id === inv.id;
@@ -2759,11 +2703,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
               (i.date === todayStr || i.invoice_date === todayStr || i.date === date || i.status === "pending")
             )
           : branchInvoices;
-        const myInvoicesSorted = [...myInvoices].sort((a, b) => String(a.invoice_date || a.date || a.id || "").localeCompare(String(b.invoice_date || b.date || b.id || "")));
+        const myInvoicesSorted = [...myInvoices].sort((a, b) => (a.invoice_date || a.date || a.id).localeCompare(b.invoice_date || b.date || b.id));
         
         // Keep overall latest invoice check for permission logic
         const overallInvoices = allCombined.filter(i => i.createdBy === currentUser?.username);
-        const overallSorted = [...overallInvoices].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+        const overallSorted = [...overallInvoices].sort((a, b) => a.id.localeCompare(b.id));
         const latestInvoice = overallSorted[overallSorted.length - 1];
 
         const displayInvoices = [...myInvoicesSorted].reverse();
@@ -4807,19 +4751,6 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       draggable={false}
                       className="max-h-full max-w-full object-contain shadow-2xl transition-all"
                       referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        if (previewInvoice.rawImage && previewInvoice.rawImage.startsWith("data:image/jpeg;base64,")) {
-                          try {
-                            const raw = previewInvoice.rawImage.replace(/^data:image\/jpeg;base64,/, "");
-                            const padded = raw.padEnd(raw.length + (4 - raw.length % 4) % 4, "=");
-                            const fixedSrc = `data:image/jpeg;base64,${padded}`;
-                            if (target.src !== fixedSrc) {
-                              target.src = fixedSrc;
-                            }
-                          } catch (_) {}
-                        }
-                      }}
                       style={{
                         transform: `translate(${previewImgPan.x}px, ${previewImgPan.y}px) scale(${previewImgZoom}) rotate(${previewImgRotation}deg)`,
                         transformOrigin: "center center",
