@@ -359,7 +359,7 @@ export interface VegGrocRecord {
   items: VegGrocItem[];
   totalVeg: number;
   totalGroc: number;
-  status: 'pending' | 'approved';
+  status: 'new' | 'pending' | 'approved';
   approvedAt?: string;
   approvedBy?: string;
 

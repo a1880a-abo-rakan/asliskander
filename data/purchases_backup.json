@@ -32794,9 +32794,10 @@
     "type": "direct",
     "price": 166,
     "branch": "القادسية",
-    "status": "active",
+    "status": "depleted",
     "source": "manual",
-    "invoiceId": "القادسية-2026-09-30"
+    "invoiceId": "القادسية-2026-09-30",
+    "depletedDate": "2026-10-03"
   },
   {
     "id": "pur-القادسية-2026-09-30-groc",
@@ -32806,8 +32807,9 @@
     "type": "direct",
     "price": 39,
     "branch": "القادسية",
-    "status": "active",
+    "status": "depleted",
     "source": "manual",
-    "invoiceId": "القادسية-2026-09-30"
+    "invoiceId": "القادسية-2026-09-30",
+    "depletedDate": "2026-10-03"
   }
 ]

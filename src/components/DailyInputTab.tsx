@@ -297,11 +297,23 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
         if (data.status === "approved") {
           const finalVeg = data.combinedTotalVeg ?? ((data.totalVeg || 0) + (data.secondAccountantTotalVeg || 0));
           const finalGroc = data.combinedTotalGroc ?? ((data.totalGroc || 0) + (data.secondAccountantTotalGroc || 0));
-          if (finalVeg > 0) setPurVeg(finalVeg);
-          if (finalGroc > 0) setPurGroc(finalGroc);
+          setPurVeg(finalVeg);
+          setPurGroc(finalGroc);
+          handlePurVegChange(finalVeg);
+          handlePurGrocChange(finalGroc);
         } else if (data.status === "pending") {
-          if (data.totalVeg > 0) setPurVeg(data.totalVeg);
-          if (data.totalGroc > 0) setPurGroc(data.totalGroc);
+          const v = data.totalVeg || 0;
+          const g = data.totalGroc || 0;
+          setPurVeg(v);
+          setPurGroc(g);
+          handlePurVegChange(v);
+          handlePurGrocChange(g);
+        } else {
+          // Record is deleted or empty new day - reset inputs to 0
+          setPurVeg(0);
+          setPurGroc(0);
+          handlePurVegChange(0);
+          handlePurGrocChange(0);
         }
       }
     } catch (err) {
@@ -894,6 +906,13 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
             onShowToast("♻️ تم مسح موازنة اليوم وإعادة ترتيب قيود العهد بنجاح");
             loadCarryOverAlert();
             loadBranchHistory();
+            if (row.date === date && row.branch === branch) {
+              setPurVeg(0);
+              setPurGroc(0);
+              setVegGrocStatus("new");
+              setVegGrocRecord(null);
+            }
+            await loadVegGrocData(branch, date);
           } else {
             onShowToast("❌ فشل مسح موازنة اليوم");
           }
@@ -952,6 +971,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
             setSelectedIds([]);
             loadCarryOverAlert();
             loadBranchHistory();
+            await loadVegGrocData(branch, date);
           } else {
             onShowToast("❌ فشل حذف الموازنات المحددة");
           }
@@ -973,7 +993,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
     setConfirmModal({
       show: true,
       title: "⚠️ تحذير تصفير كافة الموازنات والمرحلات",
-      message: `تحذير شديد الأهمية! هل أنت متأكد تماماً من حذف كافة موازنات فرع ${branch} المخزنة بالنظام والبدء من جديد؟ لن يكون بالإمكان التراجع عن ذلك، وسيتم تصفير عهد المصروفات والجدولة مجدداً.`,
+      message: `تحذير شديد الأهمية! هل أنت متأكد تماماً من حذف كافة موازنات فرع ${branch} المخزنة بالنظام والبدء من جديد؟ لن يكون بالإمكان التراجع عن ذلك، وسيتم تصفير عهد المصروفات وتفريغ فواتير الخضار والبقالة مجدداً.`,
       isDanger: true,
       onConfirm: async () => {
         setLoading(true);
@@ -988,6 +1008,11 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
             setSelectedIds([]);
             loadCarryOverAlert();
             loadBranchHistory();
+            setPurVeg(0);
+            setPurGroc(0);
+            setVegGrocStatus("new");
+            setVegGrocRecord(null);
+            await loadVegGrocData(branch, date);
           } else {
             onShowToast("❌ فشل تصفير موازنات الجدولة");
           }
@@ -1533,8 +1558,8 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-bold text-slate-600">خضار نقدي</label>
                 {vegGrocStatus === "approved" ? (
-                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
-                    معتمد
+                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
+                    <span>🔒</span> معتمد (مغلق)
                   </span>
                 ) : vegGrocStatus === "pending" ? (
                   <span className="text-[9px] font-extrabold text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
@@ -1546,17 +1571,24 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
                 type="number"
                 placeholder="0.00"
                 value={purVeg}
+                disabled={vegGrocStatus === "approved" && userRole !== "مدير"}
+                readOnly={vegGrocStatus === "approved" && userRole !== "مدير"}
                 onChange={(e) => handlePurVegChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-black font-bold"
-                style={{ color: "#000000" }}
+                className={`w-full px-3 py-1.5 text-xs border rounded-lg font-bold ${
+                  vegGrocStatus === "approved" && userRole !== "مدير"
+                    ? "bg-slate-100 text-slate-500 border-slate-300 cursor-not-allowed"
+                    : "border-slate-200 text-black"
+                }`}
+                style={{ color: vegGrocStatus === "approved" && userRole !== "مدير" ? "#64748b" : "#000000" }}
+                title={vegGrocStatus === "approved" && userRole !== "مدير" ? "معتمد رسمياً من المدير العام - لا يسمح بالتعديل أو الحذف" : undefined}
               />
             </div>
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-bold text-slate-600">بقالة نقدي</label>
                 {vegGrocStatus === "approved" ? (
-                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
-                    معتمد
+                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
+                    <span>🔒</span> معتمد (مغلق)
                   </span>
                 ) : vegGrocStatus === "pending" ? (
                   <span className="text-[9px] font-extrabold text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
@@ -1568,9 +1600,16 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch, userN
                 type="number"
                 placeholder="0.00"
                 value={purGroc}
+                disabled={vegGrocStatus === "approved" && userRole !== "مدير"}
+                readOnly={vegGrocStatus === "approved" && userRole !== "مدير"}
                 onChange={(e) => handlePurGrocChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg text-black font-bold"
-                style={{ color: "#000000" }}
+                className={`w-full px-3 py-1.5 text-xs border rounded-lg font-bold ${
+                  vegGrocStatus === "approved" && userRole !== "مدير"
+                    ? "bg-slate-100 text-slate-500 border-slate-300 cursor-not-allowed"
+                    : "border-slate-200 text-black"
+                }`}
+                style={{ color: vegGrocStatus === "approved" && userRole !== "مدير" ? "#64748b" : "#000000" }}
+                title={vegGrocStatus === "approved" && userRole !== "مدير" ? "معتمد رسمياً من المدير العام - لا يسمح بالتعديل أو الحذف" : undefined}
               />
             </div>
           </div>

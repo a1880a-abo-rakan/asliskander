@@ -963,6 +963,7 @@ async function deleteDay(id: string): Promise<void> {
     daysCache.delete(id);
     saveDaysToFile(Array.from(daysCache.values()));
     await deletePurchasesForDay(id);
+    await deleteVegGrocRecordById(id);
     await deleteDoc(doc(db, "days", id));
   } catch (err) {
     console.error("Error deleting day from Firestore:", err);
@@ -1166,6 +1167,34 @@ async function saveVegGrocRecord(record: VegGrocRecord): Promise<void> {
   } catch (err) {
     console.error("Error saving veg_groc_record to Firestore:", err);
   }
+}
+
+async function deleteVegGrocRecordById(id: string): Promise<void> {
+  vegGrocCache.delete(id);
+  for (const [k, v] of vegGrocCache.entries()) {
+    if (k === id || v.id === id) {
+      vegGrocCache.delete(k);
+    }
+  }
+  const all = Array.from(vegGrocCache.values());
+  saveVegGrocToFile(all);
+  try {
+    await deleteDoc(doc(db, "veg_groc_records", id));
+  } catch (err) {
+    console.error("Error deleting veg_groc_record from Firestore:", err);
+  }
+}
+
+async function deleteVegGrocRecord(branch: string, date: string): Promise<void> {
+  const id = `${branch}-${date}`;
+  await deleteVegGrocRecordById(id);
+  for (const [k, v] of vegGrocCache.entries()) {
+    if ((v.branch === branch && v.date === date) || v.id === id) {
+      vegGrocCache.delete(k);
+    }
+  }
+  const all = Array.from(vegGrocCache.values());
+  saveVegGrocToFile(all);
 }
 
 async function getDiesels(): Promise<SharedDiesel[]> {
@@ -3197,19 +3226,22 @@ async function startServer() {
           const branch = entryByDateAndBranch.branch;
           await Promise.all([
             deleteDay(entryByDateAndBranch.id),
-            deletePurchasesForDay(entryByDateAndBranch.id)
+            deletePurchasesForDay(entryByDateAndBranch.id),
+            deleteVegGrocRecord(entryByDateAndBranch.branch, entryByDateAndBranch.date)
           ]);
           await recalculateCarryOvers(branch);
-          return res.json({ success: true });
+          return res.json({ success: true, deletedVegGroc: true });
         }
       }
       return res.status(404).json({ error: "Entry not found" });
     }
 
     const branch = entry.branch;
+    const entryDate = entry.date;
     await Promise.all([
       deleteDay(entry.id),
-      deletePurchasesForDay(entry.id)
+      deletePurchasesForDay(entry.id),
+      deleteVegGrocRecord(branch, entryDate)
     ]);
 
     // Recalculate everything after removing this day so downstream elements are re-balanced perfectly Let's go!
@@ -3585,9 +3617,19 @@ async function startServer() {
 
   app.post("/api/veg-groc", async (req, res) => {
     try {
-      const { branch, date, items, enteredBy } = req.body;
+      const { branch, date, items, enteredBy, userRole } = req.body;
       if (!branch || !date) {
         return res.status(400).json({ error: "الفرع والتاريخ مطلوبان" });
+      }
+
+      const existing = await getVegGrocRecord(branch, date);
+      const isManager = userRole === "مدير";
+
+      // If approved, strictly forbid Abdullah / non-manager from modifying or deleting
+      if (existing && existing.status === "approved" && !isManager) {
+        return res.status(403).json({
+          error: "تم اعتماد فواتير الخضار والبقالة لهذا اليوم رسمياً من المدير العام. لا يسمح للمحاسب عبدالله بالتعديل أو الحذف بعد الاعتماد."
+        });
       }
 
       const safeItems: VegGrocItem[] = Array.isArray(items) ? items.map((it: any, idx: number) => ({
@@ -3612,7 +3654,6 @@ async function startServer() {
         .reduce((sum, it) => sum + (Number(it.price) || 0), 0)
         .toFixed(2));
 
-      const existing = await getVegGrocRecord(branch, date);
       const extraVegNum = existing?.secondAccountantExtraVeg || 0;
       const extraGrocItems = existing?.secondAccountantExtraGrocItems || [];
       const extraGrocSum = extraGrocItems.reduce((s: number, it: any) => s + (Number(it.amt) || 0), 0);
@@ -3627,7 +3668,7 @@ async function startServer() {
         items: safeItems,
         totalVeg,
         totalGroc,
-        status: "pending", // Always set to pending review for Manager
+        status: isManager && existing?.status === "approved" ? "approved" : "pending", // Keep approved if manager edits, else pending
         secondAccountantExtraVeg: extraVegNum,
         secondAccountantExtraGrocItems: extraGrocItems,
         secondAccountantTotalVeg: extraVegNum,
@@ -3644,6 +3685,56 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error in POST /api/veg-groc:", err);
       res.status(500).json({ error: "فشل حفظ بيانات الخضار والبقالة: " + err.message });
+    }
+  });
+
+  app.delete("/api/veg-groc", async (req, res) => {
+    try {
+      const branch = req.query.branch as string;
+      const date = req.query.date as string;
+      const userRole = (req.query.userRole as string) || (req.body?.userRole as string);
+
+      if (!branch || !date) {
+        return res.status(400).json({ error: "الفرع والتاريخ مطلوبان" });
+      }
+
+      const existing = await getVegGrocRecord(branch, date);
+      if (!existing) {
+        return res.json({ success: true, message: "لا توجد فواتير مسجلة لهذا اليوم" });
+      }
+
+      // If approved and requester is NOT manager, deny deletion
+      if (existing.status === "approved" && userRole !== "مدير") {
+        return res.status(403).json({
+          error: "فواتير الخضار والبقالة معتمدة رسمياً من المدير العام. لا يسمح للمحاسب عبدالله بالحذف بعد الاعتماد."
+        });
+      }
+
+      await deleteVegGrocRecord(branch, date);
+
+      // Reset vegetables and grocery amounts in DailyEntry if day exists
+      try {
+        const allDays = await getDays();
+        const targetDay = allDays.find(d => d.branch === branch && d.date === date);
+        if (targetDay) {
+          targetDay.pur_veg = 0;
+          targetDay.pur_groc = 0;
+          targetDay.vegetables = 0;
+          targetDay.grocery = 0;
+          const extrasSum = (targetDay.pur_extras || []).reduce((acc, it) => acc + (it.amt || 0), 0);
+          targetDay.cash_purchases = Number(((targetDay.pur_gas || 0) + (targetDay.pur_bread || 0) + extrasSum).toFixed(2));
+          targetDay.cash_net = Number(((targetDay.cash_box || 0) - (targetDay.sarf ?? 350) + targetDay.cash_purchases).toFixed(2));
+          targetDay.total_sales = Number((targetDay.cash_net + (targetDay.pos_net || 0)).toFixed(2));
+          await saveDays(allDays);
+        }
+      } catch (daySyncErr) {
+        console.warn("Could not reset day pur_veg/pur_groc:", daySyncErr);
+      }
+
+      res.json({ success: true, message: "تم حذف وتفريغ فواتير الخضار والبقالة لهذا اليوم بنجاح" });
+    } catch (err: any) {
+      console.error("Error in DELETE /api/veg-groc:", err);
+      res.status(500).json({ error: "فشل حذف فواتير الخضار والبقالة: " + err.message });
     }
   });
 

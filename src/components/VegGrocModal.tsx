@@ -107,6 +107,7 @@ export default function VegGrocModal({
   const [targetItemUploadId, setTargetItemUploadId] = useState<{ id: string; category: "خضار" | "منظفات_وبقالة" } | null>(null);
 
   const isManager = userRole === "مدير";
+  const isLocked = recordStatus === "approved" && !isManager;
 
   // Initialize or fetch data whenever modal opens
   useEffect(() => {
@@ -278,6 +279,11 @@ export default function VegGrocModal({
 
   // Save handler (by Abdullah or Accountant)
   const handleSave = async () => {
+    if (isLocked) {
+      setErrorMsg("تم اعتماد فواتير الخضار والبقالة لهذا اليوم رسمياً من المدير العام. لا يمكن التعديل بعد الاعتماد.");
+      return;
+    }
+
     setSaving(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -295,7 +301,8 @@ export default function VegGrocModal({
           branch,
           date,
           items: allItems,
-          enteredBy: userName
+          enteredBy: userName,
+          userRole
         })
       });
 
@@ -304,12 +311,88 @@ export default function VegGrocModal({
         throw new Error(json.error || "فشل حفظ فواتير الخضار والبقالة");
       }
 
-      setRecordStatus("pending");
+      setRecordStatus(isManager && recordStatus === "approved" ? "approved" : "pending");
       setSuccessMsg("تم حفظ فواتير الخضار والبقالة بنجاح، وهي الآن بانتظار مراجعة واعتماد المدير العام.");
       onSaved(totalVeg, totalGroc, json.record);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err: any) {
       setErrorMsg(err.message || "حدث خطأ أثناء الحفظ");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Delete / Clear all veg & groc for this day (available before manager approval)
+  const handleDeleteAllDay = async () => {
+    if (isLocked) {
+      setErrorMsg("فواتير الخضار والبقالة معتمدة رسمياً من المدير العام. لا يسمح للمحاسب بالحذف بعد الاعتماد.");
+      return;
+    }
+
+    if (!confirm("هل أنت متأكد من حذف وتفريغ جميع فواتير الخضار والبقالة لهذا اليوم؟\nسيتم مسح كافة الأصناف والأسعار وتصبح فارغة.")) {
+      return;
+    }
+
+    setSaving(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const res = await fetch(`/api/veg-groc?branch=${encodeURIComponent(branch)}&date=${encodeURIComponent(date)}&userRole=${encodeURIComponent(userRole)}`, {
+        method: "DELETE"
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || "فشل حذف فواتير الخضار والبقالة");
+      }
+
+      // Reset local state to empty default
+      const freshVeg: VegGrocItem[] = DEFAULT_VEG_NAMES.map((name, idx) => ({
+        id: `veg_default_${idx}`,
+        category: "خضار",
+        name,
+        price: 0,
+        status: "pending"
+      }));
+      setVegItems(freshVeg);
+      setGrocItems([
+        {
+          id: `groc_${Date.now()}_0`,
+          category: "منظفات_وبقالة",
+          name: "",
+          price: 0,
+          status: "pending"
+        }
+      ]);
+      setRecordStatus("new");
+      setApprovedAt(undefined);
+      setApprovedBy(undefined);
+      setSecondAccountantExtraVeg(0);
+      setSecondAccountantGrocItems([]);
+
+      const emptyRecord: VegGrocRecord = {
+        id: `${branch}-${date}`,
+        branch,
+        date,
+        items: [],
+        totalVeg: 0,
+        totalGroc: 0,
+        status: "new",
+        secondAccountantExtraVeg: 0,
+        secondAccountantExtraGrocItems: [],
+        secondAccountantTotalVeg: 0,
+        secondAccountantTotalGroc: 0,
+        combinedTotalVeg: 0,
+        combinedTotalGroc: 0,
+        combinedGrandTotal: 0
+      };
+
+      onSaved(0, 0, emptyRecord);
+      setSuccessMsg("تم حذف فواتير الخضار والبقالة وتفريغ هذا اليوم بنجاح.");
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || "حدث خطأ أثناء الحذف");
     } finally {
       setSaving(false);
     }
@@ -448,6 +531,24 @@ export default function VegGrocModal({
           </div>
         )}
 
+        {/* Accountant Approved Locking Banner */}
+        {isLocked && (
+          <div className="px-6 py-3 bg-emerald-50 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-900">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <div>
+                <span className="font-black">معتمد رسمياً من المدير العام:</span> تم اعتماد وتثبيت فواتير هذا اليوم.
+                <span className="block sm:inline sm:mr-1 font-bold text-emerald-700">
+                  لا يسمح للمحاسب عبدالله بالتعديل أو الحذف بعد اعتماد المدير.
+                </span>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 bg-emerald-200 text-emerald-800 text-[11px] font-black rounded-lg shrink-0">
+              🔒 مغلق للتعديل والحذف
+            </span>
+          </div>
+        )}
+
         {/* Alerts */}
         {errorMsg && (
           <div className="mx-6 mt-3 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
@@ -501,8 +602,14 @@ export default function VegGrocModal({
                               type="text"
                               placeholder="اسم صنف الخضار الجديد"
                               value={item.name}
+                              disabled={isLocked}
+                              readOnly={isLocked}
                               onChange={(e) => updateVegName(item.id, e.target.value)}
-                              className="w-full px-2.5 py-1.5 text-xs font-bold border border-slate-250 rounded-lg text-slate-900 bg-amber-50/30 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              className={`w-full px-2.5 py-1.5 text-xs font-bold border rounded-lg ${
+                                isLocked
+                                  ? "bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed"
+                                  : "border-slate-250 text-slate-900 bg-amber-50/30 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              }`}
                             />
                           ) : (
                             <div className="flex items-center gap-2">
@@ -520,9 +627,16 @@ export default function VegGrocModal({
                               step="0.01"
                               placeholder="0.00"
                               value={item.price === 0 ? "" : item.price}
+                              disabled={isLocked}
+                              readOnly={isLocked}
                               onChange={(e) => updateVegPrice(item.id, parseFloat(e.target.value) || 0)}
-                              className="w-full px-2.5 py-1.5 text-xs font-mono font-bold text-left border border-slate-250 rounded-lg text-black bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                              style={{ color: "#000000" }}
+                              className={`w-full px-2.5 py-1.5 text-xs font-mono font-bold text-left border rounded-lg ${
+                                isLocked
+                                  ? "bg-slate-100 text-slate-600 border-slate-200 cursor-not-allowed"
+                                  : "border-slate-250 text-black bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                              }`}
+                              style={{ color: isLocked ? "#475569" : "#000000" }}
+                              title={isLocked ? "معتمد رسمياً من المدير - مغلق للتعديل" : undefined}
                             />
                             <span className="absolute right-2 top-1.5 text-[10px] font-bold text-slate-400 pointer-events-none">
                               ر.س
@@ -547,7 +661,7 @@ export default function VegGrocModal({
                                   <ZoomIn className="w-3.5 h-3.5 text-white" />
                                 </div>
                               </button>
-                              {recordStatus !== "approved" && (
+                              {!isLocked && recordStatus !== "approved" && (
                                 <button
                                   type="button"
                                   title="حذف الصورة"
@@ -559,7 +673,7 @@ export default function VegGrocModal({
                               )}
                             </div>
                           ) : (
-                            recordStatus !== "approved" ? (
+                            !isLocked && recordStatus !== "approved" ? (
                               <button
                                 type="button"
                                 onClick={() => triggerImageCapture(item.id, "خضار")}
@@ -577,7 +691,7 @@ export default function VegGrocModal({
                           )}
 
                           {/* Delete custom item button */}
-                          {isCustom && recordStatus !== "approved" && (
+                          {isCustom && !isLocked && recordStatus !== "approved" && (
                             <button
                               type="button"
                               onClick={() => removeCustomVeg(item.id)}
@@ -593,7 +707,7 @@ export default function VegGrocModal({
                   })}
                 </div>
 
-                {recordStatus !== "approved" && (
+                {!isLocked && recordStatus !== "approved" && (
                   <button
                     type="button"
                     onClick={addCustomVeg}
@@ -635,8 +749,14 @@ export default function VegGrocModal({
                           type="text"
                           placeholder="اسم صنف المنظفات أو البقالة (مثال: صابون، كلوركس، مناديل...)"
                           value={item.name}
+                          disabled={isLocked}
+                          readOnly={isLocked}
                           onChange={(e) => updateGrocField(item.id, "name", e.target.value)}
-                          className="w-full px-3 py-1.5 text-xs font-bold border border-slate-250 rounded-lg text-slate-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          className={`w-full px-3 py-1.5 text-xs font-bold border rounded-lg ${
+                            isLocked
+                              ? "bg-slate-100 text-slate-500 border-slate-200 cursor-not-allowed"
+                              : "border-slate-250 text-slate-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          }`}
                         />
                       </div>
 
@@ -648,9 +768,16 @@ export default function VegGrocModal({
                             step="0.01"
                             placeholder="0.00"
                             value={item.price === 0 ? "" : item.price}
+                            disabled={isLocked}
+                            readOnly={isLocked}
                             onChange={(e) => updateGrocField(item.id, "price", parseFloat(e.target.value) || 0)}
-                            className="w-full px-2.5 py-1.5 text-xs font-mono font-bold text-left border border-slate-250 rounded-lg text-black bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            style={{ color: "#000000" }}
+                            className={`w-full px-2.5 py-1.5 text-xs font-mono font-bold text-left border rounded-lg ${
+                              isLocked
+                                ? "bg-slate-100 text-slate-600 border-slate-200 cursor-not-allowed"
+                                : "border-slate-250 text-black bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            }`}
+                            style={{ color: isLocked ? "#475569" : "#000000" }}
+                            title={isLocked ? "معتمد رسمياً من المدير - مغلق للتعديل" : undefined}
                           />
                           <span className="absolute right-2 top-1.5 text-[10px] font-bold text-slate-400 pointer-events-none">
                             ر.س
@@ -675,7 +802,7 @@ export default function VegGrocModal({
                                 <ZoomIn className="w-3.5 h-3.5 text-white" />
                               </div>
                             </button>
-                            {recordStatus !== "approved" && (
+                            {!isLocked && recordStatus !== "approved" && (
                               <button
                                 type="button"
                                 title="حذف الصورة"
@@ -687,7 +814,7 @@ export default function VegGrocModal({
                             )}
                           </div>
                         ) : (
-                          recordStatus !== "approved" ? (
+                          !isLocked && recordStatus !== "approved" ? (
                             <button
                               type="button"
                               onClick={() => triggerImageCapture(item.id, "منظفات_وبقالة")}
@@ -705,7 +832,7 @@ export default function VegGrocModal({
                         )}
 
                         {/* Delete row */}
-                        {recordStatus !== "approved" && grocItems.length > 1 && (
+                        {!isLocked && recordStatus !== "approved" && grocItems.length > 1 && (
                           <button
                             type="button"
                             onClick={() => removeGrocItem(item.id)}
@@ -720,7 +847,7 @@ export default function VegGrocModal({
                   ))}
                 </div>
 
-                {recordStatus !== "approved" && (
+                {!isLocked && recordStatus !== "approved" && (
                   <button
                     type="button"
                     onClick={addGrocItem}
@@ -831,7 +958,21 @@ export default function VegGrocModal({
               إغلاق
             </button>
 
-            {recordStatus !== "approved" && (
+            {/* Delete / Clear button available for Abdullah before approval, or for Manager */}
+            {!isLocked && (grandTotal > 0 || recordStatus === "pending" || vegItems.some(v => v.price > 0)) && (
+              <button
+                type="button"
+                onClick={handleDeleteAllDay}
+                disabled={saving || loading}
+                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                title="حذف وتفريغ جميع فواتير الخضار والبقالة لهذا اليوم"
+              >
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>حذف وتفريغ فواتير اليوم</span>
+              </button>
+            )}
+
+            {!isLocked && recordStatus !== "approved" && (
               <button
                 type="button"
                 onClick={handleSave}
