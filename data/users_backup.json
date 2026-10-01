@@ -1,12 +1,54 @@
 [
   {
-    "id": "admin",
-    "username": "admin",
-    "displayName": "المدير العام",
-    "password": "123",
-    "role": "مدير",
+    "id": "abdullah",
+    "role": "محاسب",
+    "username": "abdullah",
+    "displayName": "أبو ريان عبدالله",
+    "password": "0540807788",
     "status": "نشط",
+    "canEnterInvoices": true,
     "branch": "الكل",
-    "createdAt": "2026-09-22T05:39:33.775Z"
+    "createdAt": "2026-07-07T03:39:36.358Z"
+  },
+  {
+    "id": "admin",
+    "displayName": "المدير العام",
+    "status": "نشط",
+    "password": "123",
+    "branch": "الكل",
+    "username": "admin",
+    "createdAt": "2026-09-21T05:24:00.943Z",
+    "role": "مدير"
+  },
+  {
+    "password": "A123456a",
+    "id": "amjad",
+    "role": "مدخل فواتير",
+    "branch": "المروج",
+    "displayName": "أمجد",
+    "createdAt": "2026-07-03T14:12:39.600Z",
+    "username": "amjad",
+    "status": "نشط"
+  },
+  {
+    "branch": "الكل",
+    "canEnterInvoices": false,
+    "createdAt": "2026-09-03T20:53:33.139Z",
+    "displayName": "عمران",
+    "id": "imran",
+    "password": "Imran1404",
+    "status": "نشط",
+    "role": "محاسب ثان",
+    "username": "imran"
+  },
+  {
+    "displayName": "مروان",
+    "password": "M123456m",
+    "id": "marwan",
+    "status": "نشط",
+    "role": "مدخل فواتير",
+    "createdAt": "2026-07-03T14:11:51.955Z",
+    "username": "marwan",
+    "branch": "القادسية"
   }
 ]

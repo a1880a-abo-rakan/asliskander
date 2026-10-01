@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { DailyEntry, Settings } from "../types";
+import { DailyEntry, Settings, VegGrocRecord, SecondAccountantGrocItem } from "../types";
 import CategoryInstallmentInvoicesDropdown from "./CategoryInstallmentInvoicesDropdown";
 import { 
   Building2, Calendar, DollarSign, CreditCard, ShoppingCart, 
@@ -96,6 +96,16 @@ export default function SecondAccountantTab({
   const [purBread, setPurBread] = useState<number | "">("");
   const [purVeg, setPurVeg] = useState<number | "">("");
   const [purGroc, setPurGroc] = useState<number | "">("");
+
+  // Vegetables & Grocery approval and extra amounts states (خضار وبقالة المحاسب عبدالله)
+  const [vegGrocRecord, setVegGrocRecord] = useState<VegGrocRecord | null>(null);
+  const [isVegGrocApproved, setIsVegGrocApproved] = useState<boolean>(false);
+  const [approvedVegBase, setApprovedVegBase] = useState<number>(0);
+  const [approvedGrocBase, setApprovedGrocBase] = useState<number>(0);
+  const [extraVeg, setExtraVeg] = useState<number | "">("");
+  const [extraGrocList, setExtraGrocList] = useState<{ id: string; amt: number | "" }[]>([
+    { id: "groc_0", amt: "" }
+  ]);
 
   // 4. Warehouse (مؤسسة حبة الأخضر) -> makhzan
   const [makhzan, setMakhzan] = useState<number | "">("");
@@ -233,6 +243,44 @@ export default function SecondAccountantTab({
           // Reset form to clean defaults with installment awareness
           resetForm(carryList);
         }
+
+        // Fetch Vegetables & Groceries record from Abdullah & Manager
+        try {
+          const vgRes = await fetch(`/api/veg-groc?branch=${encodeURIComponent(selectedBranch)}&date=${encodeURIComponent(selectedDate)}`);
+          if (vgRes.ok) {
+            const vgData: VegGrocRecord = await vgRes.json();
+            setVegGrocRecord(vgData);
+            
+            const savedExtraVeg = vgData.secondAccountantExtraVeg !== undefined && vgData.secondAccountantExtraVeg !== 0
+              ? vgData.secondAccountantExtraVeg
+              : "";
+            setExtraVeg(savedExtraVeg);
+
+            if (Array.isArray(vgData.secondAccountantExtraGrocItems) && vgData.secondAccountantExtraGrocItems.length > 0) {
+              setExtraGrocList(vgData.secondAccountantExtraGrocItems.map(it => ({ id: it.id, amt: it.amt })));
+            } else {
+              setExtraGrocList([{ id: `groc_${Date.now()}`, amt: "" }]);
+            }
+
+            setApprovedVegBase(vgData.totalVeg || 0);
+            setApprovedGrocBase(vgData.totalGroc || 0);
+
+            if (vgData && vgData.status === "approved") {
+              setIsVegGrocApproved(true);
+            } else {
+              setIsVegGrocApproved(false);
+            }
+
+            const extraVegNum = typeof savedExtraVeg === "number" ? savedExtraVeg : 0;
+            const extraGrocSum = (vgData.secondAccountantExtraGrocItems || []).reduce((s, it) => s + (Number(it.amt) || 0), 0);
+            const totalCombinedVeg = Number(((vgData.totalVeg || 0) + extraVegNum).toFixed(2));
+            const totalCombinedGroc = Number(((vgData.totalGroc || 0) + extraGrocSum).toFixed(2));
+            if (totalCombinedVeg > 0) setPurVeg(totalCombinedVeg);
+            if (totalCombinedGroc > 0) setPurGroc(totalCombinedGroc);
+          }
+        } catch (vgErr) {
+          console.warn("Could not fetch veg/groc for second accountant:", vgErr);
+        }
       }
     } catch (err) {
       console.error("Error fetching day data for second accountant:", err);
@@ -261,10 +309,49 @@ export default function SecondAccountantTab({
     setDeliveryCount("");
     setNotes("");
 
+    setVegGrocRecord(null);
+    setIsVegGrocApproved(false);
+    setApprovedVegBase(0);
+    setApprovedGrocBase(0);
+    setExtraVeg("");
+    setExtraGrocList([{ id: `groc_${Date.now()}`, amt: "" }]);
+
     setPepsiType(list.some(c => c.key === "pepsi" && c.carry > 0) ? 'payment' : 'invoice');
     setPlasticType(list.some(c => c.key === "plastic" && c.carry > 0) ? 'payment' : 'invoice');
     setSaucesType(list.some(c => c.key === "sauces" && c.carry > 0) ? 'payment' : 'invoice');
     setDieselType(list.some(c => c.key === "diesel" && c.carry > 0) ? 'payment' : 'invoice');
+  };
+
+  // Helper for second accountant veg & groc updates
+  const handleExtraVegChange = (val: number | "") => {
+    setExtraVeg(val);
+    const extraNum = typeof val === "number" ? val : 0;
+    const baseVeg = Number(vegGrocRecord?.totalVeg ?? approvedVegBase ?? 0);
+    const finalVeg = Number((baseVeg + extraNum).toFixed(2));
+    setPurVeg(finalVeg);
+  };
+
+  const handleExtraGrocItemChange = (id: string, amt: number | "") => {
+    const updated = extraGrocList.map(it => it.id === id ? { ...it, amt } : it);
+    setExtraGrocList(updated);
+    const sumExtras = updated.reduce((s, it) => s + (typeof it.amt === "number" ? it.amt : 0), 0);
+    const baseGroc = Number(vegGrocRecord?.totalGroc ?? approvedGrocBase ?? 0);
+    const finalGroc = Number((baseGroc + sumExtras).toFixed(2));
+    setPurGroc(finalGroc);
+  };
+
+  const addExtraGrocRow = () => {
+    setExtraGrocList(prev => [...prev, { id: `groc_${Date.now()}_${prev.length}`, amt: "" as "" | number }]);
+  };
+
+  const removeExtraGrocRow = (id: string) => {
+    const updated = extraGrocList.filter(it => it.id !== id);
+    const safeUpdated: { id: string; amt: number | "" }[] = updated.length > 0 ? updated : [{ id: `groc_${Date.now()}`, amt: "" }];
+    setExtraGrocList(safeUpdated);
+    const sumExtras = safeUpdated.reduce((s, it) => s + (typeof it.amt === "number" ? it.amt : 0), 0);
+    const baseGroc = Number(vegGrocRecord?.totalGroc ?? approvedGrocBase ?? 0);
+    const finalGroc = Number((baseGroc + sumExtras).toFixed(2));
+    setPurGroc(finalGroc);
   };
 
   // Helper and calculations for interactive live installments feedback
@@ -736,6 +823,23 @@ export default function SecondAccountantTab({
         
         // Notify other tabs/components of the update immediately
         window.dispatchEvent(new CustomEvent("daily_entry_saved", { detail: { branch, date } }));
+
+        // Persist second accountant extra amounts if veg/groc is active
+        try {
+          await fetch("/api/veg-groc/second-accountant", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              branch,
+              date,
+              extraVeg: typeof extraVeg === "number" ? extraVeg : 0,
+              extraGrocItems: extraGrocList.filter(it => typeof it.amt === "number" && it.amt > 0),
+              enteredBy: userName || "المحاسب الثاني"
+            })
+          });
+        } catch (vgSyncErr) {
+          console.warn("Could not save second accountant extras to veg-groc endpoint:", vgSyncErr);
+        }
 
         // Refresh local data
         await fetchDayData(branch, date);
@@ -1379,46 +1483,167 @@ export default function SecondAccountantTab({
               />
             </div>
 
+            {/* Vegetables & Grocery Integration Callouts */}
+            {isVegGrocApproved ? (
+              <div className="col-span-1 sm:col-span-2 md:col-span-4 p-3 bg-linear-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-2 shadow-2xs">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">🥬</span>
+                  <div>
+                    <div className="text-xs font-black text-emerald-950 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      {t("فواتير الخضار والبقالة معتمدة رسمياً من المدير العام", "Vegetables & Grocery Approved by Manager", "मैनेजर द्वारा स्वीकृत सब्ज़ी व किराना")}
+                    </div>
+                    <div className="text-[11px] text-emerald-700 font-medium">
+                      المعتمد من المحاسب: خضار {approvedVegBase.toFixed(2)} ر.س | بقالة {approvedGrocBase.toFixed(2)} ر.س. مبالغك المضافة أدناه تُجمع معها تلقائياً.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : vegGrocRecord && vegGrocRecord.status === "pending" && ((vegGrocRecord.totalVeg || 0) > 0 || (vegGrocRecord.totalGroc || 0) > 0) ? (
+              <div className="col-span-1 sm:col-span-2 md:col-span-4 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 shadow-2xs">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                <div className="text-xs text-amber-900">
+                  <span className="font-bold">{t("فواتير المحاسب عبدالله قيد الاعتماد:", "Accountant Invoices Pending Approval:", "अकाउंटेंट बिल समीक्षाधीन:")}</span>
+                  {" "}
+                  {t(
+                    `أدخل المحاسب عبدالله فواتير بقيمة (خضار: ${(vegGrocRecord.totalVeg || 0).toFixed(2)} ر.س | بقالة: ${(vegGrocRecord.totalGroc || 0).toFixed(2)} ر.س). سيقوم النظام بعد اعتماد المدير بجمع ما تدخله أدناه مع فواتير عبدالله تلقائياً لتظهر كمشتريات مجمعة في حساب المدير.`,
+                    `Accountant entered invoices (${((vegGrocRecord.totalVeg || 0) + (vegGrocRecord.totalGroc || 0)).toFixed(2)} SAR) pending manager approval. Upon approval, your amounts below will merge automatically.`,
+                    `अकाउंटेंट के बिल मैनेजर की मंज़ूरी का इंतज़ार कर रहे हैं। मंज़ूरी के बाद आपकी दर्ज राशि अपने-आप जुड़ जाएगी।`
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="col-span-1 sm:col-span-2 md:col-span-4 p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-2 text-xs text-slate-600">
+                <span className="text-base">📝</span>
+                <span>
+                  {t(
+                    "يمكنك إدخال مبالغ الخضار وسلع البقالة كإجمالي من حسابك. في حال أدخل المحاسب عبدالله فواتيره فسيتم جمعها معاً بعد اعتماد المدير.",
+                    "You can enter total amounts for vegetables and grocery. If accountant enters invoices, they will combine upon manager approval.",
+                    "आप सब्ज़ी व किराना की कुल राशि दर्ज कर सकते हैं। दोनों की प्रविष्टियाँ मैनेजर की मंज़ूरी के बाद जुड़ जाएँगी।"
+                  )}
+                </span>
+              </div>
+            )}
+
             {/* Vegetables */}
-            <div className="space-y-1.5 bg-slate-50/60 p-3 rounded-xl border border-slate-200/60">
-              <label className="block text-xs font-extrabold text-slate-700">
-                {t("خضار نقدي", "Cash Vegetables", "सब्ज़ी (Vegetables)")}
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                disabled={!isEditable}
-                value={purVeg}
-                onChange={(e) => setPurVeg(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
-                  !isEditable 
-                    ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
-                    : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                }`}
-                style={{ color: "#000000" }}
-              />
+            <div className="space-y-2 bg-slate-50/60 p-3 rounded-xl border border-slate-200/60">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-extrabold text-slate-700">
+                  {t("خضار نقدي", "Cash Vegetables", "सब्ज़ी (Vegetables)")}
+                </label>
+                {(vegGrocRecord?.totalVeg || 0) > 0 && (
+                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border ${
+                    isVegGrocApproved
+                      ? "text-emerald-800 bg-emerald-100/80 border-emerald-300"
+                      : "text-amber-800 bg-amber-100/80 border-amber-300"
+                  }`}>
+                    عبدالله: {(vegGrocRecord?.totalVeg || 0).toFixed(2)} ر.س {isVegGrocApproved ? "(معتمد)" : "(قيد الاعتماد)"}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder={(vegGrocRecord?.totalVeg || 0) > 0 ? "+ مبلغ إضافي للخضار (إن وجد)" : "مبلغ الخضار (إجمالي)"}
+                    disabled={!isEditable}
+                    value={extraVeg}
+                    onChange={(e) => handleExtraVegChange(e.target.value === "" ? "" : parseFloat(e.target.value))}
+                    className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
+                      !isEditable 
+                        ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
+                        : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    }`}
+                    style={{ color: "#000000" }}
+                  />
+                  <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 pointer-events-none">
+                    {(vegGrocRecord?.totalVeg || 0) > 0 ? "إضافي" : "ر.س"}
+                  </span>
+                </div>
+
+                <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between px-1">
+                  <span className="text-slate-500">الإجمالي المحسوب للخضار:</span>
+                  <span className="font-mono text-emerald-700 font-extrabold">
+                    {Number(purVeg || ((vegGrocRecord?.totalVeg || 0) + (typeof extraVeg === "number" ? extraVeg : 0))).toFixed(2)} ر.س
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* Grocery */}
-            <div className="space-y-1.5 bg-slate-50/60 p-3 rounded-xl border border-slate-200/60">
-              <label className="block text-xs font-extrabold text-slate-700">
-                {t("بقالة نقدي", "Cash Grocery", "किराना / बक़ाला (Grocery)")}
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                disabled={!isEditable}
-                value={purGroc}
-                onChange={(e) => setPurGroc(e.target.value === "" ? "" : parseFloat(e.target.value))}
-                className={`w-full px-3 py-2 text-xs border rounded-lg font-mono font-bold ${
-                  !isEditable 
-                    ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
-                    : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                }`}
-                style={{ color: "#000000" }}
-              />
+            <div className="space-y-2 bg-slate-50/60 p-3 rounded-xl border border-slate-200/60">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-extrabold text-slate-700">
+                  {t("بقالة نقدي", "Cash Grocery", "किराना / बक़ाला (Grocery)")}
+                </label>
+                {(vegGrocRecord?.totalGroc || 0) > 0 && (
+                  <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border ${
+                    isVegGrocApproved
+                      ? "text-blue-800 bg-blue-100/80 border-blue-300"
+                      : "text-amber-800 bg-amber-100/80 border-amber-300"
+                  }`}>
+                    عبدالله: {(vegGrocRecord?.totalGroc || 0).toFixed(2)} ر.س {isVegGrocApproved ? "(معتمد)" : "(قيد الاعتماد)"}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-[10px] font-bold text-slate-500">
+                  مبالغ سلع البقالة (يمكنك إدخال أكثر من سلعة):
+                </div>
+
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-0.5">
+                  {extraGrocList.map((item, idx) => (
+                    <div key={item.id} className="flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder={`+ مبلغ سلعة ${idx + 1}`}
+                          disabled={!isEditable}
+                          value={item.amt}
+                          onChange={(e) => handleExtraGrocItemChange(item.id, e.target.value === "" ? "" : parseFloat(e.target.value))}
+                          className={`w-full px-2.5 py-1.5 text-xs border rounded-lg font-mono font-bold ${
+                            !isEditable 
+                              ? "bg-slate-100 text-slate-500 cursor-not-allowed border-slate-200" 
+                              : "bg-white text-black border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          }`}
+                          style={{ color: "#000000" }}
+                        />
+                      </div>
+                      {isEditable && extraGrocList.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeExtraGrocRow(item.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded-md cursor-pointer"
+                          title="حذف هذا المبلغ الإضافي"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {isEditable && (
+                  <button
+                    type="button"
+                    onClick={addExtraGrocRow}
+                    className="w-full py-1 border border-dashed border-blue-300 hover:border-blue-500 bg-white hover:bg-blue-50/50 text-blue-700 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3 h-3" /> إضافة مبلغ سلعة أخرى للبقالة
+                  </button>
+                )}
+
+                <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between px-1 pt-1 border-t border-slate-200/60">
+                  <span className="text-slate-500">الإجمالي المحسوب للبقالة:</span>
+                  <span className="font-mono text-blue-700 font-extrabold">
+                    {Number(purGroc || ((vegGrocRecord?.totalGroc || 0) + extraGrocList.reduce((s, it) => s + (Number(it.amt) || 0), 0))).toFixed(2)} ر.س
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

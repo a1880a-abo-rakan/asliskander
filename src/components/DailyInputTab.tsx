@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from "react";
-import { Settings, DailyEntry, ExtraPurchase, OtherExpense } from "../types";
+import { Settings, DailyEntry, ExtraPurchase, OtherExpense, VegGrocRecord } from "../types";
 import ReorderTimerBanner from "./ReorderTimerBanner";
 import CategoryInstallmentInvoicesDropdown from "./CategoryInstallmentInvoicesDropdown";
+import DeliverySummaryCollapsible from "./DeliverySummaryCollapsible";
+import VegGrocModal from "./VegGrocModal";
 import { 
   Building, Calendar, DollarSign, CreditCard, ChevronRight, AlertCircle, 
   Trash, Save, Info, Plus, FileText, ChevronLeft, RefreshCw, TrendingDown,
-  ChevronDown, ChevronUp, Check, Clock, Truck, CheckCircle2, Edit3
+  ChevronDown, ChevronUp, Check, Clock, Truck, CheckCircle2, Edit3, CalendarRange,
+  Camera
 } from "lucide-react";
 
 interface DailyInputTabProps {
   onShowToast: (msg: string) => void;
   userRole: string;
   userBranch?: "الكل" | "القادسية" | "المروج";
+  userName?: string;
 }
 
-export default function DailyInputTab({ onShowToast, userRole, userBranch }: DailyInputTabProps) {
+export default function DailyInputTab({ onShowToast, userRole, userBranch, userName = "المحاسب عبدالله" }: DailyInputTabProps) {
   const getTodayDateStr = () => {
     const d = new Date();
     const year = d.getFullYear();
@@ -94,6 +98,11 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   const [purGroc, setPurGroc] = useState<number | "">("");
   const [purExtras, setPurExtras] = useState<ExtraPurchase[]>([]);
 
+  // Vegetables & Grocery Modal & Status (خضار وبقالة ومنظفات)
+  const [showVegGrocModal, setShowVegGrocModal] = useState(false);
+  const [vegGrocStatus, setVegGrocStatus] = useState<"new" | "pending" | "approved">("new");
+  const [vegGrocRecord, setVegGrocRecord] = useState<VegGrocRecord | null>(null);
+
   // POS Devices
   const [mada1, setMada1] = useState<number | "">("");
   const [mada2, setMada2] = useState<number | "">("");
@@ -127,6 +136,7 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
   // Delivery Count & Multiplier (for Qadisiyah: count * rate; for Murooj: amount directly)
   const [deliveryCount, setDeliveryCount] = useState<number | "">("");
   const [deliveryRate, setDeliveryRate] = useState<number>(6);
+  const [isDeliverySummaryOpen, setIsDeliverySummaryOpen] = useState(false);
 
   // Extra customizable daily expenses items list
   const [others, setOthers] = useState<OtherExpense[]>([
@@ -277,9 +287,32 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
     fetchSettingsAndReload();
   }, []);
 
+  const loadVegGrocData = async (targetBranch = branch, targetDate = date) => {
+    try {
+      const res = await fetch(`/api/veg-groc?branch=${encodeURIComponent(targetBranch)}&date=${encodeURIComponent(targetDate)}`);
+      if (res.ok) {
+        const data: VegGrocRecord = await res.json();
+        setVegGrocStatus(data.status || "new");
+        setVegGrocRecord(data);
+        if (data.status === "approved") {
+          const finalVeg = data.combinedTotalVeg ?? ((data.totalVeg || 0) + (data.secondAccountantTotalVeg || 0));
+          const finalGroc = data.combinedTotalGroc ?? ((data.totalGroc || 0) + (data.secondAccountantTotalGroc || 0));
+          if (finalVeg > 0) setPurVeg(finalVeg);
+          if (finalGroc > 0) setPurGroc(finalGroc);
+        } else if (data.status === "pending") {
+          if (data.totalVeg > 0) setPurVeg(data.totalVeg);
+          if (data.totalGroc > 0) setPurGroc(data.totalGroc);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not load veg/groc data:", err);
+    }
+  };
+
   useEffect(() => {
     loadCarryOverAlert();
     loadBranchHistory();
+    loadVegGrocData(branch, date);
     setIsLoadedForEdit(false);
   }, [branch, date]);
 
@@ -1424,8 +1457,55 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
         {/* Drawer cash purchases outlays */}
         <div className="space-y-4">
-          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest border-r-2 border-slate-400 pr-2">🛒 مشتريات نقدية عاجلة تم دفعها من الدرج:</h4>
-          
+          <div className="flex flex-wrap items-center justify-between gap-2 border-r-2 border-slate-400 pr-2">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">🛒 مشتريات نقدية عاجلة تم دفعها من الدرج:</h4>
+            
+            {/* Quick button to open Vegetables & Grocery with Invoices Modal */}
+            <button
+              type="button"
+              onClick={() => setShowVegGrocModal(true)}
+              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all active:scale-95"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>
+                {vegGrocStatus === "approved"
+                  ? "🥬 عرض فواتير الخضار والبقالة المعتمدة"
+                  : userRole === "مدير" && vegGrocStatus === "pending"
+                  ? "🔍 مراجعة واعتماد فواتير الخضار والبقالة"
+                  : "🥬 تفصيل وتصوير فواتير الخضار والبقالة"}
+              </span>
+            </button>
+          </div>
+
+          {/* Alert for Manager when invoices are pending */}
+          {userRole === "مدير" && vegGrocStatus === "pending" && (
+            <div className="p-3 bg-amber-500/10 border border-amber-300 rounded-xl flex items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  تنبيه المدير العام: توجد فواتير خضار وبقالة مسجلة من المحاسب بانتظار مراجعتك واعتمادها لهذا اليوم.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVegGrocModal(true)}
+                className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold cursor-pointer shrink-0"
+              >
+                مراجعة الفواتير والاعتماد
+              </button>
+            </div>
+          )}
+
+          {/* Quick info card for Abdullah / Accountant */}
+          {vegGrocStatus === "pending" && userRole !== "مدير" && (
+            <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-800">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                تم إرسال فواتير الخضار والبقالة للمدير العام وهي بانتظار المراجعة والاعتماد لتظهر للمحاسب الثاني.
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="text-[11px] font-bold text-slate-600">غاز نقدي</label>
@@ -1450,7 +1530,18 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[11px] font-bold text-slate-600">خضار نقدي</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-slate-600">خضار نقدي</label>
+                {vegGrocStatus === "approved" ? (
+                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
+                    معتمد
+                  </span>
+                ) : vegGrocStatus === "pending" ? (
+                  <span className="text-[9px] font-extrabold text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                    قيد المراجعة
+                  </span>
+                ) : null}
+              </div>
               <input
                 type="number"
                 placeholder="0.00"
@@ -1461,7 +1552,18 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[11px] font-bold text-slate-600">بقالة نقدي</label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-slate-600">بقالة نقدي</label>
+                {vegGrocStatus === "approved" ? (
+                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
+                    معتمد
+                  </span>
+                ) : vegGrocStatus === "pending" ? (
+                  <span className="text-[9px] font-extrabold text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
+                    قيد المراجعة
+                  </span>
+                ) : null}
+              </div>
               <input
                 type="number"
                 placeholder="0.00"
@@ -2325,15 +2427,51 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
 
         {/* Delivery Orders Section */}
         <div className="space-y-3 pt-4 border-t border-slate-100">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-widest border-r-2 border-indigo-600 pr-2 flex items-center gap-1.5">
               <Truck className="w-4 h-4 text-indigo-600" />
               <span>🚚 بند التوصيل (ينعكس في بنود المصروفات باسم "توصيل"):</span>
             </h4>
+
+            {/* Collapsible Trigger: Only for General Manager and branch Al-Qadisiyah */}
+            {userRole === "مدير" && branch === "القادسية" && (
+              <button
+                type="button"
+                onClick={() => setIsDeliverySummaryOpen(prev => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer shadow-xs ${
+                  isDeliverySummaryOpen
+                    ? "bg-indigo-600 text-white border-indigo-700 ring-2 ring-indigo-200"
+                    : "bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50 hover:border-indigo-300"
+                }`}
+                title="كشف واستعلام طلبات التوصيل لفترة زمنية محددة مع إمكانية الطباعة A4"
+              >
+                <CalendarRange className="w-3.5 h-3.5" />
+                <span>كشف التوصيل حسب الفترة</span>
+                {isDeliverySummaryOpen ? (
+                  <ChevronUp className="w-3.5 h-3.5 text-white" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                )}
+              </button>
+            )}
+
             <span className="text-xs bg-indigo-50 text-indigo-800 font-bold px-2.5 py-0.5 rounded-lg border border-indigo-150 font-mono">
               إجمالي مبلغ التوصيل: {computedDeliveryAmount.toFixed(2)} ر
             </span>
           </div>
+
+          {/* Collapsible Period & Delivery Summary - Manager & Qadisiyah only */}
+          {userRole === "مدير" && branch === "القادسية" && (
+            <DeliverySummaryCollapsible
+              history={history}
+              currentDate={date}
+              currentDeliveryCount={deliveryCount}
+              currentDeliveryRate={deliveryRate}
+              currentDeliveryAmount={computedDeliveryAmount}
+              isOpen={isDeliverySummaryOpen}
+              onToggle={() => setIsDeliverySummaryOpen(prev => !prev)}
+            />
+          )}
 
           <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
             {branch === "القادسية" ? (
@@ -2939,6 +3077,38 @@ export default function DailyInputTab({ onShowToast, userRole, userBranch }: Dai
           </div>
         </div>
       )}
+
+      {/* Vegetables & Grocery with Invoices Modal */}
+      <VegGrocModal
+        isOpen={showVegGrocModal}
+        onClose={() => setShowVegGrocModal(false)}
+        branch={branch}
+        date={date}
+        userRole={userRole}
+        userName={userName}
+        onSaved={(vTot, gTot, record) => {
+          setVegGrocStatus(record.status);
+          setVegGrocRecord(record);
+          if (record.status === "approved") {
+            const finalVeg = record.combinedTotalVeg ?? ((record.totalVeg || 0) + (record.secondAccountantTotalVeg || 0));
+            const finalGroc = record.combinedTotalGroc ?? ((record.totalGroc || 0) + (record.secondAccountantTotalGroc || 0));
+            setPurVeg(finalVeg);
+            setPurGroc(finalGroc);
+            handlePurVegChange(finalVeg);
+            handlePurGrocChange(finalGroc);
+          } else {
+            setPurVeg(vTot);
+            setPurGroc(gTot);
+            handlePurVegChange(vTot);
+            handlePurGrocChange(gTot);
+          }
+          onShowToast(
+            record.status === "approved"
+              ? "✅ تم اعتماد وتفريغ فواتير الخضار والبقالة بنجاح!"
+              : "✅ تم حفظ فواتير الخضار والبقالة وإرسالها للمدير العام للاعتماد!"
+          );
+        }}
+      />
     </div>
   );
 }

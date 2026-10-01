@@ -336,5 +336,44 @@ export interface InstallmentInvoice {
   notes?: string;
 }
 
+export interface VegGrocItem {
+  id: string;
+  category: 'خضار' | 'منظفات_وبقالة';
+  name: string;
+  price: number;
+  invoiceImage?: string; // Base64 data URL for invoice photo
+  enteredBy?: string;
+  enteredAt?: string;
+  status: 'pending' | 'approved';
+}
 
+export interface SecondAccountantGrocItem {
+  id: string;
+  amt: number;
+}
 
+export interface VegGrocRecord {
+  id: string; // `${branch}-${date}`
+  branch: 'القادسية' | 'المروج';
+  date: string; // YYYY-MM-DD
+  items: VegGrocItem[];
+  totalVeg: number;
+  totalGroc: number;
+  status: 'pending' | 'approved';
+  approvedAt?: string;
+  approvedBy?: string;
+
+  // Second Accountant additions (مبالغ إجمالية من المحاسب الثاني)
+  secondAccountantExtraVeg?: number;
+  secondAccountantExtraGrocItems?: SecondAccountantGrocItem[];
+  secondAccountantTotalVeg?: number;
+  secondAccountantTotalGroc?: number;
+  secondAccountantStatus?: 'pending' | 'approved';
+  secondAccountantEnteredBy?: string;
+  secondAccountantEnteredAt?: string;
+
+  // Combined totals (المجموع الكلي المعتمد: عبدالله + المحاسب الثاني)
+  combinedTotalVeg?: number;
+  combinedTotalGroc?: number;
+  combinedGrandTotal?: number;
+}

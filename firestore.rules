@@ -80,6 +80,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // 15. Vegetables and Groceries entries rules
+    match /veg_groc_records/{docId} {
+      allow read, write: if true;
+    }
+
     // Global Safety Net (Default Deny Catch All)
     match /{document=**} {
       allow read, write: if false;

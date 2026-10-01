@@ -1,0 +1,101 @@
+[
+  {
+    "id": "القادسية-2026-09-30",
+    "branch": "القادسية",
+    "date": "2026-09-30",
+    "items": [
+      {
+        "id": "veg_default_0",
+        "category": "خضار",
+        "name": "خس",
+        "price": 30,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "veg_default_1",
+        "category": "خضار",
+        "name": "طماطم",
+        "price": 0,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "veg_default_2",
+        "category": "خضار",
+        "name": "ثوم",
+        "price": 44,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "veg_default_3",
+        "category": "خضار",
+        "name": "بيض",
+        "price": 12,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "veg_default_4",
+        "category": "خضار",
+        "name": "برتقال",
+        "price": 15,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "veg_default_5",
+        "category": "خضار",
+        "name": "ليمون",
+        "price": 33,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "veg_default_6",
+        "category": "خضار",
+        "name": "بهارات",
+        "price": 12,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      },
+      {
+        "id": "groc_1790759633105_0",
+        "category": "منظفات_وبقالة",
+        "name": "منظفات",
+        "price": 14,
+        "enteredBy": "أبو ريان عبدالله",
+        "enteredAt": "2026-09-30T09:15:07.584Z",
+        "status": "approved"
+      }
+    ],
+    "totalVeg": 146,
+    "totalGroc": 14,
+    "status": "approved",
+    "secondAccountantExtraVeg": 20,
+    "secondAccountantExtraGrocItems": [
+      {
+        "id": "groc_1",
+        "amt": 10
+      },
+      {
+        "id": "groc_2",
+        "amt": 15
+      }
+    ],
+    "secondAccountantTotalVeg": 166,
+    "secondAccountantTotalGroc": 39,
+    "secondAccountantEnteredBy": "عمران",
+    "secondAccountantEnteredAt": "2026-09-30T09:35:17.508Z",
+    "approvedAt": "2026-09-30T09:35:09.938Z",
+    "approvedBy": "المدير العام"
+  }
+]

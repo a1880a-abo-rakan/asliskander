@@ -1,8 +1,9 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { createServer as createViteServer } from "vite";
-import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry, InstallmentInvoice } from "./src/types";
+import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry, InstallmentInvoice, VegGrocRecord, VegGrocItem, SecondAccountantGrocItem } from "./src/types";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import "dotenv/config";
 
@@ -258,7 +259,7 @@ function hasBackupJson(filename: string): boolean {
 }
 
 // Global flag to track if Firestore free daily read quota has been exceeded
-let isFirestoreReadQuotaExceeded = true;
+let isFirestoreReadQuotaExceeded = false;
 
 function checkFirestoreError(err: any): void {
   const msg = String(err?.message || err || "");
@@ -406,6 +407,29 @@ let usersLoaded = false;
 async function getUsers(): Promise<UnifiedUser[]> {
   if (usersLoaded) {
     return Array.from(usersCache.values()).map(u => ({ ...u }));
+  }
+  // Try fetching fresh users from Firestore first so accounts and passwords are always synced
+  if (!isFirestoreReadQuotaExceeded) {
+    try {
+      const snap = await withTimeout(getDocs(collection(db, "users")), 5000);
+      const list: UnifiedUser[] = [];
+      usersCache.clear();
+      snap.forEach((d) => {
+        const data = d.data() as UnifiedUser;
+        if (data) {
+          if (!data.id) data.id = d.id;
+          list.push(data);
+          usersCache.set(data.id, data);
+        }
+      });
+      if (list.length > 0) {
+        writeBackupJson("users_backup.json", list);
+        usersLoaded = true;
+        return list;
+      }
+    } catch (e) {
+      console.warn("Could not fetch users directly from Firestore, checking backup:", e);
+    }
   }
   if (hasBackupJson("users_backup.json")) {
     const localUsers = readBackupJson<UnifiedUser[]>("users_backup.json", []);
@@ -838,6 +862,28 @@ async function getDays(): Promise<DailyEntry[]> {
       }
     });
     daysLoaded = true;
+
+    // Concurrently trigger background sync with Firestore if online to fetch newest days (e.g. recent dates)
+    if (!isFirestoreReadQuotaExceeded) {
+      withTimeout(getDocs(collection(db, "days")), 7000).then(snap => {
+        let changed = false;
+        snap.forEach(d => {
+          const data = d.data() as DailyEntry;
+          if (data && !(data as any).test && data.date) {
+            const docId = data.id || d.id;
+            data.id = docId;
+            if (!daysCache.has(docId)) {
+              daysCache.set(docId, JSON.parse(JSON.stringify(cleanObject(data))));
+              changed = true;
+            }
+          }
+        });
+        if (changed) {
+          saveDaysToFile(Array.from(daysCache.values()));
+        }
+      }).catch(e => console.warn("Background days sync notice:", e?.message || e));
+    }
+
     return Array.from(daysCache.values()).map(d => JSON.parse(JSON.stringify(d)));
   }
 
@@ -1035,6 +1081,93 @@ async function deleteInstallmentInvoice(id: string): Promise<void> {
   }
 }
 
+// In-memory cache and persistence for Vegetables and Grocery records (خضار وبقالة ومنظفات)
+const vegGrocCache = new Map<string, VegGrocRecord>();
+let vegGrocLoaded = false;
+const VEG_GROC_BACKUP_FILE = path.join(process.cwd(), "data", "veg_groc_records.json");
+
+function loadVegGrocFromFile(): VegGrocRecord[] {
+  try {
+    if (fs.existsSync(VEG_GROC_BACKUP_FILE)) {
+      const content = fs.readFileSync(VEG_GROC_BACKUP_FILE, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn("Could not read local veg_groc backup file:", err);
+  }
+  return [];
+}
+
+function saveVegGrocToFile(records: VegGrocRecord[]): void {
+  try {
+    const dir = path.dirname(VEG_GROC_BACKUP_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(VEG_GROC_BACKUP_FILE, JSON.stringify(records, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Could not write local veg_groc backup file:", err);
+  }
+}
+
+async function getVegGrocRecords(): Promise<VegGrocRecord[]> {
+  if (vegGrocLoaded) {
+    return Array.from(vegGrocCache.values()).map(r => JSON.parse(JSON.stringify(r)));
+  }
+
+  const localList = loadVegGrocFromFile();
+  if (localList.length > 0) {
+    vegGrocCache.clear();
+    localList.forEach(r => {
+      if (r && r.id) {
+        vegGrocCache.set(r.id, JSON.parse(JSON.stringify(cleanObject(r))));
+      }
+    });
+    vegGrocLoaded = true;
+    return localList;
+  }
+
+  try {
+    const snap = await getDocs(collection(db, "veg_groc_records"));
+    const list: VegGrocRecord[] = [];
+    vegGrocCache.clear();
+    snap.forEach((d) => {
+      const data = d.data() as VegGrocRecord;
+      if (data) {
+        if (!data.id) data.id = d.id;
+        list.push(data);
+        vegGrocCache.set(data.id, data);
+      }
+    });
+    vegGrocLoaded = true;
+    saveVegGrocToFile(list);
+    return list;
+  } catch (err) {
+    console.warn("Could not read veg_groc_records from Firestore, using local backup:", err);
+    vegGrocLoaded = true;
+    return [];
+  }
+}
+
+async function getVegGrocRecord(branch: string, date: string): Promise<VegGrocRecord | null> {
+  const records = await getVegGrocRecords();
+  const id = `${branch}-${date}`;
+  const found = records.find(r => r.id === id || (r.branch === branch && r.date === date));
+  return found ? JSON.parse(JSON.stringify(found)) : null;
+}
+
+async function saveVegGrocRecord(record: VegGrocRecord): Promise<void> {
+  vegGrocCache.set(record.id, JSON.parse(JSON.stringify(cleanObject(record))));
+  const all = Array.from(vegGrocCache.values());
+  saveVegGrocToFile(all);
+  try {
+    await setDoc(doc(db, "veg_groc_records", record.id), cleanObject(record));
+  } catch (err) {
+    console.error("Error saving veg_groc_record to Firestore:", err);
+  }
+}
+
 async function getDiesels(): Promise<SharedDiesel[]> {
   if (dieselsLoaded) {
     return Array.from(dieselsCache.values()).map(b => JSON.parse(JSON.stringify(b)));
@@ -1128,33 +1261,33 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
     return Array.from(taxInvoicesCache.values());
   }
 
-  // 1. Primary: Local backup (0 reads)
+  // 1. Check local backup first if available and has data
   if (hasBackupJson("tax_invoices_backup.json") && !forceRefresh) {
     const local = readBackupJson<TaxInvoice[]>("tax_invoices_backup.json", []);
-    taxInvoicesCache.clear();
-    local.forEach(inv => {
-      if (inv && inv.id) {
-        taxInvoicesCache.set(inv.id, cleanObject(inv));
-      }
-    });
-    taxInvoicesLoaded = true;
-    return Array.from(taxInvoicesCache.values());
-  }
-
-  if (isFirestoreReadQuotaExceeded && !forceRefresh) {
-    taxInvoicesLoaded = true;
-    writeBackupJson("tax_invoices_backup.json", []);
-    return [];
+    if (local && local.length > 0) {
+      taxInvoicesCache.clear();
+      local.forEach(inv => {
+        if (inv && inv.id && !(inv as any).test && !String(inv.id).startsWith("test_perm") && (inv.date || inv.invoice_date)) {
+          taxInvoicesCache.set(inv.id, cleanObject(inv));
+        }
+      });
+      taxInvoicesLoaded = true;
+      return Array.from(taxInvoicesCache.values());
+    }
   }
 
   try {
-    const snap = await getDocs(collection(db, "tax_invoices"));
+    const snap = await withTimeout(getDocs(collection(db, "tax_invoices")), 10000);
     const list: TaxInvoice[] = [];
     const itemsToPersist: TaxInvoice[] = [];
     taxInvoicesCache.clear();
     snap.forEach((d) => {
-      const data = d.data() as TaxInvoice;
-      if (data) {
+      if (d.id.startsWith("test_perm") || d.id.startsWith("test-connection")) {
+        deleteDoc(doc(db, "tax_invoices", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.date || data.invoice_date)) {
         if (!data.id) {
           data.id = d.id;
         }
@@ -1178,7 +1311,7 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
             itemsToPersist.push(data);
           }
         }
-        list.push(data);
+        list.push(data as TaxInvoice);
         taxInvoicesCache.set(data.id, cleanObject(data));
       }
     });
@@ -1206,8 +1339,10 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
         continue;
       }
       const cleanedNew = cleanObject(i);
-      if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 900000) {
-        cleanedNew.rawImage = cleanedNew.rawImage.substring(0, 900000);
+      // Ensure image base64 strings are never brutally truncated with substring(), which destroys JPEG encoding.
+      // Client-side adaptive compression ensures all images are safely sized (around 300KB-500KB).
+      if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 950000) {
+        console.warn(`[TaxInvoice Image] rawImage for ${i.id} is unusually large (${cleanedNew.rawImage.length} chars). Keeping intact.`);
       }
       const cached = taxInvoicesCache.get(i.id);
 
@@ -1255,54 +1390,59 @@ interface TaxCompany {
 const taxCompaniesCache = new Map<string, TaxCompany>();
 let taxCompaniesLoaded = false;
 
-async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
-  if (taxCompaniesLoaded) {
+async function getTaxRegisteredCompanies(forceRefresh = false): Promise<TaxCompany[]> {
+  if (taxCompaniesLoaded && !forceRefresh && taxCompaniesCache.size > 0) {
     return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
   }
 
-  // 1. Primary: Local backup (0 reads)
-  if (hasBackupJson("tax_companies_backup.json")) {
+  // 1. Primary: Local backup (0 reads) IF IT HAS VALID DATA
+  if (hasBackupJson("tax_companies_backup.json") && !forceRefresh) {
     const local = readBackupJson<TaxCompany[]>("tax_companies_backup.json", []);
-    taxCompaniesCache.clear();
-    local.forEach(c => {
-      if (c && c.id) taxCompaniesCache.set(c.id, c);
-    });
-    taxCompaniesLoaded = true;
-    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
-  }
-
-  if (isFirestoreReadQuotaExceeded) {
-    taxCompaniesLoaded = true;
-    writeBackupJson("tax_companies_backup.json", []);
-    return [];
+    if (Array.isArray(local) && local.length > 0) {
+      taxCompaniesCache.clear();
+      local.forEach(c => {
+        if (c && c.id && c.name && c.name.trim()) taxCompaniesCache.set(c.id, c);
+      });
+      if (taxCompaniesCache.size > 0) {
+        taxCompaniesLoaded = true;
+        return Array.from(taxCompaniesCache.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "ar"));
+      }
+    }
   }
 
   try {
     const snap = await getDocs(collection(db, "tax_registered_companies"));
     const list: TaxCompany[] = [];
     taxCompaniesCache.clear();
+    const existingNames = new Set<string>();
+
     snap.forEach((d) => {
       const data = d.data() as Partial<TaxCompany>;
-      if (data && typeof data.name === "string" && data.name.trim()) {
+      if (data && typeof data.name === "string" && data.name.trim() && data.name.trim() !== "فاتورة" && !(data as any).test) {
         const item: TaxCompany = {
           id: data.id || d.id,
           name: data.name.trim(),
         };
         list.push(item);
         taxCompaniesCache.set(item.id, item);
+        existingNames.add(item.name.trim());
       }
     });
 
-    if (list.length === 0) {
-      const invoices = await getTaxInvoices();
-      const uniqueNames = Array.from(new Set(invoices.map((i) => i.company).filter(Boolean)));
-      for (const name of uniqueNames) {
-        if (!name || typeof name !== "string") continue;
-        const id = `comp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const comp: TaxCompany = { id, name: name.trim() };
-        await setDoc(doc(db, "tax_registered_companies", id), comp).catch(() => {});
-        list.push(comp);
-        taxCompaniesCache.set(comp.id, comp);
+    // Also populate with any company names from existing tax invoices
+    const invoices = await getTaxInvoices();
+    for (const inv of invoices) {
+      if (inv.company && typeof inv.company === "string" && inv.company.trim()) {
+        const cname = inv.company.trim();
+        if (!existingNames.has(cname)) {
+          existingNames.add(cname);
+          const id = `comp-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+          const comp: TaxCompany = { id, name: cname };
+          list.push(comp);
+          taxCompaniesCache.set(comp.id, comp);
+          // Persist to Firestore asynchronously without blocking
+          setDoc(doc(db, "tax_registered_companies", id), comp).catch(() => {});
+        }
       }
     }
 
@@ -1312,10 +1452,26 @@ async function getTaxRegisteredCompanies(): Promise<TaxCompany[]> {
     return list;
   } catch (err) {
     checkFirestoreError(err);
-    console.warn("Could not load tax companies from Firestore, returning cached:", err);
+    console.warn("Could not load tax companies from Firestore, checking invoices cache:", err);
+    // Fallback: extract from invoices cache
+    const invoices = await getTaxInvoices();
+    const list: TaxCompany[] = [];
+    const seen = new Set<string>();
+    invoices.forEach((inv, idx) => {
+      if (inv.company && typeof inv.company === "string" && inv.company.trim()) {
+        const cname = inv.company.trim();
+        if (!seen.has(cname)) {
+          seen.add(cname);
+          const comp: TaxCompany = { id: `comp-inv-${idx}`, name: cname };
+          list.push(comp);
+          taxCompaniesCache.set(comp.id, comp);
+        }
+      }
+    });
+    list.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
     taxCompaniesLoaded = true;
-    writeBackupJson("tax_companies_backup.json", Array.from(taxCompaniesCache.values()));
-    return Array.from(taxCompaniesCache.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
+    writeBackupJson("tax_companies_backup.json", list);
+    return list;
   }
 }
 
@@ -1648,34 +1804,40 @@ async function getPurchases(): Promise<Purchase[]> {
     return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
   }
 
-  // 1. Primary: Local backup (0 reads)
+  // 1. Check local backup first if available and has items
   if (hasBackupJson("purchases_backup.json")) {
     const local = readBackupJson<Purchase[]>("purchases_backup.json", []);
-    purchasesCache.clear();
-    local.forEach(p => {
-      if (p && p.id) purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
-    });
-    purchasesLoaded = true;
-    return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
-  }
-
-  if (isFirestoreReadQuotaExceeded) {
-    purchasesLoaded = true;
-    writeBackupJson("purchases_backup.json", []);
-    return [];
+    if (local && local.length > 0) {
+      purchasesCache.clear();
+      local.forEach(p => {
+        if (p && p.id && !(p as any).test && !String(p.id).startsWith("test_perm")) {
+          if (!p.date) p.date = new Date().toISOString().split("T")[0];
+          purchasesCache.set(p.id, JSON.parse(JSON.stringify(cleanObject(p))));
+        }
+      });
+      purchasesLoaded = true;
+      return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
+    }
   }
 
   try {
-    const snap = await getDocs(collection(db, "purchases"));
+    const snap = await withTimeout(getDocs(collection(db, "purchases")), 10000);
     const list: Purchase[] = [];
     purchasesCache.clear();
     snap.forEach((d) => {
-      const data = d.data() as Purchase;
-      if (data) {
+      if (d.id.startsWith("test_perm") || d.id.startsWith("test-connection")) {
+        deleteDoc(doc(db, "purchases", d.id)).catch(() => {});
+        return;
+      }
+      const data = d.data() as any;
+      if (data && !data.test && (data.name || data.price !== undefined)) {
         if (!data.id) {
           data.id = d.id;
         }
-        list.push(data);
+        if (!data.date) {
+          data.date = new Date().toISOString().split("T")[0];
+        }
+        list.push(data as Purchase);
         purchasesCache.set(data.id, JSON.parse(JSON.stringify(cleanObject(data))));
       }
     });
@@ -2051,7 +2213,7 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
 
   // Filter entries for this branch and sort ascending by date
   const filtered = allDays.filter((d) => d.branch === branch);
-  filtered.sort((a, b) => a.date.localeCompare(b.date));
+  filtered.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
 
   // Load all installment invoices
   const allInvoices = await getInstallmentInvoices();
@@ -2176,7 +2338,7 @@ async function recalculateCarryOvers(branch: "القادسية" | "المروج"
   for (const cat of CATEGORIES) {
     let catInvoices = branchInvoices.filter(i => i.category === cat.key);
     // Sort chronologically by date ascending, then enteredAt ascending
-    catInvoices.sort((a, b) => a.date.localeCompare(b.date) || (a.enteredAt || "").localeCompare(b.enteredAt || ""));
+    catInvoices.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.enteredAt || "").localeCompare(String(b.enteredAt || "")));
 
     // Reset simulation state for all invoices in this category
     for (const inv of catInvoices) {
@@ -2445,7 +2607,7 @@ async function saveWhatsAppMessage(msg: any): Promise<void> {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const PORT = 3000;
 
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
@@ -2660,7 +2822,7 @@ async function startServer() {
     }
 
     // Find latest record by date to check remaining carry-overs
-    filtered.sort((a, b) => b.date.localeCompare(a.date));
+    filtered.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
     const latest = filtered[0];
 
     const carries: Array<{
@@ -2741,7 +2903,7 @@ async function startServer() {
         const catInvs = allInvoices.filter(
           inv => inv.branch === branch && inv.category === cat.key && (dateQuery ? inv.date <= dateQuery : true)
         );
-        catInvs.sort((a, b) => a.date.localeCompare(b.date) || (a.enteredAt || "").localeCompare(b.enteredAt || ""));
+        catInvs.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")) || String(a.enteredAt || "").localeCompare(String(b.enteredAt || "")));
 
         // Open invoices with unpaid balance
         const openInvs = catInvs.filter(inv => inv.remainingAmount > 0);
@@ -2821,7 +2983,7 @@ async function startServer() {
         days = days.filter((d) => d.date && d.date <= to);
       }
 
-      days.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      days.sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
       res.json(days);
     } catch (err: any) {
       console.error("Error in GET /api/days:", err);
@@ -3137,7 +3299,7 @@ async function startServer() {
     }
 
     // Sort newest first
-    branchInvoices.sort((a, b) => b.date.localeCompare(a.date) || (b.enteredAt || "").localeCompare(a.enteredAt || ""));
+    branchInvoices.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.enteredAt || "").localeCompare(String(a.enteredAt || "")));
 
     if (limitParam && limitParam > 0) {
       branchInvoices = branchInvoices.slice(0, limitParam);
@@ -3363,6 +3525,282 @@ async function startServer() {
     }
   });
 
+  // VEGETABLES & GROCERY / DETERGENTS (خضار وبقالة ومنظفات) ENDPOINTS
+  app.get("/api/veg-groc", async (req, res) => {
+    try {
+      const branch = req.query.branch as string;
+      const date = req.query.date as string;
+      if (!branch || !date) {
+        return res.status(400).json({ error: "الفرع والتاريخ مطلوبان" });
+      }
+      const record = await getVegGrocRecord(branch, date);
+      if (record) {
+        const numExtraVeg = Number(record.secondAccountantExtraVeg) || 0;
+        const extraGrocSum = (record.secondAccountantExtraGrocItems || []).reduce((s, it) => s + (Number(it.amt) || 0), 0);
+        record.secondAccountantTotalVeg = numExtraVeg;
+        record.secondAccountantTotalGroc = extraGrocSum;
+        record.combinedTotalVeg = Number(((record.totalVeg || 0) + numExtraVeg).toFixed(2));
+        record.combinedTotalGroc = Number(((record.totalGroc || 0) + extraGrocSum).toFixed(2));
+        record.combinedGrandTotal = Number((record.combinedTotalVeg + record.combinedTotalGroc).toFixed(2));
+        return res.json(record);
+      }
+
+      res.json({
+        id: `${branch}-${date}`,
+        branch,
+        date,
+        items: [],
+        totalVeg: 0,
+        totalGroc: 0,
+        status: "new",
+        secondAccountantExtraVeg: 0,
+        secondAccountantExtraGrocItems: [],
+        secondAccountantTotalVeg: 0,
+        secondAccountantTotalGroc: 0,
+        combinedTotalVeg: 0,
+        combinedTotalGroc: 0,
+        combinedGrandTotal: 0
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/veg-groc:", err);
+      res.status(500).json({ error: "فشل استرجاع بيانات الخضار والبقالة: " + err.message });
+    }
+  });
+
+  app.get("/api/veg-groc/pending", async (req, res) => {
+    try {
+      const branch = req.query.branch as string;
+      const all = await getVegGrocRecords();
+      let pending = all.filter(r => r.status === "pending" || (r.items && r.items.some(i => i.status === "pending")));
+      if (branch && branch !== "الكل") {
+        pending = pending.filter(r => r.branch === branch);
+      }
+      pending.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+      res.json(pending);
+    } catch (err: any) {
+      console.error("Error in GET /api/veg-groc/pending:", err);
+      res.status(500).json({ error: "فشل استرجاع الفواتير المعلقة: " + err.message });
+    }
+  });
+
+  app.post("/api/veg-groc", async (req, res) => {
+    try {
+      const { branch, date, items, enteredBy } = req.body;
+      if (!branch || !date) {
+        return res.status(400).json({ error: "الفرع والتاريخ مطلوبان" });
+      }
+
+      const safeItems: VegGrocItem[] = Array.isArray(items) ? items.map((it: any, idx: number) => ({
+        id: it.id || `item_${Date.now()}_${idx}`,
+        category: it.category === "منظفات_وبقالة" ? "منظفات_وبقالة" : "خضار",
+        name: String(it.name || "").trim(),
+        price: Number(it.price) || 0,
+        invoiceImage: it.invoiceImage || undefined,
+        enteredBy: it.enteredBy || enteredBy || "المحاسب عبدالله",
+        enteredAt: it.enteredAt || new Date().toISOString(),
+        status: it.status || "pending"
+      })) : [];
+
+      // Calculate totals from items
+      const totalVeg = Number(safeItems
+        .filter(it => it.category === "خضار")
+        .reduce((sum, it) => sum + (Number(it.price) || 0), 0)
+        .toFixed(2));
+
+      const totalGroc = Number(safeItems
+        .filter(it => it.category === "منظفات_وبقالة")
+        .reduce((sum, it) => sum + (Number(it.price) || 0), 0)
+        .toFixed(2));
+
+      const existing = await getVegGrocRecord(branch, date);
+      const extraVegNum = existing?.secondAccountantExtraVeg || 0;
+      const extraGrocItems = existing?.secondAccountantExtraGrocItems || [];
+      const extraGrocSum = extraGrocItems.reduce((s: number, it: any) => s + (Number(it.amt) || 0), 0);
+
+      const combinedTotalVeg = Number((totalVeg + extraVegNum).toFixed(2));
+      const combinedTotalGroc = Number((totalGroc + extraGrocSum).toFixed(2));
+
+      const record: VegGrocRecord = {
+        id: `${branch}-${date}`,
+        branch,
+        date,
+        items: safeItems,
+        totalVeg,
+        totalGroc,
+        status: "pending", // Always set to pending review for Manager
+        secondAccountantExtraVeg: extraVegNum,
+        secondAccountantExtraGrocItems: extraGrocItems,
+        secondAccountantTotalVeg: extraVegNum,
+        secondAccountantTotalGroc: extraGrocSum,
+        secondAccountantEnteredBy: existing?.secondAccountantEnteredBy,
+        secondAccountantEnteredAt: existing?.secondAccountantEnteredAt,
+        combinedTotalVeg,
+        combinedTotalGroc,
+        combinedGrandTotal: Number((combinedTotalVeg + combinedTotalGroc).toFixed(2))
+      };
+
+      await saveVegGrocRecord(record);
+      res.json({ success: true, record });
+    } catch (err: any) {
+      console.error("Error in POST /api/veg-groc:", err);
+      res.status(500).json({ error: "فشل حفظ بيانات الخضار والبقالة: " + err.message });
+    }
+  });
+
+  // Manager Approval endpoint
+  // Combines inputs from Abdullah and Second Accountant, wipes images to save memory, and syncs to Day Entry
+  app.post("/api/veg-groc/approve", async (req, res) => {
+    try {
+      const { branch, date, approvedBy } = req.body;
+      if (!branch || !date) {
+        return res.status(400).json({ error: "الفرع والتاريخ مطلوبان" });
+      }
+
+      const record = await getVegGrocRecord(branch, date);
+      if (!record) {
+        return res.status(404).json({ error: "لم يتم العثور على سجل الخضار والبقالة لهذا اليوم" });
+      }
+
+      // 1. Mark as approved
+      record.status = "approved";
+      record.approvedAt = new Date().toISOString();
+      record.approvedBy = approvedBy || "المدير العام";
+
+      // 2. Erase all invoice images to keep site lightning-fast and save storage
+      let deletedImagesCount = 0;
+      if (Array.isArray(record.items)) {
+        record.items.forEach(it => {
+          it.status = "approved";
+          if (it.invoiceImage) {
+            deletedImagesCount++;
+            delete it.invoiceImage;
+          }
+        });
+      }
+
+      // 3. Compute combined totals: Abdullah + Second Accountant
+      const numExtraVeg = Number(record.secondAccountantExtraVeg) || 0;
+      const extraGrocSum = (record.secondAccountantExtraGrocItems || []).reduce((s, it) => s + (Number(it.amt) || 0), 0);
+      record.secondAccountantTotalVeg = numExtraVeg;
+      record.secondAccountantTotalGroc = extraGrocSum;
+
+      record.combinedTotalVeg = Number(((record.totalVeg || 0) + numExtraVeg).toFixed(2));
+      record.combinedTotalGroc = Number(((record.totalGroc || 0) + extraGrocSum).toFixed(2));
+      record.combinedGrandTotal = Number((record.combinedTotalVeg + record.combinedTotalGroc).toFixed(2));
+
+      await saveVegGrocRecord(record);
+
+      // 4. Update the DailyEntry if it exists for this branch & date
+      try {
+        const allDays = await getDays();
+        const targetDay = allDays.find(d => d.branch === branch && d.date === date);
+        if (targetDay) {
+          targetDay.pur_veg = record.combinedTotalVeg;
+          targetDay.pur_groc = record.combinedTotalGroc;
+          targetDay.vegetables = record.combinedTotalVeg;
+          targetDay.grocery = record.combinedTotalGroc;
+
+          // Recompute cash purchases
+          const extrasSum = (targetDay.pur_extras || []).reduce((acc, it) => acc + (it.amt || 0), 0);
+          targetDay.cash_purchases = Number(((targetDay.pur_gas || 0) + (targetDay.pur_bread || 0) + targetDay.pur_veg + targetDay.pur_groc + extrasSum).toFixed(2));
+          targetDay.cash_net = Number(((targetDay.cash_box || 0) - (targetDay.sarf ?? 350) + targetDay.cash_purchases).toFixed(2));
+          targetDay.total_sales = Number((targetDay.cash_net + (targetDay.pos_net || 0)).toFixed(2));
+
+          await saveDays(allDays);
+          await autoRegisterDayInputsAsPurchases(targetDay);
+        }
+      } catch (daySyncErr) {
+        console.warn("Could not sync approved veg/groc directly to day record:", daySyncErr);
+      }
+
+      res.json({
+        success: true,
+        record,
+        message: `تم اعتماد فواتير الخضار والبقالة بنجاح، بجمع مدخلات المحاسب عبدالله والمحاسب الثاني (خضار: ${record.combinedTotalVeg} ر.س، بقالة: ${record.combinedTotalGroc} ر.س)، وتفريغ ${deletedImagesCount} صورة لتخفيف العبء على الموقع.`
+      });
+    } catch (err: any) {
+      console.error("Error in POST /api/veg-groc/approve:", err);
+      res.status(500).json({ error: "فشل اعتماد فواتير الخضار والبقالة: " + err.message });
+    }
+  });
+
+  // Second Accountant additions endpoint
+  // Allows Second Accountant to enter total amounts for vegetables and multiple grocery items
+  app.post("/api/veg-groc/second-accountant", async (req, res) => {
+    try {
+      const { branch, date, extraVeg, extraGrocItems, enteredBy } = req.body;
+      if (!branch || !date) {
+        return res.status(400).json({ error: "الفرع والتاريخ مطلوبان" });
+      }
+
+      let record = await getVegGrocRecord(branch, date);
+      const isNewRecord = !record;
+      if (!record) {
+        record = {
+          id: `${branch}-${date}`,
+          branch,
+          date,
+          items: [],
+          totalVeg: 0,
+          totalGroc: 0,
+          status: "pending" // Pending manager review if entered first
+        };
+      }
+
+      const numExtraVeg = Number(extraVeg) || 0;
+      const safeGrocItems: SecondAccountantGrocItem[] = Array.isArray(extraGrocItems)
+        ? extraGrocItems.map((it: any, idx: number) => ({
+            id: it.id || `groc_${Date.now()}_${idx}`,
+            amt: Number(it.amt) || 0
+          }))
+        : [];
+
+      const sumExtraGroc = safeGrocItems.reduce((acc, it) => acc + (Number(it.amt) || 0), 0);
+
+      record.secondAccountantExtraVeg = numExtraVeg;
+      record.secondAccountantExtraGrocItems = safeGrocItems;
+      record.secondAccountantTotalVeg = numExtraVeg;
+      record.secondAccountantTotalGroc = sumExtraGroc;
+      record.secondAccountantEnteredBy = enteredBy || "المحاسب الثاني";
+      record.secondAccountantEnteredAt = new Date().toISOString();
+
+      record.combinedTotalVeg = Number(((record.totalVeg || 0) + numExtraVeg).toFixed(2));
+      record.combinedTotalGroc = Number(((record.totalGroc || 0) + sumExtraGroc).toFixed(2));
+      record.combinedGrandTotal = Number((record.combinedTotalVeg + record.combinedTotalGroc).toFixed(2));
+
+      // If the base was already approved by manager, keep approved status and update DayEntry
+      if (record.status === "approved") {
+        try {
+          const allDays = await getDays();
+          const targetDay = allDays.find(d => d.branch === branch && d.date === date);
+          if (targetDay) {
+            targetDay.pur_veg = record.combinedTotalVeg;
+            targetDay.pur_groc = record.combinedTotalGroc;
+            targetDay.vegetables = record.combinedTotalVeg;
+            targetDay.grocery = record.combinedTotalGroc;
+            const extrasSum = (targetDay.pur_extras || []).reduce((acc, it) => acc + (it.amt || 0), 0);
+            targetDay.cash_purchases = Number(((targetDay.pur_gas || 0) + (targetDay.pur_bread || 0) + targetDay.pur_veg + targetDay.pur_groc + extrasSum).toFixed(2));
+            targetDay.cash_net = Number(((targetDay.cash_box || 0) - (targetDay.sarf ?? 350) + targetDay.cash_purchases).toFixed(2));
+            targetDay.total_sales = Number((targetDay.cash_net + (targetDay.pos_net || 0)).toFixed(2));
+            await saveDays(allDays);
+            await autoRegisterDayInputsAsPurchases(targetDay);
+          }
+        } catch (daySyncErr) {
+          console.warn("Could not sync second accountant extras directly to day record:", daySyncErr);
+        }
+      } else {
+        // If not yet approved, mark as pending manager approval
+        record.status = "pending";
+      }
+
+      await saveVegGrocRecord(record);
+      res.json({ success: true, record });
+    } catch (err: any) {
+      console.error("Error in POST /api/veg-groc/second-accountant:", err);
+      res.status(500).json({ error: "فشل حفظ مبالغ المحاسب الثاني الإضافية: " + err.message });
+    }
+  });
+
   // 4. SHARED DIESEL BILLS ENDPOINTS
   app.get("/api/diesel", async (req, res) => {
     const from = req.query.from as string;
@@ -3372,7 +3810,7 @@ async function startServer() {
     if (from) bills = bills.filter((b) => b.date >= from);
     if (to) bills = bills.filter((b) => b.date <= to);
 
-    bills.sort((a, b) => b.date.localeCompare(a.date));
+    bills.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
     res.json(bills);
   });
 
@@ -3452,7 +3890,8 @@ async function startServer() {
   // 5. TAX INVOICE ENDPOINTS
   app.get("/api/tax-companies", async (req, res) => {
     try {
-      const list = await getTaxRegisteredCompanies();
+      const fresh = req.query.fresh === "true";
+      const list = await getTaxRegisteredCompanies(fresh);
       res.json(list);
     } catch (err: any) {
       console.error("Error in /api/tax-companies:", err);
@@ -3571,7 +4010,7 @@ async function startServer() {
         });
       }
 
-      invoices.sort((a, b) => (b.invoice_date || b.date).localeCompare(a.invoice_date || a.date));
+      invoices.sort((a, b) => String(b.invoice_date || b.date || "").localeCompare(String(a.invoice_date || a.date || "")));
 
       // CRITICAL FOR PERFORMANCE & RENDER STABILITY:
       // Exclude heavy rawImage base64 payloads by default to keep response lightweight (~80KB vs ~200MB).
@@ -3639,8 +4078,8 @@ async function startServer() {
         items: invoiceItems,
         createdBy: data.createdBy || "",
         status: data.status || "approved",
-        rawImage: data.rawImage || "",
-        fileType: data.fileType || ""
+        rawImage: (data.status === "approved") ? "" : (data.rawImage || ""),
+        fileType: (data.status === "approved") ? "" : (data.fileType || "")
       };
 
       invoices.push(invoice);
@@ -3706,8 +4145,10 @@ async function startServer() {
       const existingInvoices = await getTaxInvoices();
       const existing = existingInvoices.find(i => i.id === id);
 
-      const rawImg = data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || "");
-      const fileTp = data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || "");
+      // If the invoice is being approved by the manager, remove the image so it doesn't weigh down system memory and disk
+      const isApprovedStatus = (data.status === "approved");
+      const rawImg = isApprovedStatus ? "" : (data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || ""));
+      const fileTp = isApprovedStatus ? "" : (data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || ""));
 
       const rawItems = Array.isArray(data.items) ? data.items : (existing?.items || []);
       const normalizedItems = rawItems.map((it: any) => {
@@ -4093,7 +4534,7 @@ async function startServer() {
   app.get("/api/purchases", async (req, res) => {
     try {
       const purchases = await getPurchases();
-      purchases.sort((a, b) => b.date.localeCompare(a.date));
+      purchases.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
       res.json(purchases);
     } catch (err: any) {
       console.error("Error listing purchases:", err);
@@ -4183,7 +4624,7 @@ async function startServer() {
   app.get("/api/bakery", async (req, res) => {
     try {
       const entries = await getBakeryEntries();
-      entries.sort((a, b) => b.date.localeCompare(a.date));
+      entries.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
       res.json(entries);
     } catch (err: any) {
       console.error("Error loading bakery entries:", err);
@@ -4226,7 +4667,7 @@ async function startServer() {
   app.get("/api/drinks", async (req, res) => {
     try {
       const entries = await getDrinksEntries();
-      entries.sort((a, b) => b.date.localeCompare(a.date));
+      entries.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
       res.json(entries);
     } catch (err: any) {
       console.error("Error loading drinks entries:", err);
@@ -4662,7 +5103,95 @@ async function startServer() {
   });
 
 
-  // Catch-all JSON 404 handler for any unhandled /api/* requests
+  // --- SYSTEM CLEANUP AND MEMORY OPTIMIZATION ENDPOINT ---
+  app.post("/api/app-state/cleanup", async (req, res) => {
+    try {
+      let cleanedApprovedImages = 0;
+      let memoryBeforeMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+      // 1. Purge any stale images from approved invoices in memory cache & local backup
+      if (taxInvoicesCache.size > 0) {
+        let modified = false;
+        taxInvoicesCache.forEach((inv, id) => {
+          const isApproved = (inv.status === "approved" || (inv as any).is_approved);
+          if (isApproved && (inv.rawImage || inv.fileType)) {
+            inv.rawImage = "";
+            inv.fileType = "";
+            taxInvoicesCache.set(id, inv);
+            cleanedApprovedImages++;
+            modified = true;
+          }
+        });
+        if (modified) {
+          writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+        }
+      }
+
+      // Also clean in backup JSON if needed
+      const backupPath = path.join(DATA_BACKUP_DIR, "tax_invoices_backup.json");
+      if (fs.existsSync(backupPath)) {
+        try {
+          const fileData = JSON.parse(fs.readFileSync(backupPath, "utf-8"));
+          if (Array.isArray(fileData)) {
+            let fileMod = false;
+            fileData.forEach((inv: any) => {
+              const isApproved = (inv.status === "approved" || inv.is_approved);
+              if (isApproved && (inv.rawImage || inv.fileType)) {
+                delete inv.rawImage;
+                delete inv.fileType;
+                fileMod = true;
+              }
+            });
+            if (fileMod) {
+              writeBackupJson("tax_invoices_backup.json", fileData);
+            }
+          }
+        } catch (e) {
+          // ignore file read error
+        }
+      }
+
+      // 2. Clean temporary files in OS /tmp directory matching prefix
+      let cleanedTmpFiles = 0;
+      try {
+        const tmpDir = os.tmpdir();
+        if (fs.existsSync(tmpDir)) {
+          const files = fs.readdirSync(tmpDir);
+          for (const f of files) {
+            if (f.startsWith("upload_") || f.startsWith("ocr_") || f.endsWith(".tmp")) {
+              try {
+                fs.unlinkSync(path.join(tmpDir, f));
+                cleanedTmpFiles++;
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+
+      // 3. Trigger V8 Garbage Collection if exposed
+      if (global.gc) {
+        try {
+          global.gc();
+        } catch (_) {}
+      }
+
+      let memoryAfterMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1);
+
+      res.json({
+        success: true,
+        message: `تم تنظيف الذاكرة المؤقتة وتسريع النظام بنجاح. تم تحرير الذاكرة (${memoryAfterMb}MB)، وتطهير ${cleanedApprovedImages} صورة معتمدة، وحذف ${cleanedTmpFiles} ملف مؤقت.`,
+        details: {
+          cleanedApprovedImages,
+          cleanedTmpFiles,
+          memoryBeforeMb: `${memoryBeforeMb} MB`,
+          memoryAfterMb: `${memoryAfterMb} MB`
+        }
+      });
+    } catch (err: any) {
+      console.error("Error in /api/app-state/cleanup:", err);
+      res.status(500).json({ error: "فشل استكمال تنظيف النظام: " + err.message });
+    }
+  });
   // to prevent them from falling through to the Vite SPA fallback (which returns HTML and breaks client parsing)
   app.all("/api/*", (req, res) => {
     res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });

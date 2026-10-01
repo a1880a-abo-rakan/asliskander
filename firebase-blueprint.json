@@ -363,6 +363,22 @@
         "notes": { "type": "string" }
       },
       "required": ["id", "category", "branch", "date", "originalAmount", "status"]
+    },
+    "VegGrocRecord": {
+      "title": "VegGrocRecord",
+      "description": "Vegetables and grocery detailed invoices and approvals",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "branch": { "type": "string" },
+        "date": { "type": "string" },
+        "totalVeg": { "type": "number" },
+        "totalGroc": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved"] },
+        "approvedAt": { "type": "string" },
+        "approvedBy": { "type": "string" }
+      },
+      "required": ["id", "branch", "date", "status"]
     }
   },
   "firestore": {
@@ -429,6 +445,10 @@
     "installment_invoices": {
       "schema": "InstallmentInvoice",
       "description": "Supplier installment invoices and payment status records"
+    },
+    "veg_groc_records": {
+      "schema": "VegGrocRecord",
+      "description": "Vegetables and grocery records with invoice images and manager approval"
     }
   }
 }
