@@ -1,0 +1,11 @@
+{
+  "simpleThresholdMinutes": 15,
+  "simpleMaxWarnings": 3,
+  "id": "global-rules",
+  "largeThresholdMinutes": 60,
+  "mediumDeductionHours": 3,
+  "largeDeductionDayFraction": 0.5,
+  "severeDeductionDayFraction": 1,
+  "mediumThresholdMinutes": 30,
+  "simpleDeductionHours": 1
+}

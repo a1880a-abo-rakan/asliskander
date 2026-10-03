@@ -152,5 +152,105 @@
     "description": "تأخير عن الحضور حضر الساعة 4:10",
     "employeeId": "emp-1781442683812-633",
     "createdAt": "2026-09-18T13:10:25.980Z"
+  },
+  {
+    "employeeName": "موسى",
+    "date": "2026-09-23",
+    "description": "تلفيات - 1 ايطالي + ا ساندويش صغير",
+    "createdAt": "2026-09-23T12:25:40.910Z",
+    "type": "deduction",
+    "id": "viol-1790166340909-520",
+    "employeeId": "emp-1781442683812-633",
+    "deductionAmount": 23
+  },
+  {
+    "deductionAmount": 0,
+    "employeeId": "emp-1783348695253-363",
+    "id": "viol-1790170821601-862",
+    "employeeName": "أمجد ارناؤط",
+    "createdAt": "2026-09-23T13:40:21.601Z",
+    "type": "warning",
+    "description": "لم يكن جاهز بزي العمل كامل الا الساعه 4:36",
+    "date": "2026-09-23"
+  },
+  {
+    "employeeId": "emp-1781356386569-38",
+    "deductionAmount": 50,
+    "employeeName": "مروان",
+    "id": "viol-1790350138373-112",
+    "type": "deduction",
+    "createdAt": "2026-09-25T15:28:58.373Z",
+    "date": "2026-09-24",
+    "description": "خروج 9:48 الى 10:16"
+  },
+  {
+    "type": "deduction",
+    "date": "2026-09-25",
+    "id": "viol-1790350362668-930",
+    "deductionAmount": 100,
+    "employeeName": "مروان",
+    "createdAt": "2026-09-25T15:32:42.668Z",
+    "employeeId": "emp-1781356386569-38",
+    "description": "خروج الساعة 6:00 تجاوز مدة خروحه نصف ساعه"
+  },
+  {
+    "employeeName": "مروان",
+    "createdAt": "2026-10-01T09:30:18.615Z",
+    "description": "خروج 9:48 الى 10:16",
+    "id": "viol-1790847018615-288",
+    "type": "deduction",
+    "employeeId": "emp-1781356386569-38",
+    "deductionAmount": 50,
+    "date": "2026-09-24"
+  },
+  {
+    "date": "2026-09-25",
+    "id": "viol-1790847065494-148",
+    "type": "deduction",
+    "employeeName": "مروان",
+    "deductionAmount": 100,
+    "employeeId": "emp-1781356386569-38",
+    "createdAt": "2026-10-01T09:31:05.494Z",
+    "description": "خروج الساعة 6:00 تجاوز مدة خروجه نصف ساعه"
+  },
+  {
+    "employeeName": "موسى",
+    "type": "deduction",
+    "description": "انسحاب عن العمل في بدايته لمدة أكثر من نصف ساعه",
+    "date": "2026-09-01",
+    "createdAt": "2026-10-01T09:32:07.013Z",
+    "deductionAmount": 30,
+    "id": "viol-1790847127013-991",
+    "employeeId": "emp-1781442683812-633"
+  },
+  {
+    "employeeName": "موسى",
+    "description": "تأخير عن الحضور حضر الساعة 4:10",
+    "createdAt": "2026-10-01T09:32:44.125Z",
+    "employeeId": "emp-1781442683812-633",
+    "type": "deduction",
+    "deductionAmount": 10,
+    "id": "viol-1790847164125-927",
+    "date": "2026-09-18"
+  },
+  {
+    "createdAt": "2026-10-01T09:34:03.686Z",
+    "date": "2026-09-23",
+    "id": "viol-1790847243686-677",
+    "employeeName": "موسى",
+    "type": "deduction",
+    "employeeId": "emp-1781442683812-633",
+    "description": "تلفيات 1 ايطالي + 1 ساندويش صغير",
+    "deductionAmount": 23
+  },
+  {
+    "description": "تلفظ بألفاظ سيئة تجاه العمل",
+    "deductionAmount": 50,
+    "employeeName": "موسى",
+    "employeeId": "emp-1781442683812-633",
+    "type": "deduction",
+    "createdAt": "2026-10-01T09:34:37.193Z",
+    "date": "2026-09-23",
+    "id": "viol-1790847277193-439"
   }
 ]

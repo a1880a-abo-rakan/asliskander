@@ -288,6 +288,7 @@ async function getSettings(): Promise<Settings> {
         "سقف_صلصات_قادسية": localSettings.سقف_صلصات_قادسية ?? localSettings.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_قادسية,
         "سقف_صلصات_مروج": localSettings.سقف_صلصات_مروج ?? localSettings.سقف_صلصات ?? DEFAULT_SETTINGS.سقف_صلصات_مروج,
       };
+      setTimeout(() => { reconcileAllEmployeeDataAndSettings().catch(() => {}); }, 10);
       return { ...cachedSettings };
     }
   }
@@ -360,6 +361,7 @@ async function getEmployeeDeductionConfig(): Promise<EmployeeDeductionConfig> {
     const local = readBackupJson<EmployeeDeductionConfig | null>("employee_deduction_rules_backup.json", null);
     if (local) {
       cachedDeductionConfig = { ...local };
+      setTimeout(() => { reconcileAllEmployeeDataAndSettings().catch(() => {}); }, 10);
       return { ...cachedDeductionConfig };
     }
   }
@@ -544,6 +546,7 @@ async function getEmployees(): Promise<Employee[]> {
     employeesCache.clear();
     local.forEach(e => { if (e && e.id) employeesCache.set(e.id, e); });
     employeesLoaded = true;
+    setTimeout(() => { reconcileAllEmployeeDataAndSettings().catch(() => {}); }, 10);
     return Array.from(employeesCache.values()).map(e => ({ ...e }));
   }
   if (isFirestoreReadQuotaExceeded) {
@@ -614,6 +617,7 @@ async function getEmployeeAdvances(): Promise<EmployeeAdvance[]> {
     employeeAdvancesCache.clear();
     local.forEach(a => { if (a && a.id) employeeAdvancesCache.set(a.id, a); });
     employeeAdvancesLoaded = true;
+    setTimeout(() => { reconcileAllEmployeeDataAndSettings().catch(() => {}); }, 10);
     return Array.from(employeeAdvancesCache.values()).map(a => ({ ...a }));
   }
   if (isFirestoreReadQuotaExceeded) {
@@ -684,6 +688,7 @@ async function getEmployeeViolations(): Promise<EmployeeViolation[]> {
     employeeViolationsCache.clear();
     local.forEach(v => { if (v && v.id) employeeViolationsCache.set(v.id, v); });
     employeeViolationsLoaded = true;
+    setTimeout(() => { reconcileAllEmployeeDataAndSettings().catch(() => {}); }, 10);
     return Array.from(employeeViolationsCache.values()).map(v => ({ ...v }));
   }
   if (isFirestoreReadQuotaExceeded) {
@@ -754,6 +759,7 @@ async function getEmployeeAttendance(): Promise<EmployeeAttendance[]> {
     employeeAttendanceCache.clear();
     local.forEach(a => { if (a && a.id) employeeAttendanceCache.set(a.id, a); });
     employeeAttendanceLoaded = true;
+    setTimeout(() => { reconcileAllEmployeeDataAndSettings().catch(() => {}); }, 10);
     return Array.from(employeeAttendanceCache.values()).map(a => ({ ...a }));
   }
   if (isFirestoreReadQuotaExceeded) {
@@ -809,6 +815,148 @@ async function deleteEmployeeAttendance(id: string): Promise<void> {
   } catch (err) {
     checkFirestoreError(err);
     console.warn("Could not delete attendance from Firestore (removed in local cache):", err);
+  }
+}
+
+// Background bidirectional reconciler to prevent data loss on git updates/deploys
+let isInitialReconciliationDone = false;
+let isReconciling = false;
+async function reconcileAllEmployeeDataAndSettings(): Promise<void> {
+  if (isReconciling || isFirestoreReadQuotaExceeded || !db) return;
+  isReconciling = true;
+  try {
+    // 1. Reconcile Settings
+    try {
+      const snap = await getDoc(doc(db, "settings", "app_settings"));
+      if (snap.exists()) {
+        const cloudData = snap.data() as Settings;
+        cachedSettings = {
+          ...DEFAULT_SETTINGS,
+          ...cloudData,
+          ...(cachedSettings || {}),
+        };
+        writeBackupJson("settings_backup.json", cachedSettings);
+      } else if (cachedSettings) {
+        await setDoc(doc(db, "settings", "app_settings"), cleanObject(cachedSettings)).catch(() => {});
+      }
+    } catch (e) {
+      checkFirestoreError(e);
+    }
+
+    // 2. Reconcile Employee Deduction Rules
+    try {
+      const snap = await getDoc(doc(db, "settings", "employee_deduction_rules"));
+      if (snap.exists()) {
+        const cloudData = snap.data() as EmployeeDeductionConfig;
+        cachedDeductionConfig = {
+          ...DEFAULT_DEDUCTION_CONFIG,
+          ...cloudData,
+          ...(cachedDeductionConfig || {}),
+        };
+        writeBackupJson("employee_deduction_rules_backup.json", cachedDeductionConfig);
+      } else if (cachedDeductionConfig) {
+        await setDoc(doc(db, "settings", "employee_deduction_rules"), cleanObject(cachedDeductionConfig)).catch(() => {});
+      }
+    } catch (e) {
+      checkFirestoreError(e);
+    }
+
+    // 3. Reconcile Employees
+    try {
+      const snap = await getDocs(collection(db, "employees"));
+      let changed = false;
+      snap.forEach((d) => {
+        if (d.id.startsWith("test_perm")) return;
+        const data = d.data() as any;
+        if (data && !data.test && (data.name || data.id)) {
+          const id = data.id || d.id;
+          data.id = id;
+          if (!employeesCache.has(id)) {
+            employeesCache.set(id, data as Employee);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        writeBackupJson("employees_backup.json", Array.from(employeesCache.values()));
+      }
+    } catch (e) {
+      checkFirestoreError(e);
+    }
+
+    // 4. Reconcile Advances
+    try {
+      const snap = await getDocs(collection(db, "employee_advances"));
+      let changed = false;
+      snap.forEach((d) => {
+        if (d.id.startsWith("test_perm")) return;
+        const data = d.data() as any;
+        if (data && !data.test && (data.employeeId || data.amount !== undefined)) {
+          const id = data.id || d.id;
+          data.id = id;
+          if (!employeeAdvancesCache.has(id)) {
+            employeeAdvancesCache.set(id, data as EmployeeAdvance);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        writeBackupJson("employee_advances_backup.json", Array.from(employeeAdvancesCache.values()));
+      }
+    } catch (e) {
+      checkFirestoreError(e);
+    }
+
+    // 5. Reconcile Violations
+    try {
+      const snap = await getDocs(collection(db, "employee_violations"));
+      let changed = false;
+      snap.forEach((d) => {
+        if (d.id.startsWith("test_perm")) return;
+        const data = d.data() as any;
+        if (data && !data.test && (data.employeeId || data.employeeName || data.description)) {
+          const id = data.id || d.id;
+          data.id = id;
+          if (!employeeViolationsCache.has(id)) {
+            employeeViolationsCache.set(id, data as EmployeeViolation);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        writeBackupJson("employee_violations_backup.json", Array.from(employeeViolationsCache.values()));
+      }
+    } catch (e) {
+      checkFirestoreError(e);
+    }
+
+    // 6. Reconcile Attendance
+    try {
+      const snap = await getDocs(collection(db, "employee_attendance"));
+      let changed = false;
+      snap.forEach((d) => {
+        if (d.id.startsWith("test_perm")) return;
+        const data = d.data() as any;
+        if (data && !data.test && (data.employeeId || data.date || data.arrivalTime)) {
+          const id = data.id || d.id;
+          data.id = id;
+          if (!employeeAttendanceCache.has(id)) {
+            employeeAttendanceCache.set(id, data as EmployeeAttendance);
+            changed = true;
+          }
+        }
+      });
+      if (changed) {
+        writeBackupJson("employee_attendance_backup.json", Array.from(employeeAttendanceCache.values()));
+      }
+    } catch (e) {
+      checkFirestoreError(e);
+    }
+    isInitialReconciliationDone = true;
+  } catch (err) {
+    console.warn("Background reconciliation error:", err);
+  } finally {
+    isReconciling = false;
   }
 }
 
@@ -5294,6 +5442,41 @@ async function startServer() {
       res.status(500).json({ error: "فشل استكمال تنظيف النظام: " + err.message });
     }
   });
+  // Full database export endpoint for safety backup
+  app.get("/api/backup/download-all", async (req, res) => {
+    try {
+      const settings = await getSettings();
+      const advances = await getEmployeeAdvances();
+      const violations = await getEmployeeViolations();
+      const attendance = await getEmployeeAttendance();
+      const employees = await getEmployees();
+      const deductionConfig = await getEmployeeDeductionConfig();
+      const days = await getDays();
+      const purchases = await getPurchases();
+      const taxInvoices = await getTaxInvoices();
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        settings,
+        advances,
+        violations,
+        attendance,
+        employees,
+        deductionConfig,
+        daysCount: days.length,
+        purchasesCount: purchases.length,
+        taxInvoicesCount: taxInvoices.length,
+        days,
+        purchases,
+        taxInvoices,
+      };
+      res.setHeader("Content-Disposition", `attachment; filename=asl_iskander_backup_${new Date().toISOString().slice(0, 10)}.json`);
+      res.setHeader("Content-Type", "application/json");
+      res.send(JSON.stringify(payload, null, 2));
+    } catch (e: any) {
+      res.status(500).json({ error: "Failed exporting backup" });
+    }
+  });
+
   // to prevent them from falling through to the Vite SPA fallback (which returns HTML and breaks client parsing)
   app.all("/api/*", (req, res) => {
     res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
@@ -5321,6 +5504,10 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    // Reconcile and restore all employee data & settings from cloud on startup
+    reconcileAllEmployeeDataAndSettings().catch((err) => {
+      console.warn("Startup reconciliation warning:", err);
+    });
   });
 }
 

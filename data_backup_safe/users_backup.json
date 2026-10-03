@@ -1,0 +1,54 @@
+[
+  {
+    "status": "نشط",
+    "id": "abdullah",
+    "canEnterInvoices": true,
+    "role": "محاسب",
+    "branch": "الكل",
+    "displayName": "أبو ريان عبدالله",
+    "password": "0540807788",
+    "createdAt": "2026-07-07T03:39:36.358Z",
+    "username": "abdullah"
+  },
+  {
+    "status": "نشط",
+    "username": "admin",
+    "branch": "الكل",
+    "id": "admin",
+    "createdAt": "2026-09-21T05:24:00.943Z",
+    "role": "مدير",
+    "password": "123",
+    "displayName": "المدير العام"
+  },
+  {
+    "password": "A123456a",
+    "role": "مدخل فواتير",
+    "displayName": "أمجد",
+    "createdAt": "2026-07-03T14:12:39.600Z",
+    "status": "نشط",
+    "username": "amjad",
+    "id": "amjad",
+    "branch": "المروج"
+  },
+  {
+    "branch": "الكل",
+    "role": "محاسب ثان",
+    "status": "نشط",
+    "id": "imran",
+    "createdAt": "2026-09-03T20:53:33.139Z",
+    "canEnterInvoices": false,
+    "password": "Imran1404",
+    "username": "imran",
+    "displayName": "عمران"
+  },
+  {
+    "status": "نشط",
+    "username": "marwan",
+    "id": "marwan",
+    "branch": "القادسية",
+    "createdAt": "2026-07-03T14:11:51.955Z",
+    "password": "M123456m",
+    "role": "مدخل فواتير",
+    "displayName": "مروان"
+  }
+]

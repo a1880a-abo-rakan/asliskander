@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Save, RefreshCw, Sliders, ShieldAlert, Sparkles, Percent, DollarSign, Fuel, Layers } from "lucide-react";
+import { Settings, Save, RefreshCw, Sliders, ShieldAlert, Sparkles, Percent, DollarSign, Fuel, Layers, Download, Database } from "lucide-react";
 import { Settings as AppSettings } from "../types";
 
 interface SettingsTabProps {
@@ -351,6 +351,31 @@ export default function SettingsTab({ onShowToast, userRole }: SettingsTabProps)
               />
               <p className="text-[10px] text-slate-400">الحد الأقصى المسموح به لسلفة الموظف من إجمالي راتبه</p>
             </div>
+          </div>
+        </div>
+
+        {/* Backup & Data Safety Box */}
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl p-5 border border-emerald-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-emerald-600 text-white rounded-xl shadow-sm">
+                <Database className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-emerald-950">حماية البيانات والنسخ الاحتياطي الشامل</h3>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  جميع بياناتك (الموظفين، السلف، الخصومات، المبيعات، والفواتير) متزامنة ومحمية بالسحابة. يمكنك أيضاً تنزيل نسخة كاملة على جهازك بضغطة واحدة.
+                </p>
+              </div>
+            </div>
+            <a
+              href="/api/backup/download-all"
+              download
+              className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            >
+              <Download className="w-4 h-4" />
+              <span>تحميل نسخة احتياطية (JSON)</span>
+            </a>
           </div>
         </div>
 
