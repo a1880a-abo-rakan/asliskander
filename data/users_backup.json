@@ -1,54 +1,54 @@
 [
   {
-    "id": "abdullah",
-    "role": "محاسب",
-    "username": "abdullah",
     "displayName": "أبو ريان عبدالله",
+    "username": "abdullah",
+    "id": "abdullah",
+    "createdAt": "2026-07-07T03:39:36.358Z",
+    "branch": "الكل",
     "password": "0540807788",
-    "status": "نشط",
+    "role": "محاسب",
     "canEnterInvoices": true,
-    "branch": "الكل",
-    "createdAt": "2026-07-07T03:39:36.358Z"
-  },
-  {
-    "id": "admin",
-    "displayName": "المدير العام",
-    "status": "نشط",
-    "password": "123",
-    "branch": "الكل",
-    "username": "admin",
-    "createdAt": "2026-09-21T05:24:00.943Z",
-    "role": "مدير"
-  },
-  {
-    "password": "A123456a",
-    "id": "amjad",
-    "role": "مدخل فواتير",
-    "branch": "المروج",
-    "displayName": "أمجد",
-    "createdAt": "2026-07-03T14:12:39.600Z",
-    "username": "amjad",
     "status": "نشط"
   },
   {
-    "branch": "الكل",
-    "canEnterInvoices": false,
-    "createdAt": "2026-09-03T20:53:33.139Z",
-    "displayName": "عمران",
-    "id": "imran",
-    "password": "Imran1404",
     "status": "نشط",
-    "role": "محاسب ثان",
-    "username": "imran"
+    "username": "admin",
+    "branch": "الكل",
+    "role": "مدير",
+    "displayName": "المدير العام",
+    "createdAt": "2026-09-21T05:24:00.943Z",
+    "id": "admin",
+    "password": "123"
   },
   {
-    "displayName": "مروان",
-    "password": "M123456m",
-    "id": "marwan",
+    "branch": "المروج",
+    "id": "amjad",
+    "role": "مدخل فواتير",
     "status": "نشط",
+    "username": "amjad",
+    "displayName": "أمجد",
+    "createdAt": "2026-07-03T14:12:39.600Z",
+    "password": "A123456a"
+  },
+  {
+    "role": "محاسب ثان",
+    "branch": "الكل",
+    "id": "imran",
+    "username": "imran",
+    "displayName": "عمران",
+    "createdAt": "2026-09-03T20:53:33.139Z",
+    "status": "نشط",
+    "password": "Imran1404",
+    "canEnterInvoices": false
+  },
+  {
+    "username": "marwan",
+    "status": "نشط",
+    "displayName": "مروان",
+    "branch": "القادسية",
+    "password": "M123456m",
     "role": "مدخل فواتير",
     "createdAt": "2026-07-03T14:11:51.955Z",
-    "username": "marwan",
-    "branch": "القادسية"
+    "id": "marwan"
   }
 ]

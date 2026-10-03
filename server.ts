@@ -4083,13 +4083,24 @@ async function startServer() {
       if (from && to) {
         invoices = invoices.filter((i) => {
           const d1 = i.date;
-          const d2 = i.invoice_date || i.date;
-          return (d1 >= from && d1 <= to) || (d2 >= from && d2 <= to);
+          const d2 = i.invoice_date;
+          const m1 = Boolean(d1 && d1 >= from && d1 <= to);
+          const m2 = Boolean(d2 && d2 >= from && d2 <= to);
+          const mFallback = Boolean((d1 || d2) && (d1 || d2) >= from && (d1 || d2) <= to);
+          return m1 || m2 || mFallback;
         });
       } else if (from) {
-        invoices = invoices.filter((i) => (i.date >= from || (i.invoice_date && i.invoice_date >= from)));
+        invoices = invoices.filter((i) => {
+          const d1 = i.date;
+          const d2 = i.invoice_date;
+          return Boolean((d1 && d1 >= from) || (d2 && d2 >= from));
+        });
       } else if (to) {
-        invoices = invoices.filter((i) => (i.date <= to || (i.invoice_date && i.invoice_date <= to)));
+        invoices = invoices.filter((i) => {
+          const d1 = i.date;
+          const d2 = i.invoice_date;
+          return Boolean((d1 && d1 <= to) || (d2 && d2 <= to));
+        });
       }
 
       if (status) {
@@ -4101,7 +4112,7 @@ async function startServer() {
         });
       }
 
-      invoices.sort((a, b) => String(b.invoice_date || b.date || "").localeCompare(String(a.invoice_date || a.date || "")));
+      invoices.sort((a, b) => String(b.date || b.invoice_date || "").localeCompare(String(a.date || a.invoice_date || "")));
 
       // CRITICAL FOR PERFORMANCE & RENDER STABILITY:
       // Exclude heavy rawImage base64 payloads by default to keep response lightweight (~80KB vs ~200MB).

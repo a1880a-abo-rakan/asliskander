@@ -282,6 +282,32 @@ const getDatesInRange = (startStr: string, endStr: string): string[] => {
   return dates;
 };
 
+// Determines the single unique date key that this invoice belongs to in the period ledger.
+// Guarantees an invoice is NEVER duplicated across two days and belongs to its appropriate day.
+const getInvoiceGroupDate = (inv: TaxInvoice, rangeFrom?: string, rangeTo?: string): string => {
+  const d1 = inv.date?.trim();
+  const d2 = inv.invoice_date?.trim();
+
+  // If entry date is present and falls within active search range, group by entry date
+  if (d1) {
+    if (!rangeFrom && !rangeTo) return d1;
+    if (rangeFrom && rangeTo && d1 >= rangeFrom && d1 <= rangeTo) return d1;
+    if (!rangeTo && rangeFrom && d1 >= rangeFrom) return d1;
+    if (!rangeFrom && rangeTo && d1 <= rangeTo) return d1;
+  }
+
+  // If invoice printed date is present and falls within active search range, group by invoice date
+  if (d2) {
+    if (!rangeFrom && !rangeTo) return d2;
+    if (rangeFrom && rangeTo && d2 >= rangeFrom && d2 <= rangeTo) return d2;
+    if (!rangeTo && rangeFrom && d2 >= rangeFrom) return d2;
+    if (!rangeFrom && rangeTo && d2 <= rangeTo) return d2;
+  }
+
+  // Fallback to whichever date exists
+  return d1 || d2 || "";
+};
+
 // Safely normalize invoice items: item name belongs in 'name', and 'category' remains empty unless explicitly provided
 const normalizeInvoiceItems = (items?: any[]): TaxInvoiceItem[] => {
   if (!Array.isArray(items)) return [];
@@ -1242,22 +1268,18 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     if (userRole === "مدير" || userRole === "محاسب") return true;
     if (userRole !== "مدخل فواتير") return false;
 
-    // Get all invoices entered by this user
-    const myInvs = invoices.filter(i => i.createdBy === currentUser?.username);
-    if (myInvs.length === 0) return false;
-
-    // Sort chronologically by their ID (since ID has timestamp inside)
-    const sorted = [...myInvs].sort((a, b) => a.id.localeCompare(b.id));
-    const latest = sorted[sorted.length - 1];
-
-    return latest && latest.id === inv.id;
+    // A clerk can edit and delete invoices entered by them, or invoices belonging to their active branch
+    if (inv.createdBy === currentUser?.username || (!inv.createdBy && inv.branch === branch) || inv.branch === branch) {
+      return true;
+    }
+    return false;
   };
 
   const deleteInvoice = (id: string) => {
     const targetInv = invoices.find(i => i.id === id);
     if (!targetInv) return;
 
-    if (userRole !== "مدير" && !isInvoiceEditableByClerk(targetInv)) {
+    if (userRole !== "مدير" && userRole !== "محاسب" && !isInvoiceEditableByClerk(targetInv)) {
       onShowToast("⚠️ لا تملك صلاحية حذف هذه الفاتورة الضريبية!");
       return;
     }
@@ -1360,7 +1382,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   };
 
   const startEditInvoice = (inv: TaxInvoice) => {
-    if (userRole !== "مدير" && !isInvoiceEditableByClerk(inv)) {
+    if (userRole !== "مدير" && userRole !== "محاسب" && !isInvoiceEditableByClerk(inv)) {
       onShowToast("⚠️ لا تملك صلاحية تعديل هذه الفاتورة الضريبية!");
       return;
     }
@@ -1466,15 +1488,24 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   }, [branch, from, to, reportMode, dailyCashKeyTrigger]);
 
   // Filter invoices to only show/count the ones matching the selected active branch, company, and date range
+  // Matches if either the operational entry date (date) or the paper invoice date (invoice_date) matches the filter
   const filteredInvoices = invoices.filter((i) => {
     const isValid = i.status !== "rejected";
     const matchesBranch = i.branch === branch;
     const matchesCompany = !selectedCompanyFilter || selectedCompanyFilter === "الكل" || i.company === selectedCompanyFilter;
-    const effDate = i.invoice_date || i.date;
+    const d1 = i.date?.trim();
+    const d2 = i.invoice_date?.trim();
     const matchesDate = reportMode === "day"
-      ? (effDate === from || i.date === from)
-      : (!from || !to || (effDate >= from && effDate <= to) || (i.date >= from && i.date <= to));
+      ? (d1 === from || d2 === from || (d1 || d2) === from)
+      : (!from || !to || (Boolean(d1 && d1 >= from && d1 <= to)) || (Boolean(d2 && d2 >= from && d2 <= to)) || ((d1 || d2) && (d1 || d2) >= from && (d1 || d2) <= to));
     return isValid && matchesBranch && matchesCompany && matchesDate;
+  });
+  // Sort filtered invoices chronologically by unique assigned group date, then invoice number
+  filteredInvoices.sort((a, b) => {
+    const dateA = getInvoiceGroupDate(a, from, to);
+    const dateB = getInvoiceGroupDate(b, from, to);
+    if (dateA !== dateB) return dateA.localeCompare(dateB);
+    return (a.invoice_no || "").localeCompare(b.invoice_no || "");
   });
   const totalInvoicesAmount = filteredInvoices.reduce((s, i) => s + (i.amount || 0), 0);
   
@@ -2842,13 +2873,22 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         <tbody className="divide-y divide-slate-100">
                           {displayInvoices.map((inv) => {
                             const isLatest = latestInvoice && inv.id === latestInvoice.id;
+                            const isMismatch = Boolean(inv.invoice_date && inv.date && inv.invoice_date.trim() !== inv.date.trim());
                             return (
-                              <tr key={inv.id} className={`hover:bg-slate-50/50 ${isLatest ? 'bg-indigo-50/10' : ''}`}>
-                                <td className="p-3 font-extrabold text-slate-800">{inv.company}</td>
+                              <tr key={inv.id} className={`hover:bg-slate-50/50 ${isMismatch ? 'bg-red-50/90 text-red-950 font-bold border-l-4 border-red-500' : isLatest ? 'bg-indigo-50/10' : ''}`}>
+                                <td className={`p-3 font-extrabold ${isMismatch ? 'text-red-950 font-black' : 'text-slate-800'}`}>{inv.company}</td>
                                 <td className="p-3 text-center font-bold text-slate-600">{inv.branch}</td>
-                                <td className="p-3 text-center font-mono text-slate-500">{inv.invoice_no || "—"}</td>
-                                <td className="p-3 text-center font-mono text-slate-600">{inv.invoice_date || inv.date}</td>
-                                <td className="p-3 text-left font-extrabold text-indigo-950 font-mono">
+                                <td className={`p-3 text-center font-mono ${isMismatch ? 'text-red-900 font-bold' : 'text-slate-500'}`}>{inv.invoice_no || "—"}</td>
+                                <td className={`p-3 text-center font-mono ${isMismatch ? 'bg-red-100 text-red-950 font-black rounded-lg border border-red-300' : 'text-slate-600'}`}>
+                                  <div>{inv.invoice_date || inv.date}</div>
+                                  {isMismatch && (
+                                    <span className="text-[9px] text-red-700 font-black bg-red-200/90 border border-red-300 px-1.5 py-0.5 rounded-md inline-flex items-center gap-1 mt-0.5 shadow-3xs" title={`تاريخ الفاتورة (${inv.invoice_date}) يختلف عن يوم الإدخال (${inv.date})`}>
+                                      <AlertTriangle className="w-2.5 h-2.5 text-red-600 inline shrink-0" />
+                                      <span>يوم الإدخال: {inv.date}</span>
+                                    </span>
+                                  )}
+                                </td>
+                                <td className={`p-3 text-left font-extrabold font-mono ${isMismatch ? 'text-red-950 font-black' : 'text-indigo-950'}`}>
                                   {inv.amount.toFixed(2)} ر.س
                                 </td>
                                 <td className="p-3 text-center">
@@ -3404,25 +3444,41 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         <th className="p-2.5 border border-black text-left w-24 font-black">مبلغ الفاتورة (2)</th>
                         <th className="p-2.5 border border-black text-left w-28 font-black">صافي الفرق الخاضع (1-2)</th>
                         <th className="p-2.5 border border-black text-left w-28 font-black">الضريبة 15%</th>
+                        <th className="p-2.5 border border-black text-center w-28 font-black print:hidden">إجراءات</th>
                       </tr>
                     </thead>
                     <tbody>
                       {(() => {
                         const branchDays = (branch === "القادسية" ? reportRawData?.qData : reportRawData?.mData) || [];
+                        const isCompanyFilterActive = Boolean(selectedCompanyFilter && selectedCompanyFilter !== "الكل");
                         
-                        const invoiceDatesSet = new Set<string>();
+                        const dateSet = new Set<string>();
                         filteredInvoices.forEach((inv) => {
-                          const eff = inv.invoice_date || inv.date;
-                          if (eff) invoiceDatesSet.add(eff);
-                          if (inv.date) invoiceDatesSet.add(inv.date);
+                          const op = getInvoiceGroupDate(inv, from, to);
+                          if (op) dateSet.add(op);
                         });
-                        const allUniqueDates = getDatesInRange(from, to).filter(dateStr => invoiceDatesSet.has(dateStr));
+
+                        // Only include full branch daily POS entries if NOT filtering by a specific company
+                        if (!isCompanyFilterActive) {
+                          branchDays.forEach((b: any) => {
+                            if (b.date && (!from || b.date >= from) && (!to || b.date <= to)) {
+                              dateSet.add(b.date);
+                            }
+                          });
+                        }
+
+                        const inRangeDates = getDatesInRange(from, to);
+                        const allUniqueDates = (!isCompanyFilterActive && inRangeDates.length > 0)
+                          ? inRangeDates.filter(dateStr => dateSet.has(dateStr))
+                          : Array.from(dateSet).sort((a, b) => a.localeCompare(b));
 
                         if (allUniqueDates.length === 0) {
                           return (
                             <tr>
-                              <td colSpan={10} className="p-8 text-center text-slate-600 font-bold border border-black print:text-black">
-                                لا توجد سجلات يومية أو فواتير ضريبية مسجلة للفترة الزمنية المحددة.
+                              <td colSpan={11} className="p-8 text-center text-slate-600 font-bold border border-black print:text-black">
+                                {isCompanyFilterActive 
+                                  ? `لا توجد فواتير ضريبية مسجلة للمؤسسة المحددة (${selectedCompanyFilter}) خلال هذه الفترة.` 
+                                  : "لا توجد سجلات يومية أو فواتير ضريبية مسجلة للفترة الزمنية المحددة."}
                               </td>
                             </tr>
                           );
@@ -3441,8 +3497,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               };
 
                               const dayInvoices = filteredInvoices.filter(
-                                (inv) => (inv.invoice_date || inv.date) === dateStr
+                                (inv) => getInvoiceGroupDate(inv, from, to) === dateStr
                               );
+
+                              // If searching for a specific company, hide any days that have no invoices for this company
+                              if (isCompanyFilterActive && dayInvoices.length === 0) {
+                                return [];
+                              }
+
                               const dayInvoicesTotal = dayInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
                               const dayCash = getDailyCash(dateStr);
                               const dayTotalSales = (d.pos_net || 0) + dayCash;
@@ -3547,6 +3609,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                     <td className="day-separator-cell p-2.5 text-left border border-black border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black font-black font-mono text-slate-900 print:text-black">
                                       {dayVat.toFixed(2)} ر
                                     </td>
+
+                                    {/* 11. Actions */}
+                                    <td className="day-separator-cell p-2.5 text-center border border-black border-b-2 border-b-black print:hidden text-slate-400">
+                                      —
+                                    </td>
                                   </tr>
                                 ];
                               }
@@ -3554,10 +3621,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                               return dayInvoices.map((inv, idx) => {
                                 const isFirst = idx === 0;
                                 const isLast = idx === dayInvoices.length - 1;
+                                const isMismatch = Boolean(inv.invoice_date && inv.date && inv.invoice_date.trim() !== inv.date.trim());
                                 return (
                                   <tr 
                                     key={inv.id} 
-                                    className={`${isLast ? 'day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black' : 'border-b border-black'} font-medium hover:bg-slate-50/20 bg-white`}
+                                    className={`${isLast ? 'day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black' : 'border-b border-black'} font-medium ${isMismatch ? 'bg-red-50/90 hover:bg-red-100/90 text-red-950 font-bold border-red-200' : 'hover:bg-slate-50/20 bg-white'}`}
                                   >
                                     {/* 1-4. Daily metrics merged for this day */}
                                     {isFirst && (
@@ -3633,19 +3701,30 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                     )}
                                     
                                     {/* 5-8. Individual Invoice columns */}
-                                    <td className={`p-2.5 text-right border border-black text-slate-900 print:text-black font-bold ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
+                                    <td className={`p-2.5 text-right border border-black font-bold ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''} ${isMismatch ? 'text-red-950 bg-red-50/80 font-black' : ''}`}>
                                       {inv.company}
                                     </td>
                                     
-                                    <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
+                                    <td className={`p-2.5 text-center border border-black font-mono ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''} ${isMismatch ? 'text-red-900 bg-red-50/80 font-bold' : ''}`}>
                                       {inv.invoice_no || "—"}
                                     </td>
                                     
-                                    <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
-                                      {inv.invoice_date || inv.date}
+                                    <td className={`p-2.5 text-center border border-black font-mono ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''} ${isMismatch ? 'bg-red-100/90 text-red-950 font-black border-red-300' : 'text-slate-900 print:text-black'}`}>
+                                      <div className={isMismatch ? "text-red-700 font-black text-xs" : ""}>
+                                        {inv.invoice_date || inv.date}
+                                      </div>
+                                      {isMismatch && (
+                                        <div 
+                                          className="text-[9px] text-red-700 font-black flex items-center justify-center gap-1 mt-0.5 bg-red-200/90 px-1.5 py-0.5 rounded border border-red-300 shadow-3xs"
+                                          title={`تاريخ الفاتورة (${inv.invoice_date}) يختلف عن يوم الإدخال (${inv.date})`}
+                                        >
+                                          <AlertTriangle className="w-3 h-3 text-red-600 inline shrink-0" />
+                                          <span>يختلف عن يوم الإدخال ({inv.date})</span>
+                                        </div>
+                                      )}
                                     </td>
                                     
-                                    <td className={`p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''}`}>
+                                    <td className={`p-2.5 text-left border border-black font-bold font-mono ${isLast ? 'border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black day-separator-cell' : ''} ${isMismatch ? 'text-red-950 bg-red-50/80 font-black' : ''}`}>
                                       {inv.amount.toFixed(2)} ر
                                     </td>
                                     
@@ -3669,6 +3748,42 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                         </td>
                                       </>
                                     )}
+
+                                    {/* 11. Actions & Controls (تعديل / حذف / معاينة) */}
+                                    <td className={`p-2.5 text-center border border-black print:hidden ${isLast ? 'border-b-2 border-b-black day-separator-cell' : ''} ${isMismatch ? 'bg-red-50/80' : ''}`}>
+                                      {(userRole === "مدير" || userRole === "محاسب" || (userRole === "مدخل فواتير" && isInvoiceEditableByClerk(inv))) ? (
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => openInvoicePreview(inv)}
+                                            className="text-indigo-600 hover:text-indigo-800 p-1.5 rounded hover:bg-indigo-50 transition-colors cursor-pointer"
+                                            title="معاينة الفاتورة بصرياً"
+                                          >
+                                            <Eye className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => startEditInvoice(inv)}
+                                            className="text-amber-600 hover:text-amber-800 p-1.5 rounded hover:bg-amber-50 transition-colors cursor-pointer"
+                                            title="تعديل الفاتورة الضريبية"
+                                          >
+                                            <Edit className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => deleteInvoice(inv.id)}
+                                            className="text-rose-600 hover:text-rose-800 p-1.5 rounded hover:bg-rose-50 transition-colors cursor-pointer"
+                                            title="حذف الفاتورة الضريبية"
+                                          >
+                                            <Trash className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <span className="text-[10px] text-slate-400 font-semibold bg-slate-100 px-1.5 py-0.5 rounded">
+                                          🔒 مؤمنة
+                                        </span>
+                                      )}
+                                    </td>
                                   </tr>
                                 );
                               });
@@ -3686,7 +3801,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                 totalPos += d.pos_net || 0;
                                 totalCash += getDailyCash(dateStr);
                                 const dayInvs = filteredInvoices.filter(
-                                  (inv) => (inv.invoice_date || inv.date) === dateStr
+                                  (inv) => getInvoiceGroupDate(inv, from, to) === dateStr
                                 );
                                 totalInvs += dayInvs.reduce((sum, inv) => sum + (inv.amount || 0), 0);
                               });
@@ -3697,7 +3812,11 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
                               return (
                                 <tr className="totals-row bg-slate-100 border-t-2 border-b-2 border-black font-black text-slate-900 print:text-black text-xs print:text-xs">
-                                  <td className="p-2.5 text-center border border-black font-black bg-slate-200 print:bg-slate-100">الـمـجـمـوع الـكـلـي لـفـتـرة {allUniqueDates.length} أيام في الكشف</td>
+                                  <td className="p-2.5 text-center border border-black font-black bg-slate-200 print:bg-slate-100">
+                                    {isCompanyFilterActive 
+                                      ? `إجمالي فواتير [${selectedCompanyFilter}] (${filteredInvoices.length} فاتورة)` 
+                                      : `الـمـجـمـوع الـكـلـي لـفـتـرة ${allUniqueDates.length} أيام في الكشف`}
+                                  </td>
                                   <td className="p-2.5 text-left border border-black font-black font-mono">{totalPos.toFixed(2)} ر</td>
                                   <td className="p-2.5 text-left border border-black font-black font-mono">{totalCash.toFixed(2)} ر</td>
                                   <td className="p-2.5 text-left border border-black font-black font-mono">{totalSalesCombined.toFixed(2)} ر</td>
@@ -3711,6 +3830,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   <td className="p-2.5 text-left border border-black font-black font-mono">
                                     {vatCombined.toFixed(2)} ر
                                   </td>
+                                  <td className="border border-black print:hidden bg-slate-200"></td>
                                 </tr>
                               );
                             })()}
@@ -3748,7 +3868,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         <th className="p-2.5 border border-black text-right font-black">مورد الفاتورة (اسم المؤسسة)</th>
                         <th className="p-2.5 border border-black text-center w-24 font-black">رقم الفاتورة</th>
                         <th className="p-2.5 border border-black text-left w-24 font-black">مبلـغ الفاتورة (2)</th>
-                        <th className="p-2.5 border border-black text-center w-12 print:hidden">تعديل</th>
+                        <th className="p-2.5 border border-black text-center w-28 print:hidden">إجراءات</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3790,12 +3910,13 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                       ) : (
                         filteredInvoices.map((inv, idx) => {
                           const isFirst = idx === 0;
-                          const isLastOfDate = (reportMode === "period" && (idx === filteredInvoices.length - 1 || (filteredInvoices[idx + 1] && (filteredInvoices[idx + 1].invoice_date || filteredInvoices[idx + 1].date) !== (inv.invoice_date || inv.date)))) || idx === filteredInvoices.length - 1;
+                          const isLastOfDate = (reportMode === "period" && (idx === filteredInvoices.length - 1 || (filteredInvoices[idx + 1] && getInvoiceGroupDate(filteredInvoices[idx + 1], from, to) !== getInvoiceGroupDate(inv, from, to)))) || idx === filteredInvoices.length - 1;
+                          const isMismatch = Boolean(inv.invoice_date && inv.date && inv.invoice_date.trim() !== inv.date.trim());
 
                           return (
                             <tr 
                               key={inv.id} 
-                              className={`${isLastOfDate ? 'day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black' : 'border-b border-black'} hover:bg-slate-50/10 font-medium bg-white`}
+                              className={`${isLastOfDate ? 'day-separator-row border-b-2 border-black print:border-b-[2.5px] print:border-black' : 'border-b border-black'} font-medium ${isMismatch ? 'bg-red-50/90 hover:bg-red-100/90 text-red-950 font-bold border-red-200' : 'hover:bg-slate-50/10 bg-white'}`}
                             >
                               {/* Grouping aggregated revenue parameters onto the first row utilizing rowSpan */}
                               {isFirst && (
@@ -3852,25 +3973,44 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                   />
                                 </td>
                               )}
-                              <td className={`p-2.5 text-center border border-black text-slate-900 print:text-black font-mono ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
-                                {inv.invoice_date || inv.date}
+                              <td className={`p-2.5 text-center border border-black font-mono ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''} ${isMismatch ? 'bg-red-100/90 text-red-950 font-black border-red-300' : 'text-slate-900 print:text-black'}`}>
+                                <div className={isMismatch ? "text-red-700 font-black text-xs" : ""}>
+                                  {inv.invoice_date || inv.date}
+                                </div>
+                                {isMismatch && (
+                                  <div 
+                                    className="text-[9px] text-red-700 font-black flex items-center justify-center gap-1 mt-0.5 bg-red-200/90 px-1.5 py-0.5 rounded border border-red-300 shadow-3xs"
+                                    title={`تاريخ الفاتورة (${inv.invoice_date}) يختلف عن يوم الإدخال (${inv.date})`}
+                                  >
+                                    <AlertTriangle className="w-3 h-3 text-red-600 inline shrink-0" />
+                                    <span>يختلف عن يوم الإدخال ({inv.date})</span>
+                                  </div>
+                                )}
                               </td>
-                              <td className={`p-2.5 text-right border border-black text-slate-900 print:text-black font-bold ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
+                              <td className={`p-2.5 text-right border border-black font-bold ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''} ${isMismatch ? 'text-red-950 bg-red-50/80 font-black' : ''}`}>
                                 {inv.company}
                               </td>
-                              <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
+                              <td className={`p-2.5 text-center border border-black font-mono text-slate-900 print:text-black ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''} ${isMismatch ? 'text-red-900 bg-red-50/80 font-bold' : ''}`}>
                                 {inv.invoice_no || "—"}
                               </td>
-                              <td className={`p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''}`}>
+                              <td className={`p-2.5 text-left border border-black font-bold font-mono text-slate-900 print:text-black ${isLastOfDate ? 'day-separator-cell border-b-2 border-b-black print:border-b-[2.5px] print:border-b-black' : ''} ${isMismatch ? 'text-red-950 bg-red-50/80 font-black' : ''}`}>
                                 {inv.amount.toFixed(2)} ر
                               </td>
-                              <td className="p-2.5 text-center border border-black print:hidden">
-                                {userRole === "مدير" ? (
-                                  <div className="flex items-center justify-center gap-2">
+                              <td className={`p-2.5 text-center border border-black print:hidden ${isLastOfDate ? 'border-b-2 border-b-black' : ''} ${isMismatch ? 'bg-red-50/80' : ''}`}>
+                                {(userRole === "مدير" || userRole === "محاسب" || (userRole === "مدخل فواتير" && isInvoiceEditableByClerk(inv))) ? (
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => openInvoicePreview(inv)}
+                                      className="text-indigo-600 hover:text-indigo-800 p-1.5 rounded hover:bg-indigo-50 transition-colors cursor-pointer"
+                                      title="معاينة الفاتورة بصرياً"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => startEditInvoice(inv)}
-                                      className="text-indigo-600 hover:text-indigo-800 p-0.5 cursor-pointer transform hover:scale-110 transition-transform"
+                                      className="text-amber-600 hover:text-amber-800 p-1.5 rounded hover:bg-amber-50 transition-colors cursor-pointer"
                                       title="تعديل الفاتورة الضريبية"
                                     >
                                       <Edit className="w-3.5 h-3.5" />
@@ -3878,7 +4018,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                     <button
                                       type="button"
                                       onClick={() => deleteInvoice(inv.id)}
-                                      className="text-rose-600 hover:text-rose-800 p-0.5 cursor-pointer transform hover:scale-110 transition-transform"
+                                      className="text-rose-600 hover:text-rose-800 p-1.5 rounded hover:bg-rose-50 transition-colors cursor-pointer"
                                       title="حذف الفاتورة الضريبية"
                                     >
                                       <Trash className="w-3.5 h-3.5" />
@@ -4116,6 +4256,19 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-600 font-mono font-bold text-indigo-900"
                   />
                 </div>
+
+                {/* Date mismatch notice in Edit Modal */}
+                {editInvoiceDate && editDate && editInvoiceDate.trim() !== editDate.trim() && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-bold flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-extrabold text-rose-950">⚠️ تنبيه: اختلاف في التواريخ!</div>
+                      <div className="text-[11px] text-rose-700 mt-0.5">
+                        تاريخ إصدار الفاتورة المكتوب ورقيّاً (<span className="font-mono font-black">{editInvoiceDate}</span>) يختلف عن تاريخ يوم الإدخال في النظام (<span className="font-mono font-black">{editDate}</span>). ستظهر الفاتورة باللون الأحمر لتمييزها.
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Two-Column: Amount & Branch designation */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
