@@ -285,27 +285,29 @@ const getDatesInRange = (startStr: string, endStr: string): string[] => {
 // Determines the single unique date key that this invoice belongs to in the period ledger.
 // Guarantees an invoice is NEVER duplicated across two days and belongs to its appropriate day.
 const getInvoiceGroupDate = (inv: TaxInvoice, rangeFrom?: string, rangeTo?: string): string => {
-  const d1 = inv.date?.trim();
   const d2 = inv.invoice_date?.trim();
+  const d1 = inv.date?.trim();
 
-  // If entry date is present and falls within active search range, group by entry date
-  if (d1) {
-    if (!rangeFrom && !rangeTo) return d1;
-    if (rangeFrom && rangeTo && d1 >= rangeFrom && d1 <= rangeTo) return d1;
-    if (!rangeTo && rangeFrom && d1 >= rangeFrom) return d1;
-    if (!rangeFrom && rangeTo && d1 <= rangeTo) return d1;
-  }
-
-  // If invoice printed date is present and falls within active search range, group by invoice date
+  // The true date of a tax invoice is always its actual invoice date (d2)
   if (d2) {
     if (!rangeFrom && !rangeTo) return d2;
     if (rangeFrom && rangeTo && d2 >= rangeFrom && d2 <= rangeTo) return d2;
     if (!rangeTo && rangeFrom && d2 >= rangeFrom) return d2;
     if (!rangeFrom && rangeTo && d2 <= rangeTo) return d2;
+    if (rangeFrom && d2 === rangeFrom) return d2;
   }
 
-  // Fallback to whichever date exists
-  return d1 || d2 || "";
+  // Fallback to entry date (d1) if within range or if d2 not present
+  if (d1) {
+    if (!rangeFrom && !rangeTo) return d1;
+    if (rangeFrom && rangeTo && d1 >= rangeFrom && d1 <= rangeTo) return d1;
+    if (!rangeTo && rangeFrom && d1 >= rangeFrom) return d1;
+    if (!rangeFrom && rangeTo && d1 <= rangeTo) return d1;
+    if (rangeFrom && d1 === rangeFrom) return d1;
+  }
+
+  // Fallback to whichever date exists (prioritizing invoice date)
+  return d2 || d1 || "";
 };
 
 // Safely normalize invoice items: item name belongs in 'name', and 'category' remains empty unless explicitly provided
@@ -400,6 +402,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   const [editDate, setEditDate] = useState("");
   const [previewInvoice, setPreviewInvoice] = useState<TaxInvoice | null>(null);
   const [previewAmountStr, setPreviewAmountStr] = useState<string>("");
+  const [isPreviewImageLoading, setIsPreviewImageLoading] = useState(false);
 
   useEffect(() => {
     if (previewInvoice) {
@@ -856,17 +859,20 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
     setLoading(true);
     try {
-      const payloads = validInvoices.map((v) => ({
-        date,
-         branch,
-        company: getUnifiedCompanyName(v.company, allCompanies),
-        invoice_no: v.invoice_no,
-        invoice_date: v.invoice_date || date,
-        amount: parseFloat(v.amount as string) || 0,
-        items: v.items || [],
-        createdBy: currentUser?.username || "unknown",
-        status: userRole === "مدخل فواتير" ? "pending" : "approved"
-      }));
+      const payloads = validInvoices.map((v) => {
+        const invDate = (v.invoice_date && String(v.invoice_date).trim()) || date;
+        return {
+          date: invDate,
+          branch,
+          company: getUnifiedCompanyName(v.company, allCompanies),
+          invoice_no: v.invoice_no,
+          invoice_date: invDate,
+          amount: parseFloat(v.amount as string) || 0,
+          items: v.items || [],
+          createdBy: currentUser?.username || "unknown",
+          status: userRole === "مدير" ? ("approved" as const) : ("pending" as const)
+        };
+      });
 
       const res = await fetch("/api/tax-invoices", {
         method: "POST",
@@ -984,7 +990,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       return;
     }
     try {
-      const res = await fetch("/api/tax-invoices?status=pending&fresh=true");
+      const res = await fetch("/api/tax-invoices?status=pending&includeImage=true&fresh=true");
       if (res.ok) {
         const pending: TaxInvoice[] = await res.json();
         const normalized = pending.map(inv => ({
@@ -1006,6 +1012,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     };
     setPreviewInvoice(normalizedInv);
     if (!inv.rawImage) {
+      setIsPreviewImageLoading(true);
       try {
         const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`);
         if (res.ok) {
@@ -1017,11 +1024,17 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         }
       } catch (err) {
         console.error("Error fetching full invoice preview document:", err);
+      } finally {
+        setIsPreviewImageLoading(false);
       }
+    } else {
+      setIsPreviewImageLoading(false);
     }
   };
 
   const handleApprovePendingInvoice = async (inv: TaxInvoice) => {
+    const finalDate = inv.invoice_date || inv.date;
+
     // 1. Optimistic UI update: Remove from pending immediately
     setPendingInvoices((prev) => {
       const updated = prev.filter((i) => i.id !== inv.id);
@@ -1035,6 +1048,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       let updatedList;
       const normalizedInv = {
         ...inv,
+        date: finalDate,
+        invoice_date: finalDate,
         items: normalizeInvoiceItems(inv.items),
         status: "approved" as const
       };
@@ -1059,6 +1074,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     try {
       const updated = {
         ...inv,
+        date: finalDate,
+        invoice_date: finalDate,
         items: normalizeInvoiceItems(inv.items),
         status: "approved" as const
       };
@@ -1488,17 +1505,21 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
   }, [branch, from, to, reportMode, dailyCashKeyTrigger]);
 
   // Filter invoices to only show/count the ones matching the selected active branch, company, and date range
-  // Matches if either the operational entry date (date) or the paper invoice date (invoice_date) matches the filter
+  // Matches if either the paper invoice date (invoice_date) or operational entry date (date) matches the filter
   const filteredInvoices = invoices.filter((i) => {
-    const isValid = i.status !== "rejected";
+    // CRITICAL: Pending and rejected invoices must NEVER appear in inquiry/ledger until approved by Manager!
+    const isApproved = i.status === "approved" || !i.status;
+    if (!isApproved) return false;
+
     const matchesBranch = i.branch === branch;
     const matchesCompany = !selectedCompanyFilter || selectedCompanyFilter === "الكل" || i.company === selectedCompanyFilter;
+    const effectiveDate = (i.invoice_date?.trim() || i.date?.trim() || "");
     const d1 = i.date?.trim();
     const d2 = i.invoice_date?.trim();
     const matchesDate = reportMode === "day"
-      ? (d1 === from || d2 === from || (d1 || d2) === from)
-      : (!from || !to || (Boolean(d1 && d1 >= from && d1 <= to)) || (Boolean(d2 && d2 >= from && d2 <= to)) || ((d1 || d2) && (d1 || d2) >= from && (d1 || d2) <= to));
-    return isValid && matchesBranch && matchesCompany && matchesDate;
+      ? (d2 === from || d1 === from || effectiveDate === from)
+      : (!from || !to || (Boolean(d2 && d2 >= from && d2 <= to)) || (Boolean(d1 && d1 >= from && d1 <= to)) || (Boolean(effectiveDate && effectiveDate >= from && effectiveDate <= to)));
+    return matchesBranch && matchesCompany && matchesDate;
   });
   // Sort filtered invoices chronologically by unique assigned group date, then invoice number
   filteredInvoices.sort((a, b) => {
@@ -2388,19 +2409,22 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
 
                     setLoading(true);
                     try {
-                      const payloads = activeValid.map((v) => ({
-                        date,
-                        branch,
-                        company: getUnifiedCompanyName(v.company, allCompanies),
-                        invoice_no: v.invoice_no,
-                        invoice_date: v.invoice_date || date,
-                        amount: parseFloat(v.amount as string) || 0,
-                        items: v.items || [],
-                        createdBy: currentUser?.username || "unknown",
-                        status: userRole === "مدخل فواتير" ? "pending" : "approved",
-                        rawImage: v.rawImage || "",
-                        fileType: v.fileType || ""
-                      }));
+                      const payloads = activeValid.map((v) => {
+                        const invDate = (v.invoice_date && String(v.invoice_date).trim()) || date;
+                        return {
+                          date: invDate,
+                          branch,
+                          company: getUnifiedCompanyName(v.company, allCompanies),
+                          invoice_no: v.invoice_no,
+                          invoice_date: invDate,
+                          amount: parseFloat(v.amount as string) || 0,
+                          items: v.items || [],
+                          createdBy: currentUser?.username || "unknown",
+                          status: userRole === "مدير" ? ("approved" as const) : ("pending" as const),
+                          rawImage: v.rawImage || "",
+                          fileType: v.fileType || ""
+                        };
+                      });
 
                       const res = await fetch("/api/tax-invoices", {
                         method: "POST",
@@ -2902,16 +2926,14 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                                       <Eye className="w-3 h-3" />
                                       <span>معاينة</span>
                                     </button>
-                                    {userRole !== "محاسب" && (
-                                      inv.status === "pending" ? (
-                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                                          ⏳ قيد المراجعة
-                                        </span>
-                                      ) : (
-                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                                          ✅ معتمدة
-                                        </span>
-                                      )
+                                    {inv.status === "pending" ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                        ⏳ قيد المراجعة (معلقة)
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                                        ✅ معتمدة
+                                      </span>
                                     )}
                                     {isLatest || userRole === "محاسب" || userRole === "مدير" ? (
                                       <>
@@ -4879,7 +4901,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                     setPreviewImgZoom(prev => Math.max(0.4, Math.min(prev + delta, 4.5)));
                   }}
                 >
-                  {!previewInvoice.rawImage ? (
+                  {isPreviewImageLoading ? (
+                    <div className="text-indigo-600 text-xs font-bold flex flex-col items-center gap-2">
+                      <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+                      <span>جاري تحميل صورة الفاتورة عالية الدقة...</span>
+                    </div>
+                  ) : !previewInvoice.rawImage ? (
                     <div className="text-slate-500 text-xs font-bold flex flex-col items-center gap-2">
                       <FileText className="w-8 h-8 text-slate-600 animate-bounce" />
                       <span>لم يتم إرفاق ملف ممسوح بصریاً من مدخل الفاتورة</span>
@@ -4953,7 +4980,12 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
                         type="date"
                         value={previewInvoice.invoice_date || previewInvoice.date}
                         onChange={(e) => {
-                          setPreviewInvoice({ ...previewInvoice, invoice_date: e.target.value });
+                          const val = e.target.value;
+                          setPreviewInvoice({ 
+                            ...previewInvoice, 
+                            invoice_date: val,
+                            date: val
+                          });
                         }}
                         className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white text-slate-950 font-bold font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                       />

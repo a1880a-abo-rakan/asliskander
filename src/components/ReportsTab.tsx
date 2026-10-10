@@ -69,7 +69,7 @@ export default function ReportsTab({ onShowToast, userRole }: ReportsTabProps) {
       setReportData(stats);
 
       // 2. Load Tax invoices in range (metadata only, excluding heavy images)
-      const resTax = await fetch(`/api/tax-invoices?from=${fromDate}&to=${toDate}&excludeImage=true`);
+      const resTax = await fetch(`/api/tax-invoices?from=${fromDate}&to=${toDate}&status=approved&excludeImage=true`);
       const taxList = resTax.ok ? await resTax.json() : [];
       setTaxData(taxList);
 

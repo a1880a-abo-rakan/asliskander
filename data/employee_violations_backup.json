@@ -1,256 +1,206 @@
 [
   {
-    "type": "deduction",
-    "deductionAmount": 10,
-    "employeeName": "مروان",
-    "id": "viol-1781249851376-387",
-    "date": "2026-06-12",
-    "employeeId": "emp-1780989503160-889",
     "description": "تاخر",
-    "createdAt": "2026-06-12T07:37:31.376Z"
-  },
-  {
-    "deductionAmount": 0,
-    "type": "warning",
-    "createdAt": "2026-06-12T08:07:23.261Z",
-    "description": "مشاجرة",
+    "createdAt": "2026-06-12T07:37:31.376Z",
+    "type": "deduction",
     "date": "2026-06-12",
+    "deductionAmount": 10,
     "employeeId": "emp-1780989503160-889",
-    "id": "viol-1781251643261-884",
-    "employeeName": "مروان"
+    "employeeName": "مروان",
+    "id": "viol-1781249851376-387"
   },
   {
-    "referredViolationId": "viol-1781251643261-884",
     "date": "2026-06-12",
-    "employeeName": "مروان",
-    "description": "تنبيه ثاني: مشاجرة",
+    "createdAt": "2026-06-12T08:07:23.261Z",
     "deductionAmount": 0,
-    "id": "viol-1781251772244-127",
-    "isSecondWarning": true,
     "type": "warning",
-    "createdAt": "2026-06-12T08:09:32.244Z",
+    "employeeName": "مروان",
+    "description": "مشاجرة",
+    "id": "viol-1781251643261-884",
     "employeeId": "emp-1780989503160-889"
   },
   {
-    "createdAt": "2026-06-12T08:09:46.787Z",
-    "employeeId": "emp-1780989503160-889",
-    "deductionAmount": 0,
+    "id": "viol-1781251772244-127",
     "employeeName": "مروان",
-    "referredViolationId": "viol-1781251772244-127",
-    "isSecondWarning": true,
-    "date": "2026-06-12",
     "description": "تنبيه ثاني: مشاجرة",
+    "date": "2026-06-12",
+    "isSecondWarning": true,
+    "deductionAmount": 0,
+    "referredViolationId": "viol-1781251643261-884",
+    "employeeId": "emp-1780989503160-889",
+    "type": "warning",
+    "createdAt": "2026-06-12T08:09:32.244Z"
+  },
+  {
+    "type": "warning",
+    "employeeId": "emp-1780989503160-889",
+    "referredViolationId": "viol-1781251772244-127",
+    "createdAt": "2026-06-12T08:09:46.787Z",
+    "employeeName": "مروان",
+    "description": "تنبيه ثاني: مشاجرة",
+    "deductionAmount": 0,
+    "isSecondWarning": true,
     "id": "viol-1781251786787-269",
-    "type": "warning"
+    "date": "2026-06-12"
   },
   {
-    "type": "deduction",
-    "employeeName": "محمد المغربي",
-    "date": "2026-08-01",
     "id": "viol-1785591792699-200",
-    "createdAt": "2026-08-01T13:43:12.699Z",
-    "description": "تلفيات \n1 ايطالي = 18 ريال \n1 صاروخ = 10 ريال \n1 صغير = 5 ريال \n1 صامولي = 10 ريال",
     "deductionAmount": 43,
-    "employeeId": "emp-1781442819196-436"
+    "date": "2026-08-01",
+    "type": "deduction",
+    "employeeId": "emp-1781442819196-436",
+    "description": "تلفيات \n1 ايطالي = 18 ريال \n1 صاروخ = 10 ريال \n1 صغير = 5 ريال \n1 صامولي = 10 ريال",
+    "employeeName": "محمد المغربي",
+    "createdAt": "2026-08-01T13:43:12.699Z"
   },
   {
-    "type": "deduction",
-    "id": "viol-1785591836239-548",
     "employeeName": "موسى",
     "deductionAmount": 49,
     "employeeId": "emp-1781442683812-633",
+    "id": "viol-1785591836239-548",
+    "type": "deduction",
+    "description": "تلفيات:\n1 عربي = 13 ريال \n1 صغير = 5 ريال \n1 دبل صاروخ = 13 ريال \n1 ايطالي = 18 ريال",
     "createdAt": "2026-08-01T13:43:56.239Z",
-    "date": "2026-08-01",
-    "description": "تلفيات:\n1 عربي = 13 ريال \n1 صغير = 5 ريال \n1 دبل صاروخ = 13 ريال \n1 ايطالي = 18 ريال"
+    "date": "2026-08-01"
   },
   {
-    "createdAt": "2026-08-01T16:27:49.480Z",
-    "employeeName": "موسى",
-    "date": "2026-08-01",
+    "type": "warning",
+    "employeeId": "emp-1781442683812-633",
     "id": "viol-1785601669480-319",
-    "employeeId": "emp-1781442683812-633",
-    "type": "warning",
+    "date": "2026-08-01",
     "deductionAmount": 0,
-    "description": "تقصير في انجاز مهام العمل ...."
+    "description": "تقصير في انجاز مهام العمل ....",
+    "createdAt": "2026-08-01T16:27:49.480Z",
+    "employeeName": "موسى"
   },
   {
-    "date": "2026-08-05",
     "description": "استخدام الجوال بالمحل",
-    "employeeId": "emp-1781442819196-436",
-    "type": "deduction",
     "id": "viol-1786020075838-647",
-    "deductionAmount": 50,
-    "employeeName": "محمد المغربي",
-    "createdAt": "2026-08-06T12:41:15.838Z"
-  },
-  {
-    "id": "viol-1786020157882-998",
-    "employeeName": "موسى",
+    "date": "2026-08-05",
     "type": "deduction",
-    "employeeId": "emp-1781442683812-633",
-    "description": "التقصير في انجاز مهام العمل للمرة التالية (نظافة الماكينة)",
-    "date": "2026-08-04",
+    "createdAt": "2026-08-06T12:41:15.838Z",
     "deductionAmount": 50,
-    "createdAt": "2026-08-06T12:42:37.882Z"
-  },
-  {
-    "date": "2026-07-10",
-    "description": "عجز بتاريخ 9-7-2026  مبلغ 31 \nعجز بتاريخ 10-7-2026 مبلغ 42",
-    "employeeName": "مروان",
-    "employeeId": "emp-1781356386569-38",
-    "id": "viol-1786020402996-950",
-    "deductionAmount": 73,
-    "createdAt": "2026-08-06T12:46:42.996Z",
-    "type": "deduction"
-  },
-  {
-    "description": "تأخر بالحضور الى العمل",
-    "createdAt": "2026-08-06T12:48:17.619Z",
-    "id": "viol-1786020497619-690",
-    "date": "2026-08-02",
-    "deductionAmount": 0,
     "employeeName": "محمد المغربي",
-    "type": "warning",
     "employeeId": "emp-1781442819196-436"
   },
   {
-    "type": "deduction",
-    "employeeId": "emp-1783348695253-363",
-    "deductionAmount": 61,
-    "description": "طلبية تم تسليمها للزبون قبل الدفع",
-    "employeeName": "أمجد ارناؤط",
-    "id": "viol-1788274253794-452",
-    "createdAt": "2026-09-01T14:50:53.795Z",
-    "date": "2026-09-01"
-  },
-  {
-    "type": "deduction",
-    "employeeId": "emp-1781442683812-633",
-    "createdAt": "2026-09-01T14:51:33.622Z",
-    "description": "انسحاب عن العمل في بدايته لمده اكثر من نصف ساعه",
-    "id": "viol-1788274293622-787",
-    "deductionAmount": 30,
+    "id": "viol-1786020157882-998",
+    "date": "2026-08-04",
+    "createdAt": "2026-08-06T12:42:37.882Z",
+    "description": "التقصير في انجاز مهام العمل للمرة التالية (نظافة الماكينة)",
     "employeeName": "موسى",
-    "date": "2026-09-01"
-  },
-  {
-    "id": "viol-1789058791320-405",
-    "employeeId": "emp-1781356386569-38",
-    "description": "الخروج من المحل لمدة 32 دقيقه الساعة 7:08 والعودة الساعة 7:40",
-    "createdAt": "2026-09-10T16:46:31.320Z",
     "type": "deduction",
-    "date": "2026-09-10",
-    "employeeName": "مروان",
-    "deductionAmount": 30
-  },
-  {
-    "type": "deduction",
-    "id": "viol-1789737025980-598",
-    "employeeName": "موسى",
-    "deductionAmount": 10,
-    "date": "2026-09-18",
-    "description": "تأخير عن الحضور حضر الساعة 4:10",
-    "employeeId": "emp-1781442683812-633",
-    "createdAt": "2026-09-18T13:10:25.980Z"
-  },
-  {
-    "employeeName": "موسى",
-    "date": "2026-09-23",
-    "description": "تلفيات - 1 ايطالي + ا ساندويش صغير",
-    "createdAt": "2026-09-23T12:25:40.910Z",
-    "type": "deduction",
-    "id": "viol-1790166340909-520",
-    "employeeId": "emp-1781442683812-633",
-    "deductionAmount": 23
-  },
-  {
-    "deductionAmount": 0,
-    "employeeId": "emp-1783348695253-363",
-    "id": "viol-1790170821601-862",
-    "employeeName": "أمجد ارناؤط",
-    "createdAt": "2026-09-23T13:40:21.601Z",
-    "type": "warning",
-    "description": "لم يكن جاهز بزي العمل كامل الا الساعه 4:36",
-    "date": "2026-09-23"
-  },
-  {
-    "employeeId": "emp-1781356386569-38",
     "deductionAmount": 50,
-    "employeeName": "مروان",
-    "id": "viol-1790350138373-112",
-    "type": "deduction",
-    "createdAt": "2026-09-25T15:28:58.373Z",
-    "date": "2026-09-24",
-    "description": "خروج 9:48 الى 10:16"
-  },
-  {
-    "type": "deduction",
-    "date": "2026-09-25",
-    "id": "viol-1790350362668-930",
-    "deductionAmount": 100,
-    "employeeName": "مروان",
-    "createdAt": "2026-09-25T15:32:42.668Z",
-    "employeeId": "emp-1781356386569-38",
-    "description": "خروج الساعة 6:00 تجاوز مدة خروحه نصف ساعه"
-  },
-  {
-    "employeeName": "مروان",
-    "createdAt": "2026-10-01T09:30:18.615Z",
-    "description": "خروج 9:48 الى 10:16",
-    "id": "viol-1790847018615-288",
-    "type": "deduction",
-    "employeeId": "emp-1781356386569-38",
-    "deductionAmount": 50,
-    "date": "2026-09-24"
-  },
-  {
-    "date": "2026-09-25",
-    "id": "viol-1790847065494-148",
-    "type": "deduction",
-    "employeeName": "مروان",
-    "deductionAmount": 100,
-    "employeeId": "emp-1781356386569-38",
-    "createdAt": "2026-10-01T09:31:05.494Z",
-    "description": "خروج الساعة 6:00 تجاوز مدة خروجه نصف ساعه"
-  },
-  {
-    "employeeName": "موسى",
-    "type": "deduction",
-    "description": "انسحاب عن العمل في بدايته لمدة أكثر من نصف ساعه",
-    "date": "2026-09-01",
-    "createdAt": "2026-10-01T09:32:07.013Z",
-    "deductionAmount": 30,
-    "id": "viol-1790847127013-991",
     "employeeId": "emp-1781442683812-633"
   },
   {
-    "employeeName": "موسى",
-    "description": "تأخير عن الحضور حضر الساعة 4:10",
-    "createdAt": "2026-10-01T09:32:44.125Z",
-    "employeeId": "emp-1781442683812-633",
+    "id": "viol-1786020402996-950",
+    "createdAt": "2026-08-06T12:46:42.996Z",
+    "description": "عجز بتاريخ 9-7-2026  مبلغ 31 \nعجز بتاريخ 10-7-2026 مبلغ 42",
     "type": "deduction",
-    "deductionAmount": 10,
-    "id": "viol-1790847164125-927",
-    "date": "2026-09-18"
+    "employeeName": "مروان",
+    "deductionAmount": 73,
+    "employeeId": "emp-1781356386569-38",
+    "date": "2026-07-10"
   },
   {
+    "createdAt": "2026-08-06T12:48:17.619Z",
+    "employeeName": "محمد المغربي",
+    "deductionAmount": 0,
+    "date": "2026-08-02",
+    "description": "تأخر بالحضور الى العمل",
+    "id": "viol-1786020497619-690",
+    "employeeId": "emp-1781442819196-436",
+    "type": "warning"
+  },
+  {
+    "createdAt": "2026-09-01T14:50:53.795Z",
+    "type": "deduction",
+    "employeeId": "emp-1783348695253-363",
+    "date": "2026-09-01",
+    "description": "طلبية تم تسليمها للزبون قبل الدفع",
+    "employeeName": "أمجد ارناؤط",
+    "deductionAmount": 61,
+    "id": "viol-1788274253794-452"
+  },
+  {
+    "description": "انسحاب عن العمل في بدايته لمده اكثر من نصف ساعه",
+    "date": "2026-09-01",
+    "employeeId": "emp-1781442683812-633",
+    "employeeName": "موسى",
+    "type": "deduction",
+    "deductionAmount": 30,
+    "createdAt": "2026-09-01T14:51:33.622Z",
+    "id": "viol-1788274293622-787"
+  },
+  {
+    "employeeId": "emp-1781356386569-38",
+    "id": "viol-1789058791320-405",
+    "type": "deduction",
+    "deductionAmount": 30,
+    "employeeName": "مروان",
+    "createdAt": "2026-09-10T16:46:31.320Z",
+    "date": "2026-09-10",
+    "description": "الخروج من المحل لمدة 32 دقيقه الساعة 7:08 والعودة الساعة 7:40"
+  },
+  {
+    "description": "تأخير عن الحضور حضر الساعة 4:10",
+    "id": "viol-1789737025980-598",
+    "employeeId": "emp-1781442683812-633",
+    "createdAt": "2026-09-18T13:10:25.980Z",
+    "employeeName": "موسى",
+    "date": "2026-09-18",
+    "deductionAmount": 10,
+    "type": "deduction"
+  },
+  {
+    "date": "2026-09-23",
+    "id": "viol-1790170821601-862",
+    "type": "warning",
+    "employeeName": "أمجد ارناؤط",
+    "employeeId": "emp-1783348695253-363",
+    "description": "لم يكن جاهز بزي العمل كامل الا الساعه 4:36",
+    "createdAt": "2026-09-23T13:40:21.601Z",
+    "deductionAmount": 0
+  },
+  {
+    "employeeName": "مروان",
+    "createdAt": "2026-09-25T15:28:58.373Z",
+    "type": "deduction",
+    "date": "2026-09-24",
+    "id": "viol-1790350138373-112",
+    "description": "خروج 9:48 الى 10:16",
+    "employeeId": "emp-1781356386569-38",
+    "deductionAmount": 50
+  },
+  {
+    "employeeId": "emp-1781356386569-38",
+    "deductionAmount": 100,
+    "id": "viol-1790350362668-930",
+    "description": "خروج الساعة 6:00 تجاوز مدة خروحه نصف ساعه",
+    "createdAt": "2026-09-25T15:32:42.668Z",
+    "date": "2026-09-25",
+    "type": "deduction",
+    "employeeName": "مروان"
+  },
+  {
+    "description": "انسحاب عن العمل في بدايته لمدة أكثر من نصف ساعه",
+    "deductionAmount": 30,
+    "date": "2026-09-01",
+    "type": "deduction",
+    "id": "viol-1790847127013-991",
+    "createdAt": "2026-10-01T09:32:07.013Z",
+    "employeeName": "موسى",
+    "employeeId": "emp-1781442683812-633"
+  },
+  {
+    "type": "deduction",
     "createdAt": "2026-10-01T09:34:03.686Z",
     "date": "2026-09-23",
-    "id": "viol-1790847243686-677",
-    "employeeName": "موسى",
-    "type": "deduction",
+    "deductionAmount": 23,
     "employeeId": "emp-1781442683812-633",
+    "employeeName": "موسى",
     "description": "تلفيات 1 ايطالي + 1 ساندويش صغير",
-    "deductionAmount": 23
-  },
-  {
-    "description": "تلفظ بألفاظ سيئة تجاه العمل",
-    "deductionAmount": 50,
-    "employeeName": "موسى",
-    "employeeId": "emp-1781442683812-633",
-    "type": "deduction",
-    "createdAt": "2026-10-01T09:34:37.193Z",
-    "date": "2026-09-23",
-    "id": "viol-1790847277193-439"
+    "id": "viol-1790847243686-677"
   }
 ]

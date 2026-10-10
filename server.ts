@@ -1,4 +1,5 @@
 import express from "express";
+import compression from "compression";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -2786,6 +2787,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.use(compression());
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
@@ -4282,8 +4284,7 @@ async function startServer() {
   app.get("/api/tax-invoices/:id", async (req, res) => {
     const rawId = req.params.id;
     const decodedId = decodeURIComponent(rawId).trim();
-    const invoices = await getTaxInvoices();
-    const inv = invoices.find(i => i.id === rawId || i.id === decodedId);
+    const inv = taxInvoicesCache.get(decodedId) || taxInvoicesCache.get(rawId) || (await getTaxInvoices()).find(i => i.id === rawId || i.id === decodedId);
     if (!inv) {
       return res.status(404).json({ error: "Invoice not found" });
     }
@@ -4317,19 +4318,23 @@ async function startServer() {
         };
       }) : [];
 
+      const finalInvDate = (data.invoice_date && String(data.invoice_date).trim()) || data.date;
+      const isApprovedByDefault = data.status === "approved" || (!data.status && data.createdBy === "admin");
+      const invoiceStatus = data.status || (isApprovedByDefault ? "approved" : "pending");
+
       const invoice: TaxInvoice = {
         id: `tax-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        date: data.date,
+        date: finalInvDate,
         branch: data.branch || "القادسية",
         company: data.company || "",
         invoice_no: data.invoice_no || "",
-        invoice_date: data.invoice_date || "",
+        invoice_date: finalInvDate,
         amount: data.amount,
         items: invoiceItems,
         createdBy: data.createdBy || "",
-        status: data.status || "approved",
-        rawImage: (data.status === "approved") ? "" : (data.rawImage || ""),
-        fileType: (data.status === "approved") ? "" : (data.fileType || "")
+        status: invoiceStatus,
+        rawImage: (invoiceStatus === "approved") ? "" : (data.rawImage || ""),
+        fileType: (invoiceStatus === "approved") ? "" : (data.fileType || "")
       };
 
       invoices.push(invoice);
@@ -4415,17 +4420,18 @@ async function startServer() {
         };
       });
 
+      const finalDate = (data.invoice_date && String(data.invoice_date).trim()) || (data.date && String(data.date).trim()) || existing?.invoice_date || existing?.date || "";
       const updatedInvoice: TaxInvoice = {
         id,
-        date: data.date,
+        date: finalDate,
         branch: data.branch || existing?.branch || "القادسية",
         company: data.company || existing?.company || "",
         invoice_no: data.invoice_no !== undefined ? data.invoice_no : (existing?.invoice_no || ""),
-        invoice_date: data.invoice_date || existing?.invoice_date || "",
+        invoice_date: finalDate,
         amount: parseFloat(data.amount),
         items: normalizedItems,
         createdBy: data.createdBy || existing?.createdBy || "",
-        status: data.status || "approved",
+        status: data.status || existing?.status || "approved",
         rawImage: rawImg,
         fileType: fileTp
       };
@@ -4680,9 +4686,12 @@ async function startServer() {
     const allDays = await getDays();
     const allTaxInvoices = await getTaxInvoices();
 
-    // Filter by date
+    // Filter by date & approval status (pending invoices are excluded until approved by manager)
     const rangeDays = allDays.filter((d) => d.date >= from && d.date <= to);
-    const rangeTaxInvoices = allTaxInvoices.filter((i) => i.date >= from && i.date <= to);
+    const rangeTaxInvoices = allTaxInvoices.filter((i) => 
+      (i.status === "approved" || !i.status) && 
+      ((i.invoice_date && i.invoice_date >= from && i.invoice_date <= to) || (i.date && i.date >= from && i.date <= to))
+    );
 
     const qData = rangeDays.filter((d) => d.branch === "القادسية");
     const mData = rangeDays.filter((d) => d.branch === "المروج");
