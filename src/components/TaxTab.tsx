@@ -990,7 +990,7 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       return;
     }
     try {
-      const res = await fetch("/api/tax-invoices?status=pending&includeImage=true&fresh=true");
+      const res = await fetch("/api/tax-invoices?status=pending&fresh=true");
       if (res.ok) {
         const pending: TaxInvoice[] = await res.json();
         const normalized = pending.map(inv => ({

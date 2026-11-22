@@ -3,7 +3,6 @@ import compression from "compression";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { createServer as createViteServer } from "vite";
 import { Settings, DailyEntry, SharedDiesel, TaxInvoice, UnifiedUser, Purchase, Employee, EmployeeAdvance, EmployeeAttendance, EmployeeDeductionConfig, EmployeeViolation, BakeryEntry, DrinksEntry, TaxCashEntry, InstallmentInvoice, VegGrocRecord, VegGrocItem, SecondAccountantGrocItem } from "./src/types";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import "dotenv/config";
@@ -11,7 +10,7 @@ import "dotenv/config";
 // Firebase Integration Setup
 import { initializeApp } from "firebase/app";
 import { 
-  getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc, initializeFirestore, query, limit
+  getFirestore, doc, getDoc, getDocFromServer, setDoc, getDocs, collection, deleteDoc, initializeFirestore, query, limit
 } from "firebase/firestore";
 
 let firebaseConfig: any = null;
@@ -56,6 +55,17 @@ try {
   }, firebaseConfig.firestoreDatabaseId || "(default)");
 } catch (fbErr) {
   console.error("Firebase init error (using fallback):", fbErr);
+}
+
+async function testConnection() {
+  if (!db) return;
+  try {
+    await getDocFromServer(doc(db, "test", "connection"));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("the client is offline")) {
+      console.error("Please check your Firebase configuration (the client is offline).");
+    }
+  }
 }
 
 
@@ -244,7 +254,7 @@ function readBackupJson<T>(filename: string, fallback: T): T {
 function writeBackupJson(filename: string, data: any): void {
   try {
     const filePath = path.join(DATA_BACKUP_DIR, filename);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    fs.writeFileSync(filePath, JSON.stringify(data), "utf-8");
   } catch (e) {
     console.warn(`[Local Cache] Failed writing ${filename}:`, e);
   }
@@ -823,7 +833,7 @@ async function deleteEmployeeAttendance(id: string): Promise<void> {
 let isInitialReconciliationDone = false;
 let isReconciling = false;
 async function reconcileAllEmployeeDataAndSettings(): Promise<void> {
-  if (isReconciling || isFirestoreReadQuotaExceeded || !db) return;
+  if (isInitialReconciliationDone || isReconciling || isFirestoreReadQuotaExceeded || !db) return;
   isReconciling = true;
   try {
     // 1. Reconcile Settings
@@ -967,6 +977,8 @@ let daysLoaded = false;
 
 const taxInvoicesCache = new Map<string, any>();
 let taxInvoicesLoaded = false;
+let inFlightTaxInvoicesPromise: Promise<TaxInvoice[]> | null = null;
+let lastTaxInvoicesSyncAt = 0;
 
 const dieselsCache = new Map<string, any>();
 let dieselsLoaded = false;
@@ -990,7 +1002,7 @@ function loadDaysFromFile(): DailyEntry[] {
 
 function saveDaysToFile(days: DailyEntry[]): void {
   try {
-    fs.writeFileSync(DAYS_BACKUP_FILE, JSON.stringify(days, null, 2), "utf-8");
+    fs.writeFileSync(DAYS_BACKUP_FILE, JSON.stringify(days), "utf-8");
   } catch (err) {
     console.warn("Could not write local days backup file:", err);
   }
@@ -1014,7 +1026,7 @@ async function getDays(): Promise<DailyEntry[]> {
 
     // Concurrently trigger background sync with Firestore if online to fetch newest days (e.g. recent dates)
     if (!isFirestoreReadQuotaExceeded) {
-      withTimeout(getDocs(collection(db, "days")), 7000).then(snap => {
+      withTimeout(getDocs(collection(db, "days")), 15000).then(snap => {
         let changed = false;
         snap.forEach(d => {
           const data = d.data() as DailyEntry;
@@ -1037,7 +1049,7 @@ async function getDays(): Promise<DailyEntry[]> {
   }
 
   try {
-    const snap = await withTimeout(getDocs(collection(db, "days")), 6000);
+    const snap = await withTimeout(getDocs(collection(db, "days")), 15000);
     const list: DailyEntry[] = [];
     daysCache.clear();
     snap.forEach((d) => {
@@ -1434,83 +1446,163 @@ async function saveDiesels(bills: SharedDiesel[]): Promise<void> {
   }
 }
 
+const INVOICE_IMAGES_DIR = path.join(DATA_BACKUP_DIR, "invoice_images");
+if (!fs.existsSync(INVOICE_IMAGES_DIR)) {
+  try {
+    fs.mkdirSync(INVOICE_IMAGES_DIR, { recursive: true });
+  } catch {}
+}
+
+function getInvoiceImagePath(id: string): string {
+  const safeId = String(id).replace(/[^a-zA-Z0-9._-]/g, "_");
+  return path.join(INVOICE_IMAGES_DIR, `${safeId}.img`);
+}
+
+function writeInvoiceImage(id: string, rawImage: string | undefined | null): void {
+  try {
+    const filePath = getInvoiceImagePath(id);
+    if (rawImage && typeof rawImage === "string" && rawImage.length > 0) {
+      fs.writeFileSync(filePath, rawImage, "utf-8");
+    } else if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {}
+}
+
+function readInvoiceImage(id: string): string {
+  try {
+    const filePath = getInvoiceImagePath(id);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf-8");
+    }
+  } catch {}
+  return "";
+}
+
+function stripInvoiceImageForCache(inv: any): any {
+  const copy = { ...inv };
+  if (copy.rawImage && typeof copy.rawImage === "string" && copy.rawImage.length > 0) {
+    writeInvoiceImage(copy.id, copy.rawImage);
+    copy.hasImage = true;
+    copy.rawImage = "";
+  } else {
+    copy.hasImage = Boolean(copy.hasImage || (copy.id && fs.existsSync(getInvoiceImagePath(copy.id))));
+    copy.rawImage = "";
+  }
+  return copy;
+}
+
+function seedTaxInvoicesFromLocalBackup(): boolean {
+  if (hasBackupJson("tax_invoices_backup.json")) {
+    const local = readBackupJson<TaxInvoice[]>("tax_invoices_backup.json", []);
+    if (local && local.length > 0) {
+      taxInvoicesCache.clear();
+      let hadEmbeddedImages = false;
+      local.forEach(inv => {
+        if (inv && inv.id && !(inv as any).test && !String(inv.id).startsWith("test_perm") && (inv.date || inv.invoice_date)) {
+          if (inv.rawImage && inv.rawImage.length > 0) hadEmbeddedImages = true;
+          taxInvoicesCache.set(inv.id, stripInvoiceImageForCache(cleanObject(inv)));
+        }
+      });
+      if (hadEmbeddedImages) {
+        writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+      }
+      taxInvoicesLoaded = true;
+      return true;
+    }
+  }
+  return false;
+}
+
 async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
+  // Always ensure in-memory cache is seeded from local backup if empty, even when forceRefresh is true
+  if (taxInvoicesCache.size === 0) {
+    seedTaxInvoicesFromLocalBackup();
+  }
+
   if (taxInvoicesLoaded && !forceRefresh) {
     return Array.from(taxInvoicesCache.values());
   }
 
-  // 1. Check local backup first if available and has data
-  if (hasBackupJson("tax_invoices_backup.json") && !forceRefresh) {
-    const local = readBackupJson<TaxInvoice[]>("tax_invoices_backup.json", []);
-    if (local && local.length > 0) {
-      taxInvoicesCache.clear();
-      local.forEach(inv => {
-        if (inv && inv.id && !(inv as any).test && !String(inv.id).startsWith("test_perm") && (inv.date || inv.invoice_date)) {
-          taxInvoicesCache.set(inv.id, cleanObject(inv));
-        }
-      });
-      taxInvoicesLoaded = true;
-      return Array.from(taxInvoicesCache.values());
-    }
-  }
-
-  try {
-    const snap = await withTimeout(getDocs(collection(db, "tax_invoices")), 10000);
-    const list: TaxInvoice[] = [];
-    const itemsToPersist: TaxInvoice[] = [];
-    taxInvoicesCache.clear();
-    snap.forEach((d) => {
-      if (d.id.startsWith("test_perm") || d.id.startsWith("test-connection")) {
-        deleteDoc(doc(db, "tax_invoices", d.id)).catch(() => {});
-        return;
-      }
-      const data = d.data() as any;
-      if (data && !data.test && (data.date || data.invoice_date)) {
-        if (!data.id) {
-          data.id = d.id;
-        }
-        if (Array.isArray(data.items)) {
-          let wasModified = false;
-          data.items = data.items.map((it: any) => {
-            let itemName = String(it.name || it.product_name || "").trim();
-            let itemCat = String(it.category || "").trim();
-            if (!itemName && itemCat) {
-              wasModified = true;
-              itemName = itemCat;
-              itemCat = "";
-            }
-            return {
-              ...it,
-              name: itemName,
-              category: itemCat
-            };
-          });
-          if (wasModified) {
-            itemsToPersist.push(data);
-          }
-        }
-        list.push(data as TaxInvoice);
-        taxInvoicesCache.set(data.id, cleanObject(data));
-      }
-    });
-    writeBackupJson("tax_invoices_backup.json", list);
-    if (itemsToPersist.length > 0) {
-      saveTaxInvoices(itemsToPersist).catch(e => console.error("Error auto-fixing invoice item categories:", e));
-    }
-    taxInvoicesLoaded = true;
-    return list;
-  } catch (err) {
-    checkFirestoreError(err);
-    console.warn("Could not read tax invoices from Firestore, returning cached:", err);
-    taxInvoicesLoaded = true;
-    writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
+  // Cooldown: if we just synced from Firestore within the last 5 seconds, reuse cache instead of rescanning
+  if (forceRefresh && lastTaxInvoicesSyncAt > 0 && Date.now() - lastTaxInvoicesSyncAt < 5000 && taxInvoicesCache.size > 0) {
     return Array.from(taxInvoicesCache.values());
   }
+
+  if (isFirestoreReadQuotaExceeded) {
+    taxInvoicesLoaded = true;
+    return Array.from(taxInvoicesCache.values());
+  }
+
+  // Deduplicate concurrent full-collection Firestore reads
+  if (inFlightTaxInvoicesPromise) {
+    return inFlightTaxInvoicesPromise;
+  }
+
+  inFlightTaxInvoicesPromise = (async () => {
+    try {
+      const snap = await withTimeout(getDocs(collection(db, "tax_invoices")), 30000);
+      const list: TaxInvoice[] = [];
+      const itemsToPersist: TaxInvoice[] = [];
+      taxInvoicesCache.clear();
+      snap.forEach((d) => {
+        if (d.id.startsWith("test_perm") || d.id.startsWith("test-connection")) {
+          deleteDoc(doc(db, "tax_invoices", d.id)).catch(() => {});
+          return;
+        }
+        const data = d.data() as any;
+        if (data && !data.test && (data.date || data.invoice_date)) {
+          if (!data.id) {
+            data.id = d.id;
+          }
+          if (Array.isArray(data.items)) {
+            let wasModified = false;
+            data.items = data.items.map((it: any) => {
+              let itemName = String(it.name || it.product_name || "").trim();
+              let itemCat = String(it.category || "").trim();
+              if (!itemName && itemCat) {
+                wasModified = true;
+                itemName = itemCat;
+                itemCat = "";
+              }
+              return {
+                ...it,
+                name: itemName,
+                category: itemCat
+              };
+            });
+            if (wasModified) {
+              itemsToPersist.push(data);
+            }
+          }
+          const stripped = stripInvoiceImageForCache(cleanObject(data));
+          list.push(stripped as TaxInvoice);
+          taxInvoicesCache.set(data.id, stripped);
+        }
+      });
+      writeBackupJson("tax_invoices_backup.json", list);
+      lastTaxInvoicesSyncAt = Date.now();
+      if (itemsToPersist.length > 0) {
+        saveTaxInvoices(itemsToPersist).catch(e => console.error("Error auto-fixing invoice item categories:", e));
+      }
+      taxInvoicesLoaded = true;
+      return list;
+    } catch (err) {
+      checkFirestoreError(err);
+      console.warn("Could not read tax invoices from Firestore, returning cached:", err);
+      taxInvoicesLoaded = true;
+      return Array.from(taxInvoicesCache.values());
+    } finally {
+      inFlightTaxInvoicesPromise = null;
+    }
+  })();
+
+  return inFlightTaxInvoicesPromise;
 }
 
 async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
   try {
-    const toWrite: { id: string; cleaned: any }[] = [];
+    const toWrite: { id: string; firestorePayload: any; cachePayload: any }[] = [];
     for (const i of invoices) {
       if (!i || !i.id) {
         console.warn("Skipping save for TaxInvoice with missing or invalid ID:", i);
@@ -1518,27 +1610,34 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
       }
       const cleanedNew = cleanObject(i);
       // Ensure image base64 strings are never brutally truncated with substring(), which destroys JPEG encoding.
-      // Client-side adaptive compression ensures all images are safely sized (around 300KB-500KB).
       if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 950000) {
         console.warn(`[TaxInvoice Image] rawImage for ${i.id} is unusually large (${cleanedNew.rawImage.length} chars). Keeping intact.`);
       }
       const cached = taxInvoicesCache.get(i.id);
+      const prevImg = readInvoiceImage(i.id);
+      const newImg = typeof cleanedNew.rawImage === "string" ? cleanedNew.rawImage : "";
+      const cacheCandidate = {
+        ...cleanedNew,
+        hasImage: Boolean(newImg.length > 0 || cleanedNew.hasImage),
+        rawImage: ""
+      };
 
-      if (cached && isDeepEqual(cleanedNew, cached)) {
+      if (cached && isDeepEqual(cacheCandidate, cached) && newImg === prevImg) {
         continue;
       }
-      toWrite.push({ id: i.id, cleaned: cleanedNew });
+      toWrite.push({ id: i.id, firestorePayload: cleanedNew, cachePayload: cacheCandidate });
     }
 
     if (toWrite.length > 0) {
       console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new TaxInvoices`);
       toWrite.forEach(item => {
-        taxInvoicesCache.set(item.id, item.cleaned);
+        writeInvoiceImage(item.id, item.firestorePayload.rawImage);
+        taxInvoicesCache.set(item.id, item.cachePayload);
       });
       writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
       await Promise.all(toWrite.map(async (item) => {
         try {
-          await setDoc(doc(db, "tax_invoices", item.id), item.cleaned);
+          await setDoc(doc(db, "tax_invoices", item.id), item.firestorePayload);
         } catch (e) {
           console.warn("Error persisting tax invoice to Firestore:", e);
         }
@@ -1553,6 +1652,7 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
 async function deleteTaxInvoice(id: string): Promise<void> {
   try {
     taxInvoicesCache.delete(id);
+    writeInvoiceImage(id, "");
     writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
     await deleteDoc(doc(db, "tax_invoices", id));
   } catch (err) {
@@ -1721,7 +1821,6 @@ async function getTaxCashList(forceRefresh = false): Promise<TaxCashEntry[]> {
     checkFirestoreError(err);
     console.warn("Could not read tax_cash from Firestore, using cached:", err);
     taxCashLoaded = true;
-    writeBackupJson("tax_cash_backup.json", Array.from(taxCashCache.values()));
     return Array.from(taxCashCache.values());
   }
 }
@@ -1999,7 +2098,7 @@ async function getPurchases(): Promise<Purchase[]> {
   }
 
   try {
-    const snap = await withTimeout(getDocs(collection(db, "purchases")), 10000);
+    const snap = await withTimeout(getDocs(collection(db, "purchases")), 25000);
     const list: Purchase[] = [];
     purchasesCache.clear();
     snap.forEach((d) => {
@@ -2026,7 +2125,6 @@ async function getPurchases(): Promise<Purchase[]> {
     checkFirestoreError(err);
     console.warn("Could not read purchases from Firestore, using cached:", err);
     purchasesLoaded = true;
-    writeBackupJson("purchases_backup.json", Array.from(purchasesCache.values()));
     return Array.from(purchasesCache.values()).map(p => JSON.parse(JSON.stringify(p)));
   }
 }
@@ -2785,7 +2883,7 @@ async function saveWhatsAppMessage(msg: any): Promise<void> {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.NODE_ENV === "production" ? (Number(process.env.PORT) || 3000) : 3000;
 
   app.use(compression());
   app.use(express.json({ limit: "15mb" }));
@@ -4272,6 +4370,12 @@ async function startServer() {
           const { rawImage, ...rest } = inv;
           return rest as TaxInvoice;
         });
+      } else {
+        invoices = invoices.map(inv => {
+          if (inv.rawImage) return inv;
+          const diskImg = readInvoiceImage(inv.id);
+          return diskImg ? { ...inv, rawImage: diskImg } : inv;
+        });
       }
 
       res.json(invoices);
@@ -4288,7 +4392,20 @@ async function startServer() {
     if (!inv) {
       return res.status(404).json({ error: "Invoice not found" });
     }
-    res.json(inv);
+    let rawImage = inv.rawImage || readInvoiceImage(inv.id);
+    if (!rawImage && (inv as any).hasImage && !isFirestoreReadQuotaExceeded && db) {
+      try {
+        const snap = await withTimeout(getDoc(doc(db, "tax_invoices", inv.id)), 8000);
+        if (snap.exists()) {
+          const full = snap.data() as any;
+          if (full?.rawImage) {
+            rawImage = full.rawImage;
+            writeInvoiceImage(inv.id, rawImage);
+          }
+        }
+      } catch {}
+    }
+    res.json({ ...inv, rawImage: rawImage || "" });
   });
 
   app.post("/api/tax-invoices", async (req, res) => {
@@ -4402,7 +4519,7 @@ async function startServer() {
 
       // If the invoice is being approved by the manager, remove the image so it doesn't weigh down system memory and disk
       const isApprovedStatus = (data.status === "approved");
-      const rawImg = isApprovedStatus ? "" : (data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || ""));
+      const rawImg = isApprovedStatus ? "" : (data.rawImage !== undefined && data.rawImage !== "" ? data.rawImage : (existing?.rawImage || readInvoiceImage(id) || ""));
       const fileTp = isApprovedStatus ? "" : (data.fileType !== undefined && data.fileType !== "" ? data.fileType : (existing?.fileType || ""));
 
       const rawItems = Array.isArray(data.items) ? data.items : (existing?.items || []);
@@ -5373,9 +5490,11 @@ async function startServer() {
         let modified = false;
         taxInvoicesCache.forEach((inv, id) => {
           const isApproved = (inv.status === "approved" || (inv as any).is_approved);
-          if (isApproved && (inv.rawImage || inv.fileType)) {
+          if (isApproved && (inv.rawImage || inv.fileType || (inv as any).hasImage || readInvoiceImage(id))) {
             inv.rawImage = "";
             inv.fileType = "";
+            (inv as any).hasImage = false;
+            writeInvoiceImage(id, "");
             taxInvoicesCache.set(id, inv);
             cleanedApprovedImages++;
             modified = true;
@@ -5491,8 +5610,9 @@ async function startServer() {
     res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
   });
 
-  // Vite middleware for development
+  // Vite middleware for development (dynamically imported so production saves ~200MB RAM)
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -5513,6 +5633,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    testConnection().catch(() => {});
     // Reconcile and restore all employee data & settings from cloud on startup
     reconcileAllEmployeeDataAndSettings().catch((err) => {
       console.warn("Startup reconciliation warning:", err);
