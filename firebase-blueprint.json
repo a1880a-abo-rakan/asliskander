@@ -118,9 +118,24 @@
             "required": ["name", "price_with_tax"]
           },
           "description": "Itemized list of purchases parsed from invoice with names and prices after tax"
-        }
+        },
+        "hasImage": { "type": "boolean" },
+        "imageChunks": { "type": "number" }
       },
       "required": ["id", "date", "branch", "amount"]
+    },
+    "TaxInvoiceImageChunk": {
+      "title": "TaxInvoiceImageChunk",
+      "description": "Temporary chunked image payload for pending tax invoices (deleted automatically upon manager approval)",
+      "type": "object",
+      "properties": {
+        "invoiceId": { "type": "string" },
+        "chunkIndex": { "type": "number" },
+        "totalChunks": { "type": "number" },
+        "data": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["invoiceId", "chunkIndex", "totalChunks", "data"]
     },
     "UnifiedUser": {
       "title": "UnifiedUser",
@@ -396,7 +411,11 @@
     },
     "tax_invoices": {
       "schema": "TaxInvoice",
-      "description": "Vendor tax invoices log history"
+      "description": "Vendor tax invoices log history (lightweight metadata only)"
+    },
+    "tax_invoice_images": {
+      "schema": "TaxInvoiceImageChunk",
+      "description": "Temporary chunked image storage for pending tax invoices prior to manager approval"
     },
     "purchases": {
       "schema": "Purchase",

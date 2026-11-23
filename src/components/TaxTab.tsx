@@ -503,8 +503,8 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
     await processFiles(Array.from(files));
   };
 
-  // Helper to compress images on client-side before sending to server for OCR
-  const compressImage = (file: File, maxWidth = 2000, maxHeight = 2000): Promise<string> => {
+  // Helper to compress images adaptively on client-side before sending to server for OCR & temporary storage
+  const compressImage = (file: File, maxWidth = 1600, maxHeight = 1600): Promise<string> => {
     return new Promise((resolve, reject) => {
       // If it's not an image file (e.g. PDF), fall back to standard reader
       if (!file.type.startsWith("image/")) {
@@ -516,42 +516,55 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
       }
 
       const img = new Image();
-      img.src = URL.createObjectURL(file);
+      const objectUrl = URL.createObjectURL(file);
+      img.src = objectUrl;
       img.onload = () => {
-        URL.revokeObjectURL(img.src);
-        let width = img.width;
-        let height = img.height;
+        URL.revokeObjectURL(objectUrl);
 
-        if (width > maxWidth || height > maxHeight) {
-          if (width > height) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          } else {
-            width = Math.round((width * maxHeight) / height);
-            height = maxHeight;
+        const encodeAtSize = (limitW: number, limitH: number, quality: number): string => {
+          let width = img.width;
+          let height = img.height;
+
+          if (width > limitW || height > limitH) {
+            if (width > height) {
+              height = Math.round((height * limitW) / width);
+              width = limitW;
+            } else {
+              width = Math.round((width * limitH) / height);
+              height = limitH;
+            }
           }
-        }
 
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return "";
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, width, height);
+          return canvas.toDataURL("image/jpeg", quality);
+        };
+
+        // Start crisp at 0.80 quality; adaptively step down only if base64 exceeds ~650KB
+        let compressedBase64 = encodeAtSize(maxWidth, maxHeight, 0.80);
+        if (!compressedBase64) {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = (err) => reject(err);
           reader.readAsDataURL(file);
           return;
         }
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, width, height);
-        // Compress as JPEG format with 0.85 quality for crystal clear numbers, decimals, and Arabic text
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+        if (compressedBase64.length > 650000) {
+          compressedBase64 = encodeAtSize(maxWidth, maxHeight, 0.68);
+        }
+        if (compressedBase64.length > 650000) {
+          compressedBase64 = encodeAtSize(1280, 1280, 0.62);
+        }
         resolve(compressedBase64);
       };
       img.onerror = (err) => {
+        URL.revokeObjectURL(objectUrl);
         reject(err);
       };
     });
@@ -1077,7 +1090,9 @@ export default function TaxTab({ onShowToast, userRole, userBranch }: TaxTabProp
         date: finalDate,
         invoice_date: finalDate,
         items: normalizeInvoiceItems(inv.items),
-        status: "approved" as const
+        status: "approved" as const,
+        rawImage: "",
+        fileType: ""
       };
       const res = await fetch(`/api/tax-invoices/${encodeURIComponent(inv.id)}`, {
         method: "PUT",

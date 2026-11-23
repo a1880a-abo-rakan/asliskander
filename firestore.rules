@@ -21,6 +21,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // 4b. Temporary Pending Tax Invoice Image Chunks (auto-deleted on approval)
+    match /tax_invoice_images/{docId} {
+      allow read, write: if true;
+    }
+
     // 5. Users rules
     match /users/{docId} {
       allow read, write: if true;

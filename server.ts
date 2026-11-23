@@ -1453,9 +1453,92 @@ if (!fs.existsSync(INVOICE_IMAGES_DIR)) {
   } catch {}
 }
 
+const FIRESTORE_IMAGE_CHUNK_SIZE = 700000; // ~700 KB per chunk, safely below Firestore 1,048,576 byte document limit
+
+function getSafeInvoiceId(id: string): string {
+  return String(id).replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
 function getInvoiceImagePath(id: string): string {
-  const safeId = String(id).replace(/[^a-zA-Z0-9._-]/g, "_");
-  return path.join(INVOICE_IMAGES_DIR, `${safeId}.img`);
+  return path.join(INVOICE_IMAGES_DIR, `${getSafeInvoiceId(id)}.img`);
+}
+
+function getInvoiceChunkDocId(id: string, chunkIndex: number): string {
+  return `${getSafeInvoiceId(id)}__chunk_${chunkIndex}`;
+}
+
+async function saveInvoiceImageChunksToFirestore(id: string, rawImage: string, prevChunksCount = 0): Promise<number> {
+  if (!db || !rawImage || rawImage.length === 0) return 0;
+  const totalChunks = Math.ceil(rawImage.length / FIRESTORE_IMAGE_CHUNK_SIZE);
+  const nowIso = new Date().toISOString();
+  const writes: Promise<void>[] = [];
+  for (let idx = 0; idx < totalChunks; idx++) {
+    const chunkData = rawImage.slice(idx * FIRESTORE_IMAGE_CHUNK_SIZE, (idx + 1) * FIRESTORE_IMAGE_CHUNK_SIZE);
+    writes.push(
+      setDoc(doc(db, "tax_invoice_images", getInvoiceChunkDocId(id, idx)), {
+        invoiceId: id,
+        chunkIndex: idx,
+        totalChunks,
+        data: chunkData,
+        updatedAt: nowIso
+      })
+    );
+  }
+  for (let idx = totalChunks; idx < prevChunksCount; idx++) {
+    writes.push(deleteDoc(doc(db, "tax_invoice_images", getInvoiceChunkDocId(id, idx))).catch(() => {}));
+  }
+  await Promise.all(writes);
+  return totalChunks;
+}
+
+async function readInvoiceImageFromFirestore(id: string): Promise<string> {
+  if (!db || isFirestoreReadQuotaExceeded) return "";
+  try {
+    const firstSnap = await withTimeout(getDoc(doc(db, "tax_invoice_images", getInvoiceChunkDocId(id, 0))), 8000);
+    if (firstSnap.exists()) {
+      const firstData = firstSnap.data() as any;
+      const totalChunks = Number(firstData?.totalChunks || 1);
+      if (totalChunks <= 1) {
+        return String(firstData?.data || "");
+      }
+      const restPromises = [];
+      for (let idx = 1; idx < totalChunks; idx++) {
+        restPromises.push(withTimeout(getDoc(doc(db, "tax_invoice_images", getInvoiceChunkDocId(id, idx))), 8000));
+      }
+      const restSnaps = await Promise.all(restPromises);
+      let combined = String(firstData?.data || "");
+      for (const s of restSnaps) {
+        if (!s.exists()) return "";
+        combined += String((s.data() as any)?.data || "");
+      }
+      return combined;
+    }
+  } catch (err) {
+    console.warn(`Error reading chunked invoice image for ${id}:`, err);
+  }
+  return "";
+}
+
+async function deleteInvoiceImageChunksFromFirestore(id: string, knownChunksCount = 0): Promise<void> {
+  if (!db) return;
+  try {
+    let totalToDelete = knownChunksCount;
+    if (totalToDelete <= 0) {
+      const firstSnap = await withTimeout(getDoc(doc(db, "tax_invoice_images", getInvoiceChunkDocId(id, 0))), 5000).catch(() => null);
+      if (firstSnap && firstSnap.exists()) {
+        totalToDelete = Number((firstSnap.data() as any)?.totalChunks || 1);
+      }
+    }
+    if (totalToDelete > 0) {
+      const deletions: Promise<void>[] = [];
+      for (let idx = 0; idx < totalToDelete; idx++) {
+        deletions.push(deleteDoc(doc(db, "tax_invoice_images", getInvoiceChunkDocId(id, idx))).catch(() => {}));
+      }
+      await Promise.all(deletions);
+    }
+  } catch (err) {
+    console.warn(`Error deleting chunked invoice image for ${id}:`, err);
+  }
 }
 
 function writeInvoiceImage(id: string, rawImage: string | undefined | null): void {
@@ -1481,6 +1564,14 @@ function readInvoiceImage(id: string): string {
 
 function stripInvoiceImageForCache(inv: any): any {
   const copy = { ...inv };
+  if (copy.status === "approved") {
+    if (copy.id) writeInvoiceImage(copy.id, "");
+    copy.hasImage = false;
+    copy.imageChunks = 0;
+    copy.rawImage = "";
+    copy.fileType = "";
+    return copy;
+  }
   if (copy.rawImage && typeof copy.rawImage === "string" && copy.rawImage.length > 0) {
     writeInvoiceImage(copy.id, copy.rawImage);
     copy.hasImage = true;
@@ -1602,42 +1693,81 @@ async function getTaxInvoices(forceRefresh = false): Promise<TaxInvoice[]> {
 
 async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
   try {
-    const toWrite: { id: string; firestorePayload: any; cachePayload: any }[] = [];
+    const toWrite: {
+      id: string;
+      firestoreMeta: any;
+      cachePayload: any;
+      rawImageToPersist: string;
+      shouldDeleteCloudImage: boolean;
+      prevChunksCount: number;
+    }[] = [];
+
     for (const i of invoices) {
       if (!i || !i.id) {
         console.warn("Skipping save for TaxInvoice with missing or invalid ID:", i);
         continue;
       }
       const cleanedNew = cleanObject(i);
-      // Ensure image base64 strings are never brutally truncated with substring(), which destroys JPEG encoding.
-      if (cleanedNew.rawImage && typeof cleanedNew.rawImage === "string" && cleanedNew.rawImage.length > 950000) {
-        console.warn(`[TaxInvoice Image] rawImage for ${i.id} is unusually large (${cleanedNew.rawImage.length} chars). Keeping intact.`);
-      }
-      const cached = taxInvoicesCache.get(i.id);
+      const isApproved = cleanedNew.status === "approved";
+      const cached = taxInvoicesCache.get(i.id) as any;
       const prevImg = readInvoiceImage(i.id);
-      const newImg = typeof cleanedNew.rawImage === "string" ? cleanedNew.rawImage : "";
-      const cacheCandidate = {
+      const prevChunksCount = Number(cached?.imageChunks || 0);
+      const newImg = isApproved ? "" : (typeof cleanedNew.rawImage === "string" ? cleanedNew.rawImage : "");
+      const hasImage = !isApproved && Boolean(newImg.length > 0 || cleanedNew.hasImage);
+      const expectedChunks = hasImage
+        ? (newImg.length > 0 ? Math.ceil(newImg.length / FIRESTORE_IMAGE_CHUNK_SIZE) : prevChunksCount)
+        : 0;
+
+      // Always keep tax_invoices documents lightweight (never store rawImage inside tax_invoices)
+      const firestoreMeta = {
         ...cleanedNew,
-        hasImage: Boolean(newImg.length > 0 || cleanedNew.hasImage),
-        rawImage: ""
+        rawImage: "",
+        fileType: isApproved ? "" : (cleanedNew.fileType || ""),
+        hasImage,
+        imageChunks: expectedChunks
       };
 
-      if (cached && isDeepEqual(cacheCandidate, cached) && newImg === prevImg) {
+      const cacheCandidate = { ...firestoreMeta };
+      const hadPrevImage = Boolean(cached?.hasImage || prevChunksCount > 0 || prevImg.length > 0);
+      const imageChanged = newImg !== prevImg;
+
+      if (cached && isDeepEqual(cacheCandidate, cached) && !imageChanged && !(isApproved && hadPrevImage)) {
         continue;
       }
-      toWrite.push({ id: i.id, firestorePayload: cleanedNew, cachePayload: cacheCandidate });
+
+      toWrite.push({
+        id: i.id,
+        firestoreMeta,
+        cachePayload: cacheCandidate,
+        rawImageToPersist: (!isApproved && newImg.length > 0 && (imageChanged || prevChunksCount === 0)) ? newImg : "",
+        shouldDeleteCloudImage: (isApproved || !hasImage) && hadPrevImage,
+        prevChunksCount
+      });
     }
 
     if (toWrite.length > 0) {
       console.log(`[Firestore Optimization] Concurrently saving ${toWrite.length} modified/new TaxInvoices`);
       toWrite.forEach(item => {
-        writeInvoiceImage(item.id, item.firestorePayload.rawImage);
+        writeInvoiceImage(item.id, item.cachePayload.hasImage ? (item.rawImageToPersist || readInvoiceImage(item.id)) : "");
         taxInvoicesCache.set(item.id, item.cachePayload);
       });
       writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
       await Promise.all(toWrite.map(async (item) => {
         try {
-          await setDoc(doc(db, "tax_invoices", item.id), item.firestorePayload);
+          if (item.shouldDeleteCloudImage) {
+            await deleteInvoiceImageChunksFromFirestore(item.id, item.prevChunksCount);
+          } else if (item.rawImageToPersist) {
+            const actualChunks = await saveInvoiceImageChunksToFirestore(item.id, item.rawImageToPersist, item.prevChunksCount);
+            item.firestoreMeta.imageChunks = actualChunks;
+            item.cachePayload.imageChunks = actualChunks;
+            taxInvoicesCache.set(item.id, item.cachePayload);
+          }
+        } catch (imgErr) {
+          console.warn("Error syncing temporary tax invoice image chunks to Firestore:", imgErr);
+        }
+
+        try {
+          await setDoc(doc(db, "tax_invoices", item.id), item.firestoreMeta);
         } catch (e) {
           console.warn("Error persisting tax invoice to Firestore:", e);
         }
@@ -1651,10 +1781,16 @@ async function saveTaxInvoices(invoices: TaxInvoice[]): Promise<void> {
 
 async function deleteTaxInvoice(id: string): Promise<void> {
   try {
+    const cached = taxInvoicesCache.get(id) as any;
+    const prevChunksCount = Number(cached?.imageChunks || 0);
+    const hadImage = Boolean(cached?.hasImage || prevChunksCount > 0 || readInvoiceImage(id).length > 0);
     taxInvoicesCache.delete(id);
     writeInvoiceImage(id, "");
     writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
-    await deleteDoc(doc(db, "tax_invoices", id));
+    await Promise.all([
+      deleteDoc(doc(db, "tax_invoices", id)),
+      hadImage ? deleteInvoiceImageChunksFromFirestore(id, prevChunksCount) : Promise.resolve()
+    ]);
   } catch (err) {
     console.error("Error deleting tax invoice from Firestore:", err);
   }
@@ -4394,16 +4530,21 @@ async function startServer() {
     }
     let rawImage = inv.rawImage || readInvoiceImage(inv.id);
     if (!rawImage && (inv as any).hasImage && !isFirestoreReadQuotaExceeded && db) {
-      try {
-        const snap = await withTimeout(getDoc(doc(db, "tax_invoices", inv.id)), 8000);
-        if (snap.exists()) {
-          const full = snap.data() as any;
-          if (full?.rawImage) {
-            rawImage = full.rawImage;
-            writeInvoiceImage(inv.id, rawImage);
+      rawImage = await readInvoiceImageFromFirestore(inv.id);
+      if (!rawImage) {
+        try {
+          const snap = await withTimeout(getDoc(doc(db, "tax_invoices", inv.id)), 8000);
+          if (snap.exists()) {
+            const full = snap.data() as any;
+            if (full?.rawImage) {
+              rawImage = full.rawImage;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
+      if (rawImage) {
+        writeInvoiceImage(inv.id, rawImage);
+      }
     }
     res.json({ ...inv, rawImage: rawImage || "" });
   });
@@ -5488,18 +5629,24 @@ async function startServer() {
       // 1. Purge any stale images from approved invoices in memory cache & local backup
       if (taxInvoicesCache.size > 0) {
         let modified = false;
+        const cloudImageCleanupIds: { id: string; chunks: number }[] = [];
         taxInvoicesCache.forEach((inv, id) => {
           const isApproved = (inv.status === "approved" || (inv as any).is_approved);
-          if (isApproved && (inv.rawImage || inv.fileType || (inv as any).hasImage || readInvoiceImage(id))) {
+          if (isApproved && (inv.rawImage || inv.fileType || (inv as any).hasImage || (inv as any).imageChunks > 0 || readInvoiceImage(id))) {
+            cloudImageCleanupIds.push({ id, chunks: Number((inv as any).imageChunks || 0) });
             inv.rawImage = "";
             inv.fileType = "";
             (inv as any).hasImage = false;
+            (inv as any).imageChunks = 0;
             writeInvoiceImage(id, "");
             taxInvoicesCache.set(id, inv);
             cleanedApprovedImages++;
             modified = true;
           }
         });
+        if (cloudImageCleanupIds.length > 0) {
+          await Promise.all(cloudImageCleanupIds.map(c => deleteInvoiceImageChunksFromFirestore(c.id, c.chunks)));
+        }
         if (modified) {
           writeBackupJson("tax_invoices_backup.json", Array.from(taxInvoicesCache.values()));
         }
